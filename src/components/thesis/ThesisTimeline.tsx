@@ -1,9 +1,12 @@
-import { Check, Clock, Circle, FileText, User, Shield } from "lucide-react";
+import { Check, Clock, Circle, FileText, User, Shield, Download, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TimelineEvent } from "@/lib/mock-data";
 
 interface ThesisTimelineProps {
   events: TimelineEvent[];
+  evaluatorFiles?: { name: string; url: string }[];
+  evaluatorRecommendations?: string;
+  isBlindReview?: boolean;
 }
 
 const actorIcons = {
@@ -12,18 +15,17 @@ const actorIcons = {
   system: FileText,
 };
 
-export default function ThesisTimeline({ events }: ThesisTimelineProps) {
+export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecommendations, isBlindReview }: ThesisTimelineProps) {
   return (
     <div className="relative">
       {events.map((event, index) => {
         const ActorIcon = actorIcons[event.actorRole];
+        const isConceptIssued = event.status === "concept_issued";
+
         return (
           <div
             key={event.id}
-            className={cn(
-              "relative pl-10 pb-8 last:pb-0",
-              "animate-fade-in"
-            )}
+            className={cn("relative pl-10 pb-8 last:pb-0", "animate-fade-in")}
             style={{ animationDelay: `${index * 80}ms` }}
           >
             {/* Vertical line */}
@@ -71,42 +73,75 @@ export default function ThesisTimeline({ events }: ThesisTimelineProps) {
                 <h4
                   className={cn(
                     "font-heading font-semibold text-sm",
-                    event.active
-                      ? "text-accent-foreground"
-                      : event.completed
-                      ? "text-foreground"
-                      : "text-muted-foreground"
+                    event.active ? "text-accent-foreground" : event.completed ? "text-foreground" : "text-muted-foreground"
                   )}
                 >
                   {event.label}
                 </h4>
                 {event.date && (
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {event.date}
-                  </span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">{event.date}</span>
                 )}
               </div>
 
-              {event.actor && (
+              {event.actor && !isBlindReview && (
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                   <ActorIcon className="w-3 h-3" />
                   <span>{event.actor}</span>
                 </div>
               )}
 
+              {event.actor && isBlindReview && event.actorRole === "evaluator" && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                  <User className="w-3 h-3" />
+                  <span>Evaluador (Par ciego)</span>
+                </div>
+              )}
+
               {event.observations && (
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {event.observations}
-                </p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{event.observations}</p>
+              )}
+
+              {/* Show evaluator recommendations and files on concept_issued */}
+              {isConceptIssued && event.completed && (
+                <div className="mt-3 space-y-3">
+                  {evaluatorRecommendations && (
+                    <div className="bg-secondary/50 rounded-md p-3">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-foreground mb-1.5">
+                        <MessageSquare className="w-3 h-3" />
+                        Recomendaciones del Evaluador
+                      </div>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {evaluatorRecommendations}
+                      </p>
+                    </div>
+                  )}
+
+                  {evaluatorFiles && evaluatorFiles.length > 0 && (
+                    <div className="bg-secondary/50 rounded-md p-3">
+                      <p className="text-xs font-medium text-foreground mb-2">Archivos del Evaluador</p>
+                      <div className="space-y-1.5">
+                        {evaluatorFiles.map((file, i) => (
+                          <a
+                            key={i}
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 text-sm text-accent hover:underline"
+                          >
+                            <Download className="w-3 h-3" />
+                            {file.name}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
 
               {event.attachments && event.attachments.length > 0 && (
                 <div className="mt-2 flex gap-2">
                   {event.attachments.map((file, i) => (
-                    <span
-                      key={i}
-                      className="status-badge bg-secondary text-secondary-foreground"
-                    >
+                    <span key={i} className="status-badge bg-secondary text-secondary-foreground">
                       <FileText className="w-3 h-3" />
                       {file}
                     </span>

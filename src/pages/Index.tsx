@@ -1,35 +1,41 @@
 import { Link } from "react-router-dom";
-import { GraduationCap, BookOpen, ClipboardCheck, Shield } from "lucide-react";
+import { GraduationCap, BookOpen, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 
-const roles = [
+const loginOptions = [
   {
     key: "student",
     label: "Estudiante",
-    description: "Envía tu tesis, consulta el seguimiento y revisa observaciones de evaluadores.",
+    description: "Ingresa con tu código estudiantil para enviar y dar seguimiento a tu tesis.",
     icon: BookOpen,
-    href: "/student",
+    href: "/login/student",
     accent: "group-hover:bg-info/10 group-hover:text-info",
   },
   {
-    key: "evaluator",
-    label: "Evaluador",
-    description: "Evalúa documentos de tesis con rúbrica ponderada y emite conceptos académicos.",
-    icon: ClipboardCheck,
-    href: "/evaluator",
-    accent: "group-hover:bg-accent/10 group-hover:text-accent-foreground",
-  },
-  {
-    key: "admin",
-    label: "Administrador",
-    description: "Gestiona el proceso completo: validación, asignación y seguimiento institucional.",
+    key: "staff",
+    label: "Evaluador / Administrador",
+    description: "Accede con tu correo institucional para evaluar tesis o gestionar el sistema.",
     icon: Shield,
-    href: "/admin",
-    accent: "group-hover:bg-success/10 group-hover:text-success",
+    href: "/login/staff",
+    accent: "group-hover:bg-accent/10 group-hover:text-accent-foreground",
   },
 ];
 
 export default function Index() {
+  const { user, role, loading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!loading && user && role) {
+      if (role === "student") navigate("/student");
+      else if (role === "evaluator") navigate("/evaluator");
+      else if (role === "admin") navigate("/admin");
+    }
+  }, [user, role, loading, navigate]);
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Hero */}
@@ -47,13 +53,13 @@ export default function Index() {
         </div>
       </div>
 
-      {/* Role Selection */}
+      {/* Login Options */}
       <div className="flex-1 flex items-start justify-center px-6 -mt-8">
-        <div className="max-w-4xl w-full grid grid-cols-1 md:grid-cols-3 gap-4">
-          {roles.map((role, i) => (
+        <div className="max-w-3xl w-full grid grid-cols-1 md:grid-cols-2 gap-4">
+          {loginOptions.map((opt, i) => (
             <Link
-              key={role.key}
-              to={role.href}
+              key={opt.key}
+              to={opt.href}
               className={cn(
                 "group bg-card rounded-xl border shadow-card hover:shadow-elevated transition-all duration-300 p-6 animate-fade-in",
               )}
@@ -62,23 +68,22 @@ export default function Index() {
               <div
                 className={cn(
                   "w-12 h-12 rounded-lg bg-secondary flex items-center justify-center mb-4 transition-colors",
-                  role.accent
+                  opt.accent
                 )}
               >
-                <role.icon className="w-6 h-6" />
+                <opt.icon className="w-6 h-6" />
               </div>
               <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
-                {role.label}
+                {opt.label}
               </h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                {role.description}
+                {opt.description}
               </p>
             </Link>
           ))}
         </div>
       </div>
 
-      {/* Footer */}
       <footer className="py-6 text-center text-xs text-muted-foreground">
         EvalTesis © 2025 — Sistema de Evaluación de Tesis Universitarias
       </footer>

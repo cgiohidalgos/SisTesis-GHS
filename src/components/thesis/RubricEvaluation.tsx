@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { defaultRubric, type RubricSection, type EvaluatorConcept } from "@/lib/mock-data";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Upload, FileText, X } from "lucide-react";
+
+interface UploadedFile {
+  name: string;
+  file: File;
+}
 
 export default function RubricEvaluation() {
   const [sections, setSections] = useState<RubricSection[]>(
@@ -14,17 +19,24 @@ export default function RubricEvaluation() {
   );
   const [concept, setConcept] = useState<EvaluatorConcept | null>(null);
   const [generalObs, setGeneralObs] = useState("");
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const updateScore = (sectionId: string, criterionId: string, score: number) => {
     setSections((prev) =>
       prev.map((s) =>
         s.id === sectionId
-          ? {
-              ...s,
-              criteria: s.criteria.map((c) =>
-                c.id === criterionId ? { ...c, score } : c
-              ),
-            }
+          ? { ...s, criteria: s.criteria.map((c) => c.id === criterionId ? { ...c, score } : c) }
+          : s
+      )
+    );
+  };
+
+  const updateObservations = (sectionId: string, criterionId: string, observations: string) => {
+    setSections((prev) =>
+      prev.map((s) =>
+        s.id === sectionId
+          ? { ...s, criteria: s.criteria.map((c) => c.id === criterionId ? { ...c, observations } : c) }
           : s
       )
     );
@@ -33,10 +45,7 @@ export default function RubricEvaluation() {
   const getSectionScore = (section: RubricSection) => {
     const scored = section.criteria.filter((c) => c.score !== undefined);
     if (scored.length === 0) return null;
-    const avg =
-      scored.reduce((sum, c) => sum + (c.score || 0), 0) /
-      scored.length;
-    return avg;
+    return scored.reduce((sum, c) => sum + (c.score || 0), 0) / scored.length;
   };
 
   const getFinalScore = () => {
@@ -50,6 +59,18 @@ export default function RubricEvaluation() {
       }
     }
     return totalWeight > 0 ? (total / (totalWeight / 100)) : null;
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newFiles = Array.from(files).map((f) => ({ name: f.name, file: f }));
+    setUploadedFiles((prev) => [...prev, ...newFiles]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removeFile = (index: number) => {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const finalScore = getFinalScore();
@@ -68,18 +89,12 @@ export default function RubricEvaluation() {
           <div key={section.id} className="bg-card rounded-lg border shadow-card overflow-hidden">
             <div className="px-5 py-4 border-b bg-secondary/50 flex items-center justify-between">
               <div>
-                <h3 className="font-heading font-semibold text-foreground">
-                  {section.name}
-                </h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Ponderación: {section.weight}%
-                </p>
+                <h3 className="font-heading font-semibold text-foreground">{section.name}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Ponderación: {section.weight}%</p>
               </div>
               {sectionAvg !== null && (
                 <div className="text-right">
-                  <span className="text-2xl font-heading font-bold text-accent">
-                    {sectionAvg.toFixed(1)}
-                  </span>
+                  <span className="text-2xl font-heading font-bold text-accent">{sectionAvg.toFixed(1)}</span>
                   <span className="text-sm text-muted-foreground">/5.0</span>
                 </div>
               )}
@@ -88,9 +103,7 @@ export default function RubricEvaluation() {
               {section.criteria.map((criterion) => (
                 <div key={criterion.id} className="px-5 py-4">
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-medium text-foreground">
-                      {criterion.name}
-                    </span>
+                    <span className="text-sm font-medium text-foreground">{criterion.name}</span>
                     <div className="flex gap-1">
                       {[1, 2, 3, 4, 5].map((score) => (
                         <button
@@ -108,6 +121,13 @@ export default function RubricEvaluation() {
                       ))}
                     </div>
                   </div>
+                  {/* Per-criterion observations */}
+                  <Textarea
+                    value={criterion.observations || ""}
+                    onChange={(e) => updateObservations(section.id, criterion.id, e.target.value)}
+                    placeholder="Observaciones sobre este criterio..."
+                    className="min-h-[60px] text-sm"
+                  />
                 </div>
               ))}
             </div>
@@ -118,14 +138,10 @@ export default function RubricEvaluation() {
       {/* Final Score */}
       <div className="bg-card rounded-lg border shadow-elevated p-6">
         <div className="flex items-center justify-between mb-6">
-          <h3 className="font-heading text-lg font-bold text-foreground">
-            Nota Final Ponderada
-          </h3>
+          <h3 className="font-heading text-lg font-bold text-foreground">Nota Final Ponderada</h3>
           {finalScore !== null ? (
             <div className="text-right">
-              <span className="text-4xl font-heading font-bold text-accent">
-                {finalScore.toFixed(2)}
-              </span>
+              <span className="text-4xl font-heading font-bold text-accent">{finalScore.toFixed(2)}</span>
               <span className="text-lg text-muted-foreground">/5.0</span>
             </div>
           ) : (
@@ -138,16 +154,9 @@ export default function RubricEvaluation() {
           {sections.map((section) => {
             const avg = getSectionScore(section);
             return (
-              <div
-                key={section.id}
-                className="bg-secondary/50 rounded-md p-3 text-center"
-              >
-                <p className="text-xs text-muted-foreground mb-1 truncate">
-                  {section.name}
-                </p>
-                <p className="font-heading font-bold text-foreground">
-                  {avg !== null ? `${avg.toFixed(1)}` : "—"}
-                </p>
+              <div key={section.id} className="bg-secondary/50 rounded-md p-3 text-center">
+                <p className="text-xs text-muted-foreground mb-1 truncate">{section.name}</p>
+                <p className="font-heading font-bold text-foreground">{avg !== null ? `${avg.toFixed(1)}` : "—"}</p>
                 <p className="text-xs text-muted-foreground">× {section.weight}%</p>
               </div>
             );
@@ -156,9 +165,7 @@ export default function RubricEvaluation() {
 
         {/* Concept */}
         <div className="mb-6">
-          <label className="text-sm font-medium text-foreground mb-3 block">
-            Concepto del Evaluador
-          </label>
+          <label className="text-sm font-medium text-foreground mb-3 block">Concepto del Evaluador</label>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {conceptOptions.map((opt) => (
               <button
@@ -180,15 +187,56 @@ export default function RubricEvaluation() {
 
         {/* General observations */}
         <div className="mb-6">
-          <label className="text-sm font-medium text-foreground mb-2 block">
-            Observaciones Generales
-          </label>
+          <label className="text-sm font-medium text-foreground mb-2 block">Observaciones Generales</label>
           <Textarea
             value={generalObs}
             onChange={(e) => setGeneralObs(e.target.value)}
             placeholder="Escriba sus observaciones sobre el trabajo evaluado..."
             className="min-h-[100px]"
           />
+        </div>
+
+        {/* File upload */}
+        <div className="mb-6">
+          <label className="text-sm font-medium text-foreground mb-2 block">
+            Archivos Adjuntos para el Estudiante
+          </label>
+          <p className="text-xs text-muted-foreground mb-3">
+            Suba archivos con correcciones o recomendaciones que el estudiante podrá descargar.
+          </p>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileUpload}
+            className="hidden"
+            accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.txt,.zip,.rar"
+          />
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            className="mb-3"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Seleccionar Archivos
+          </Button>
+
+          {uploadedFiles.length > 0 && (
+            <div className="space-y-2">
+              {uploadedFiles.map((f, i) => (
+                <div key={i} className="flex items-center gap-2 bg-secondary/50 rounded-md px-3 py-2">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-foreground flex-1 truncate">{f.name}</span>
+                  <button onClick={() => removeFile(i)} className="text-muted-foreground hover:text-destructive">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <Button

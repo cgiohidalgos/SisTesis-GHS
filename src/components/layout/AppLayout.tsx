@@ -1,5 +1,5 @@
 import { ReactNode, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   GraduationCap,
   LayoutDashboard,
@@ -9,8 +9,10 @@ import {
   Menu,
   X,
   BookOpen,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -41,8 +43,15 @@ const roleLabels = {
 
 export default function AppLayout({ children, role }: AppLayoutProps) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { signOut, profile } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const items = navItems[role];
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate("/");
+  };
 
   return (
     <div className="min-h-screen flex">
@@ -102,13 +111,19 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
           })}
         </nav>
 
-        <div className="p-4 border-t border-sidebar-border">
-          <Link
-            to="/"
-            className="text-xs text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
+        <div className="p-4 border-t border-sidebar-border space-y-2">
+          {profile && (
+            <p className="text-xs text-sidebar-foreground/70 truncate mb-2">
+              {profile.full_name}
+            </p>
+          )}
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 text-xs text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
           >
-            ← Cambiar rol
-          </Link>
+            <LogOut className="w-3 h-3" />
+            Cerrar sesión
+          </button>
         </div>
       </aside>
 
