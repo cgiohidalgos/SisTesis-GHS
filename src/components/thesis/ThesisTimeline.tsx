@@ -7,6 +7,8 @@ interface ThesisTimelineProps {
   evaluatorFiles?: { name: string; url: string }[];
   evaluatorRecommendations?: string;
   isBlindReview?: boolean;
+  /** si el componente se muestra en vista de administrador */
+  isAdmin?: boolean;
 }
 
 const actorIcons = {
@@ -15,7 +17,7 @@ const actorIcons = {
   system: FileText,
 };
 
-export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecommendations, isBlindReview }: ThesisTimelineProps) {
+export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecommendations, isBlindReview, isAdmin }: ThesisTimelineProps) {
   return (
     <div className="relative">
       {events.map((event, index) => {
@@ -76,10 +78,12 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                     event.active ? "text-accent-foreground" : event.completed ? "text-foreground" : "text-muted-foreground"
                   )}
                 >
-                  {event.label}
+                  <span className="whitespace-pre-wrap">{event.label}</span>
                 </h4>
                 {event.date && (
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">{event.date}</span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {new Date(event.date).toLocaleString()}
+                  </span>
                 )}
               </div>
 
@@ -97,30 +101,51 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                 </div>
               )}
 
-              {event.observations && (
+              {event.status === 'defense_scheduled' ? (
+                <div className="mt-2 p-3 bg-info/10 rounded">
+                  {event.defense_date && (
+                    <p className="text-sm">
+                      <strong>Fecha y hora:</strong>{' '}
+                      <span className="font-medium">{new Date(event.defense_date).toLocaleString()}</span>
+                    </p>
+                  )}
+                  {event.defense_location && (
+                    <p className="text-sm">
+                      <strong>Lugar:</strong>{' '}
+                      <span className="font-medium">{event.defense_location}</span>
+                    </p>
+                  )}
+                  {event.defense_info && (
+                    <p className="text-sm">
+                      <strong>Info adicional:</strong>{' '}
+                      <span className="font-medium">{event.defense_info}</span>
+                    </p>
+                  )}
+                </div>
+              ) : event.observations && (
                 <p className="text-sm text-muted-foreground leading-relaxed">{event.observations}</p>
               )}
 
               {/* Show evaluator recommendations and files on concept_issued */}
-              {isConceptIssued && event.completed && (
+              {(isConceptIssued || event.status === 'evaluation_submitted' || event.status === 'evaluations_summary') && event.completed && (
                 <div className="mt-3 space-y-3">
-                  {evaluatorRecommendations && (
+                  {(event.evaluatorRecommendations || evaluatorRecommendations) && (
                     <div className="bg-secondary/50 rounded-md p-3">
                       <div className="flex items-center gap-1.5 text-xs font-medium text-foreground mb-1.5">
                         <MessageSquare className="w-3 h-3" />
                         Recomendaciones del Evaluador
                       </div>
                       <p className="text-sm text-muted-foreground leading-relaxed">
-                        {evaluatorRecommendations}
+                        {event.evaluatorRecommendations || evaluatorRecommendations}
                       </p>
                     </div>
                   )}
 
-                  {evaluatorFiles && evaluatorFiles.length > 0 && (
+                  {(event.evaluatorFiles?.length > 0 || (evaluatorFiles && evaluatorFiles.length > 0)) && (
                     <div className="bg-secondary/50 rounded-md p-3">
                       <p className="text-xs font-medium text-foreground mb-2">Archivos del Evaluador</p>
                       <div className="space-y-1.5">
-                        {evaluatorFiles.map((file, i) => (
+                        {(event.evaluatorFiles || evaluatorFiles || []).map((file, i) => (
                           <a
                             key={i}
                             href={file.url}
@@ -152,6 +177,18 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
           </div>
         );
       })}
+      {/* thank you message at completion */}
+      {events.length > 0 && events[events.length - 1].status === 'evaluations_summary' && (
+        <div className="relative pl-10 pb-8 last:pb-0 animate-fade-in" style={{ animationDelay: `${events.length * 80}ms` }}>
+          <div className="rounded-lg border p-4 bg-secondary/10">
+            <p className="text-sm font-medium text-foreground">
+              {isAdmin
+                ? 'Recuerda a los evaluadores que actualicen su CVLAC tras finalizar sus evaluaciones.'
+                : '¡Gracias por completar la evaluación! No olvides subir este trabajo a tu CVLAC.'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

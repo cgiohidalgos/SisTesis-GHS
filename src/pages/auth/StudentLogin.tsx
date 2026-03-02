@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,17 +15,25 @@ export default function StudentLogin() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentCode || !password) {
-      toast.error("Ingrese su código estudiantil y contraseña");
+      toast.error("Ingrese su código, cédula o correo y contraseña");
       return;
     }
 
     setLoading(true);
     try {
-      const email = `${studentCode}@student.evaltesis.local`;
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      // send the raw identifier (correo institucional, código o cédula)
+      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: studentCode, password }),
+      });
+      if (!resp.ok) throw new Error('invalid credentials');
+      const data = await resp.json();
+      if (data.token) localStorage.setItem('token', data.token);
       toast.success("Bienvenido(a)");
       navigate("/student");
+      // reload after navigation so AuthProvider picks up roles for current route
+      window.location.reload();
     } catch (error: any) {
       toast.error("Código o contraseña incorrectos");
     } finally {
@@ -45,18 +52,18 @@ export default function StudentLogin() {
             Acceso Estudiante
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Ingresa con tu código estudiantil
+            Ingresa con tu código, cédula o correo
           </p>
         </div>
 
         <form onSubmit={handleLogin} className="bg-card border rounded-xl shadow-card p-6 space-y-4">
           <div>
-            <Label htmlFor="code">Código Estudiantil</Label>
+            <Label htmlFor="code">Correo/Código/Cédula</Label>
             <Input
               id="code"
               value={studentCode}
               onChange={(e) => setStudentCode(e.target.value)}
-              placeholder="2020134567"
+              placeholder="2020134567 o correo@uni.edu"
             />
           </div>
           <div>

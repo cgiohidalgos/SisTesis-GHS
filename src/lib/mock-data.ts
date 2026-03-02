@@ -6,9 +6,14 @@ export type ThesisStatus =
   | "concept_issued"
   | "corrections_requested"
   | "approved_for_defense"
+  | "defense_scheduled"        // sustentación programada (event only)
   | "defense_evaluated"
   | "act_signed"
-  | "finalized";
+  | "finalized"
+  | "revision_minima"
+  | "revision_cuidados"
+  | "sustentacion"  // aprobado para sustentación
+  | "evaluator_thanks";  // mensaje de agradecimiento al evaluador
 
 export type EvaluatorConcept = "accepted" | "minor_changes" | "major_changes";
 
@@ -23,11 +28,19 @@ export interface TimelineEvent {
   attachments?: string[];
   completed: boolean;
   active: boolean;
+  // added when evaluators submit; used to show their general observations
+  evaluatorRecommendations?: string;
+  // any files the evaluators attached during their evaluation
+  evaluatorFiles?: { name: string; url: string }[];
+  // details provided when a defense is scheduled
+  defense_date?: string;
+  defense_location?: string;
+  defense_info?: string;
 }
 
 export interface Student {
   id: string;
-  name: string;
+  name?: string;
   code: string;
   cedula: string;
 }
@@ -37,6 +50,12 @@ export interface Evaluator {
   name: string;
   email: string;
   specialty: string;
+}
+
+export interface ThesisEvaluator {
+  id: string;
+  name: string;
+  due_date?: string;
 }
 
 export interface RubricCriterion {
@@ -59,7 +78,7 @@ export interface Thesis {
   title: string;
   students: Student[];
   status: ThesisStatus;
-  evaluators: Evaluator[];
+  evaluators: ThesisEvaluator[];
   submittedAt: string;
   timeline: TimelineEvent[];
   documentUrl?: string;
@@ -73,9 +92,14 @@ export const statusLabels: Record<ThesisStatus, string> = {
   concept_issued: "Concepto Emitido",
   corrections_requested: "Correcciones Solicitadas",
   approved_for_defense: "Aprobada para Sustentación",
+  defense_scheduled: "Sustentación Programada",
   defense_evaluated: "Sustentación Evaluada",
   act_signed: "Acta Firmada",
   finalized: "Proceso Finalizado",
+  revision_minima: "Revisión Mínima",
+  revision_cuidados: "Revisión Cuidados",
+  sustentacion: "Aprobada para Sustentación",
+  evaluator_thanks: "Evaluación completada",
 };
 
 export const statusColors: Record<ThesisStatus, string> = {
@@ -86,9 +110,13 @@ export const statusColors: Record<ThesisStatus, string> = {
   concept_issued: "accent",
   corrections_requested: "destructive",
   approved_for_defense: "success",
+  defense_scheduled: "info",
   defense_evaluated: "success",
   act_signed: "success",
   finalized: "success",
+  revision_minima: "warning",
+  revision_cuidados: "destructive",
+  sustentacion: "success",
 };
 
 export const defaultRubric: RubricSection[] = [
@@ -136,6 +164,52 @@ export const defaultRubric: RubricSection[] = [
     ],
   },
 ];
+
+export const presentationRubric: RubricSection[] = [
+  {
+    id: "p1",
+    name: "Claridad y Dominio del Problema",
+    weight: 25,
+    criteria: [
+      { id: "p1a", name: "Presentación clara del problema de investigación", maxScore: 5 },
+      { id: "p1b", name: "Justificación bien argumentada", maxScore: 5 },
+      { id: "p1c", name: "Coherencia entre problema, objetivos y resultados", maxScore: 5 },
+    ],
+  },
+  {
+    id: "p2",
+    name: "Dominio Metodológico",
+    weight: 25,
+    criteria: [
+      { id: "p2a", name: "Explicación clara de la metodología utilizada", maxScore: 5 },
+      { id: "p2b", name: "Coherencia técnica en las decisiones tomadas", maxScore: 5 },
+      { id: "p2c", name: "Capacidad para justificar el enfoque seleccionado", maxScore: 5 },
+    ],
+  },
+  {
+    id: "p3",
+    name: "Dominio Técnico y Resultados",
+    weight: 30,
+    criteria: [
+      { id: "p3a", name: "Explicación clara de la implementación", maxScore: 5 },
+      { id: "p3b", name: "Interpretación adecuada de métricas y resultados", maxScore: 5 },
+      { id: "p3c", name: "Capacidad de análisis crítico", maxScore: 5 },
+      { id: "p3d", name: "Responde preguntas técnicas con solvencia", maxScore: 5 },
+    ],
+  },
+  {
+    id: "p4",
+    name: "Comunicación y Presentación",
+    weight: 20,
+    criteria: [
+      { id: "p4a", name: "Claridad expositiva", maxScore: 5 },
+      { id: "p4b", name: "Uso adecuado del tiempo", maxScore: 5 },
+      { id: "p4c", name: "Calidad de diapositivas", maxScore: 5 },
+      { id: "p4d", name: "Seguridad y argumentación", maxScore: 5 },
+    ],
+  },
+];
+
 
 export const mockTimeline: TimelineEvent[] = [
   {

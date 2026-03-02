@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,16 +21,17 @@ export default function StaffLogin() {
 
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-
-      // Fetch role to redirect correctly
-      const { data: roles } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", data.user.id);
-
-      const userRole = roles?.[0]?.role;
+      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: email, password }),
+      });
+      if (!resp.ok) throw new Error('invalid credentials');
+      const { user, token } = await resp.json();
+      const rolesResp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/user_roles?user_id=${encodeURIComponent(user.id)}`);
+      const roles = await rolesResp.json();
+      const userRole = roles?.[0];
+      if (token) localStorage.setItem('token', token);
       if (userRole === "admin") {
         navigate("/admin");
       } else if (userRole === "evaluator") {
@@ -40,6 +40,8 @@ export default function StaffLogin() {
         navigate("/");
       }
       toast.success("Bienvenido(a)");
+      // reload app so AuthProvider picks up the new roles on the target page
+      window.location.reload();
     } catch (error: any) {
       toast.error("Correo o contraseña incorrectos");
     } finally {

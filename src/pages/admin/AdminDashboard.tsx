@@ -1,16 +1,43 @@
 import AppLayout from "@/components/layout/AppLayout";
 import ThesisCard from "@/components/thesis/ThesisCard";
-import { mockTheses } from "@/lib/mock-data";
 import { FileText, Users, CheckCircle2, Clock } from "lucide-react";
+import { useEffect, useState } from "react";
 
-const stats = [
-  { label: "Total Tesis", value: "12", icon: FileText, color: "text-info" },
-  { label: "En Evaluación", value: "5", icon: Clock, color: "text-warning" },
-  { label: "Aprobadas", value: "4", icon: CheckCircle2, color: "text-success" },
-  { label: "Evaluadores", value: "8", icon: Users, color: "text-accent" },
-];
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
 
 export default function AdminDashboard() {
+  const [stats, setStats] = useState<any[]>([]);
+  const [theses, setTheses] = useState<any[]>([]);
+
+  const fetchData = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const [sresp, tresp] = await Promise.all([
+        fetch(`${API_BASE}/admin/stats`, { headers: { Authorization: token ? `Bearer ${token}` : '' } }),
+        fetch(`${API_BASE}/theses`, { headers: { Authorization: token ? `Bearer ${token}` : '' } }),
+      ]);
+      if (sresp.ok) {
+        const sjson = await sresp.json();
+        setStats([
+          { label: 'Total Tesis', value: sjson.totalTheses, icon: FileText, color: 'text-info' },
+          { label: 'En Evaluación', value: sjson.inEvaluation, icon: Clock, color: 'text-warning' },
+          { label: 'Aprobadas', value: sjson.approved, icon: CheckCircle2, color: 'text-success' },
+          { label: 'Evaluadores', value: sjson.evaluators, icon: Users, color: 'text-accent' },
+        ]);
+      }
+      if (tresp.ok) {
+        const tjson = await tresp.json();
+        setTheses(tjson);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
   return (
     <AppLayout role="admin">
       <div className="max-w-4xl mx-auto">
@@ -44,7 +71,7 @@ export default function AdminDashboard() {
           Tesis Recientes
         </h3>
         <div className="space-y-4">
-          {mockTheses.map((thesis) => (
+          {theses.map((thesis) => (
             <ThesisCard
               key={thesis.id}
               thesis={thesis}

@@ -1,9 +1,55 @@
+import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import ThesisCard from "@/components/thesis/ThesisCard";
 import StatusBadge from "@/components/thesis/StatusBadge";
-import { mockTheses } from "@/lib/mock-data";
+import { toast } from "sonner";
 
 export default function AdminTheses() {
+  const [theses, setTheses] = useState<any[]>([]);
+
+  const fetchTheses = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('Error cargando tesis');
+      const data = await resp.json();
+      setTheses(data);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteThesis = async (id: string) => {
+    if (!confirm('¿Eliminar esta tesis? Esta acción no se puede deshacer.')) return;
+    // optimista: quitar del listado inmediatamente
+    setTheses((prev) => prev.filter((t) => t.id !== id));
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (resp.ok) {
+        toast.success('Tesis eliminada');
+        fetchTheses();
+      } else if (resp.status === 404) {
+        toast.error('La tesis ya no existe');
+        fetchTheses();
+      } else {
+        const text = await resp.text().catch(() => '');
+        throw new Error(text || 'Error eliminando tesis');
+      }
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  useEffect(() => {
+    fetchTheses();
+  }, []);
+
   return (
     <AppLayout role="admin">
       <div className="max-w-4xl mx-auto">
@@ -15,12 +61,20 @@ export default function AdminTheses() {
         </p>
 
         <div className="space-y-4">
-          {mockTheses.map((thesis) => (
-            <ThesisCard
-              key={thesis.id}
-              thesis={thesis}
-              linkTo={`/admin/theses`}
-            />
+          {theses.map((thesis) => (
+            <div key={thesis.id} className="relative">
+              <ThesisCard
+                thesis={thesis}
+                linkTo={`/admin/theses/${thesis.id}`}
+              />
+              <button
+                onClick={() => handleDeleteThesis(thesis.id)}
+                className="absolute top-2 right-2 text-red-600 hover:text-red-800 bg-white rounded-full p-1 shadow"
+                title="Eliminar tesis"
+              >
+                🗑️
+              </button>
+            </div>
           ))}
         </div>
       </div>

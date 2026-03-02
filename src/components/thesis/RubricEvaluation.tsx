@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { defaultRubric, type RubricSection, type EvaluatorConcept } from "@/lib/mock-data";
 import { Button } from "@/components/ui/button";
@@ -10,16 +10,58 @@ interface UploadedFile {
   file: File;
 }
 
-export default function RubricEvaluation() {
+interface EvalFile {
+  id: string;
+  file_name: string;
+  file_url: string;
+}
+
+interface RubricEvaluationProps {
+  thesis?: any;
+  onSubmit?: (data: { score: number | null; observations: string; concept?: EvaluatorConcept | null; sections?: RubricSection[]; files?: File[] }) => Promise<void>;
+  initialConcept?: EvaluatorConcept | null;
+  initialSections?: RubricSection[];
+  initialGeneralObs?: string;
+  initialFiles?: EvalFile[];
+  /** final score already calculated by backend – used when displaying readOnly forms */
+  initialFinalScore?: number | null;
+  submitDisabled?: boolean;
+  readOnly?: boolean;
+  /** whether to show the concept selection block */
+  showConcept?: boolean;
+  /** whether to allow uploading files */
+  showFiles?: boolean;
+}
+
+export default function RubricEvaluation({ thesis, onSubmit, initialConcept, initialSections, initialGeneralObs, initialFiles, initialFinalScore = null, submitDisabled, readOnly = false, showConcept = true, showFiles = true }: RubricEvaluationProps) {
   const [sections, setSections] = useState<RubricSection[]>(
-    defaultRubric.map((s) => ({
-      ...s,
-      criteria: s.criteria.map((c) => ({ ...c, score: undefined, observations: "" })),
-    }))
+    initialSections ??
+      defaultRubric.map((s) => ({
+        ...s,
+        criteria: s.criteria.map((c) => ({ ...c, score: undefined, observations: "" })),
+      }))
   );
-  const [concept, setConcept] = useState<EvaluatorConcept | null>(null);
-  const [generalObs, setGeneralObs] = useState("");
+
+  // keep the local state in sync when parent provides new initialSections
+  useEffect(() => {
+    if (initialSections) {
+      console.debug('RubricEvaluation syncing sections from props', initialSections);
+      setSections(initialSections);
+    }
+  }, [initialSections]);
+  const [concept, setConcept] = useState<EvaluatorConcept | null>(initialConcept || null);
+
+  // if parent provides a different initialConcept (e.g. after fetch completes)
+  // keep our local state in sync so the correct button is highlighted
+  useEffect(() => {
+    if (initialConcept !== undefined) {
+      console.debug('RubricEvaluation syncing concept from props', initialConcept);
+      setConcept(initialConcept);
+    }
+  }, [initialConcept]);
+  const [generalObs, setGeneralObs] = useState(initialGeneralObs || "");
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [existingFiles, setExistingFiles] = useState<EvalFile[]>(initialFiles || []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const updateScore = (sectionId: string, criterionId: string, score: number) => {
@@ -64,7 +106,8 @@ export default function RubricEvaluation() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const newFiles = Array.from(files).map((f) => ({ name: f.name, file: f }));
+    // convert FileList to UploadedFile objects so we can track both name and the File
+    const newFiles: UploadedFile[] = Array.from(files).map((f) => ({ name: f.name, file: f }));
     setUploadedFiles((prev) => [...prev, ...newFiles]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -74,6 +117,14 @@ export default function RubricEvaluation() {
   };
 
   const finalScore = getFinalScore();
+  // if the rubric is read-only and we weren't able to compute a score (due to missing
+  // data) fall back to the value supplied by the server
+  const displayFinalScore =
+    finalScore !== null
+      ? finalScore
+      : readOnly && initialFinalScore != null
+      ? initialFinalScore
+      : null;
 
   const conceptOptions: { value: EvaluatorConcept; label: string; icon: typeof CheckCircle2; color: string }[] = [
     { value: "accepted", label: "Aceptado para Sustentación", icon: CheckCircle2, color: "bg-success text-success-foreground" },
@@ -108,12 +159,14 @@ export default function RubricEvaluation() {
                       {[1, 2, 3, 4, 5].map((score) => (
                         <button
                           key={score}
-                          onClick={() => updateScore(section.id, criterion.id, score)}
+                          onClick={() => !readOnly && updateScore(section.id, criterion.id, score)}
+                          disabled={readOnly}
                           className={cn(
                             "w-9 h-9 rounded-md text-sm font-semibold transition-all",
-                            criterion.score === score
+                            (criterion.score !== undefined && Number(criterion.score) === score)
                               ? "bg-accent text-accent-foreground shadow-md scale-110"
-                              : "bg-secondary text-secondary-foreground hover:bg-accent/20"
+                              : "bg-secondary text-secondary-foreground hover:bg-accent/20",
+                            readOnly && "cursor-default"
                           )}
                         >
                           {score}
@@ -127,6 +180,7 @@ export default function RubricEvaluation() {
                     onChange={(e) => updateObservations(section.id, criterion.id, e.target.value)}
                     placeholder="Observaciones sobre este criterio..."
                     className="min-h-[60px] text-sm"
+                    disabled={readOnly}
                   />
                 </div>
               ))}
@@ -139,9 +193,9 @@ export default function RubricEvaluation() {
       <div className="bg-card rounded-lg border shadow-elevated p-6">
         <div className="flex items-center justify-between mb-6">
           <h3 className="font-heading text-lg font-bold text-foreground">Nota Final Ponderada</h3>
-          {finalScore !== null ? (
+          {displayFinalScore !== null ? (
             <div className="text-right">
-              <span className="text-4xl font-heading font-bold text-accent">{finalScore.toFixed(2)}</span>
+              <span className="text-4xl font-heading font-bold text-accent">{displayFinalScore.toFixed(2)}</span>
               <span className="text-lg text-muted-foreground">/5.0</span>
             </div>
           ) : (
@@ -164,26 +218,30 @@ export default function RubricEvaluation() {
         </div>
 
         {/* Concept */}
-        <div className="mb-6">
-          <label className="text-sm font-medium text-foreground mb-3 block">Concepto del Evaluador</label>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {conceptOptions.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setConcept(opt.value)}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-3 rounded-lg border-2 transition-all text-sm font-medium",
-                  concept === opt.value
-                    ? `${opt.color} border-transparent shadow-md`
-                    : "bg-card border-border text-foreground hover:border-accent/30"
-                )}
-              >
-                <opt.icon className="w-4 h-4" />
-                {opt.label}
-              </button>
-            ))}
+        {showConcept !== false && (
+          <div className="mb-6">
+            <label className="text-sm font-medium text-foreground mb-3 block">Concepto del Evaluador</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {conceptOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => !readOnly && setConcept(opt.value)}
+                  disabled={readOnly}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-3 rounded-lg border-2 transition-all text-sm font-medium",
+                    concept === opt.value
+                      ? `${opt.color} border-transparent shadow-md`
+                      : "bg-card border-border text-foreground hover:border-accent/30",
+                    readOnly && "cursor-default"
+                  )}
+                >
+                  <opt.icon className="w-4 h-4" />
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* General observations */}
         <div className="mb-6">
@@ -193,58 +251,87 @@ export default function RubricEvaluation() {
             onChange={(e) => setGeneralObs(e.target.value)}
             placeholder="Escriba sus observaciones sobre el trabajo evaluado..."
             className="min-h-[100px]"
+            disabled={readOnly}
           />
         </div>
 
         {/* File upload */}
-        <div className="mb-6">
-          <label className="text-sm font-medium text-foreground mb-2 block">
-            Archivos Adjuntos para el Estudiante
-          </label>
-          <p className="text-xs text-muted-foreground mb-3">
-            Suba archivos con correcciones o recomendaciones que el estudiante podrá descargar.
-          </p>
+        {!readOnly && showFiles && (
+          <div className="mb-6">
+            <label className="text-sm font-medium text-foreground mb-2 block">
+              Archivos Adjuntos para el Estudiante
+            </label>
+            <p className="text-xs text-muted-foreground mb-3">
+              Suba archivos con correcciones o recomendaciones que el estudiante podrá descargar.
+            </p>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileUpload}
-            className="hidden"
-            accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.txt,.zip,.rar"
-          />
+            {existingFiles.length > 0 && (
+              <div className="mb-3">
+                <strong>Archivos previamente subidos:</strong>
+                <ul className="list-disc list-inside text-sm">
+                  {existingFiles.map((f) => (
+                    <li key={f.id}>
+                      <a href={`${API_BASE}${f.file_url}`} target="_blank" rel="noopener noreferrer">{f.file_name}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={handleFileUpload}
+              className="hidden"
+              accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.txt,.zip,.rar"
+            />
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              className="mb-3"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Seleccionar Archivos
+            </Button>
+
+            {uploadedFiles.length > 0 && (
+              <div className="space-y-2">
+                {uploadedFiles.map((f, i) => (
+                  <div key={i} className="flex items-center gap-2 bg-secondary/50 rounded-md px-3 py-2">
+                    <FileText className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm text-foreground flex-1 truncate">{f.name}</span>
+                    <button onClick={() => removeFile(i)} className="text-muted-foreground hover:text-destructive">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!readOnly && (
           <Button
-            type="button"
-            variant="outline"
-            onClick={() => fileInputRef.current?.click()}
-            className="mb-3"
+            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
+            disabled={(showConcept && !concept) || finalScore === null || submitDisabled}
+            onClick={async () => {
+              if (onSubmit) {
+                await onSubmit({
+                  score: finalScore,
+                  observations: generalObs,
+                  concept,
+                  sections,
+                  files: uploadedFiles.map(f => f.file),
+                });
+              }
+            }}
           >
-            <Upload className="w-4 h-4 mr-2" />
-            Seleccionar Archivos
+            Enviar Evaluación
           </Button>
-
-          {uploadedFiles.length > 0 && (
-            <div className="space-y-2">
-              {uploadedFiles.map((f, i) => (
-                <div key={i} className="flex items-center gap-2 bg-secondary/50 rounded-md px-3 py-2">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm text-foreground flex-1 truncate">{f.name}</span>
-                  <button onClick={() => removeFile(i)} className="text-muted-foreground hover:text-destructive">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <Button
-          className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
-          disabled={!concept || finalScore === null}
-        >
-          Enviar Evaluación
-        </Button>
+        )}
       </div>
     </div>
   );

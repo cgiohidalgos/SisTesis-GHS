@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,50 +13,80 @@ export default function StudentRegister() {
     fullName: "",
     studentCode: "",
     cedula: "",
+    institutionalEmail: "",
     password: "",
   });
+    const [errors, setErrors] = useState<{ studentCode?: string; cedula?: string; institutionalEmail?: string }>({});
+    const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+
+    // clear timer on unmount to avoid leaks
+    useEffect(() => {
+      return () => {
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      };
+    }, []);
+    const checkUnique = async (field: 'studentCode' | 'cedula' | 'institutionalEmail', value: string) => {
+    if (!value) return;
+    try {
+      const token = localStorage.getItem('token');
+      const params = new URLSearchParams();
+      if (field === 'studentCode') params.set('student_code', value);
+        else if (field === 'cedula') params.set('cedula', value);
+        else if (field === 'institutionalEmail') params.set('institutional_email', value);
+      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/users/check?${params.toString()}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (field === 'studentCode' && data.student_code) {
+        setErrors((e) => ({ ...e, studentCode: 'Código ya registrado' }));
+      } else if (field === 'studentCode') {
+        setErrors((e) => ({ ...e, studentCode: undefined }));
+      }
+      if (field === 'cedula' && data.cedula) {
+        setErrors((e) => ({ ...e, cedula: 'Cédula ya registrada' }));
+      } else if (field === 'cedula') {
+        setErrors((e) => ({ ...e, cedula: undefined }));
+      }
+      if (field === 'institutionalEmail' && data.institutional_email) {
+        setErrors((e) => ({ ...e, institutionalEmail: 'Correo institucional ya registrado' }));
+      } else if (field === 'institutionalEmail') {
+        setErrors((e) => ({ ...e, institutionalEmail: undefined }));
+      }
+    } catch (e) {
+      console.error('checkUnique error', e);
+    }
+  };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.fullName || !form.studentCode || !form.cedula || !form.password) {
-      toast.error("Todos los campos son obligatorios");
+    if (!form.fullName || !form.studentCode || !form.cedula || !form.password || !form.institutionalEmail) {
+      toast.error("Todos los campos son obligatorios, incluido el correo institucional");
+      return;
+    }
+    if (errors.studentCode || errors.cedula) {
+      toast.error("Corrige los errores antes de enviar");
       return;
     }
 
     setLoading(true);
     try {
-      // Use student code as email for auth (code@student.local)
-      const email = `${form.studentCode}@student.evaltesis.local`;
-
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password: form.password,
-        options: {
-          data: {
-            full_name: form.fullName,
-          },
-        },
-      });
-
-      if (error) throw error;
-
-      if (data.user) {
-        // Update profile with student data
-        await supabase.from("profiles").update({
+      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          institutional_email: form.institutionalEmail,
+          password: form.password,
           full_name: form.fullName,
           student_code: form.studentCode,
           cedula: form.cedula,
-        }).eq("id", data.user.id);
-
-        // Assign student role
-        await supabase.from("user_roles").insert({
-          user_id: data.user.id,
-          role: "student" as any,
-        });
-
-        toast.success("Registro exitoso. Bienvenido(a).");
-        navigate("/student");
-      }
+        }),
+      });
+      if (!resp.ok) throw new Error('registration error');
+      const { user, token } = await resp.json();
+      if (token) localStorage.setItem('token', token);
+      toast.success("Registro exitoso. Bienvenido(a).");
+      navigate("/student");
     } catch (error: any) {
       toast.error(error.message || "Error al registrarse");
     } finally {
@@ -95,17 +124,48 @@ export default function StudentRegister() {
             <Input
               id="studentCode"
               value={form.studentCode}
-              onChange={(e) => setForm({ ...form, studentCode: e.target.value })}
+              onChange={(e) => {
+                const val = e.target.value;
+                setForm({ ...form, studentCode: val });
+                if (debounceTimer.current) clearTimeout(debounceTimer.current);
+                debounceTimer.current = setTimeout(() => checkUnique('studentCode', val), 500);
+              }}
               placeholder="2020134567"
             />
+            {errors.studentCode && (
+              <p className="text-red-500 text-sm mt-1">{errors.studentCode}</p>
+            )}
           </div>
           <div>
             <Label htmlFor="cedula">Número de Cédula</Label>
             <Input
               id="cedula"
               value={form.cedula}
-              onChange={(e) => setForm({ ...form, cedula: e.target.value })}
+              onChange={(e) => {
+                const val = e.target.value;
+                setForm({ ...form, cedula: val });
+                if (debounceTimer.current) clearTimeout(debounceTimer.current);
+                debounceTimer.current = setTimeout(() => checkUnique('cedula', val), 500);
+              }}
               placeholder="1098765432"
+            />
+            {errors.cedula && (
+              <p className="text-red-500 text-sm mt-1">{errors.cedula}</p>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="instEmail">Correo institucional</Label>
+            <Input
+              id="instEmail"
+              type="email"
+              value={form.institutionalEmail}
+              onChange={(e) => {
+                const val = e.target.value;
+                setForm({ ...form, institutionalEmail: val });
+                if (debounceTimer.current) clearTimeout(debounceTimer.current);
+                debounceTimer.current = setTimeout(() => checkUnique('institutionalEmail', val), 500);
+              }}
+              placeholder="nombre@universidad.edu"
             />
           </div>
           <div>
@@ -118,7 +178,11 @@ export default function StudentRegister() {
               placeholder="Mínimo 6 caracteres"
             />
           </div>
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={loading || errors.studentCode || errors.cedula}
+          >
             {loading ? "Registrando..." : "Registrarse"}
           </Button>
           <p className="text-center text-sm text-muted-foreground">

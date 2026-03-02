@@ -1,0 +1,45 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: thesis_backend
+    ports:
+      - "4000:4000"
+    environment:
+      - JWT_SECRET=change_me
+      - ADMIN_EMAIL=admin@admin.com
+      - ADMIN_PASSWORD=admin
+    volumes:
+      - db_data:/app/data
+      - ./server/uploads:/app/uploads
+      # mount source code for live development so changes apply without rebuild
+      - ./server:/app
+      # protect container-installed node_modules from being overwritten
+      - /app/node_modules
+    command: ["npm", "run", "dev"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: thesis_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE=http://localhost:4000
+    depends_on:
+      - backend
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.app.json:/app/tsconfig.app.json
+      - ./tsconfig.node.json:/app/tsconfig.node.json
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+
+volumes:
+  db_data:

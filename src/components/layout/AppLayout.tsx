@@ -16,7 +16,8 @@ import { useAuth } from "@/hooks/useAuth";
 
 interface AppLayoutProps {
   children: ReactNode;
-  role: "student" | "evaluator" | "admin";
+  // superadmin uses admin navigation plus extra links
+  role: "student" | "evaluator" | "admin" | "superadmin";
 }
 
 const navItems = {
@@ -26,12 +27,13 @@ const navItems = {
   ],
   evaluator: [
     { label: "Tesis Asignadas", href: "/evaluator", icon: FileText },
-    { label: "Evaluar", href: "/evaluator/rubric", icon: ClipboardCheck },
+    // (el enlace Evaluar redirige al dashboard, así que no necesita entrada separada)
   ],
   admin: [
     { label: "Panel", href: "/admin", icon: LayoutDashboard },
     { label: "Tesis", href: "/admin/theses", icon: FileText },
     { label: "Evaluadores", href: "/admin/evaluators", icon: Users },
+    { label: "Programas", href: "/admin/programs", icon: BookOpen },
   ],
 };
 
@@ -44,9 +46,23 @@ const roleLabels = {
 export default function AppLayout({ children, role }: AppLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { signOut, profile } = useAuth();
+  const { signOut, profile, isSuper } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const items = navItems[role];
+  // treat superadmin the same as admin for menu items
+  const effectiveRole = role === 'superadmin' ? 'admin' : role;
+  let items = navItems[effectiveRole as keyof typeof navItems];
+  // hide programas section unless user is superadmin
+  if (effectiveRole === 'admin' && !isSuper) {
+    items = items.filter(i => i.href !== '/admin/programs');
+  }
+  if (isSuper && effectiveRole === 'admin') {
+    items = [
+      ...items,
+      { label: 'Usuarios', href: '/admin/users', icon: Users },
+      { label: 'Checklist', href: '/admin/review-items', icon: ClipboardCheck },
+      { label: 'Pesos', href: '/admin/weights', icon: FileText },
+    ];
+  }
 
   const handleLogout = async () => {
     await signOut();
@@ -80,6 +96,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
             </h1>
             <p className="text-xs text-sidebar-foreground/70">
               {roleLabels[role]}
+              {isSuper && <span className="ml-1 text-yellow-400 font-bold text-xs">(superadmin)</span>}
             </p>
           </div>
           <button

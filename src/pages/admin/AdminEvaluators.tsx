@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
 import AppLayout from "@/components/layout/AppLayout";
 import { User, Mail, BookOpen, Plus, EyeOff, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,42 +20,81 @@ import { toast } from "sonner";
 interface Evaluator {
   id: string;
   name: string;
-  email: string;
+  institutionalEmail: string;
   specialty: string;
   theses: number;
 }
 
-const initialEvaluators: Evaluator[] = [
-  { id: "1", name: "Dr. Carlos Pérez", email: "cperez@univ.edu", specialty: "Redes y Seguridad", theses: 3 },
-  { id: "2", name: "Dra. Ana Rodríguez", email: "arodriguez@univ.edu", specialty: "Machine Learning", theses: 2 },
-  { id: "3", name: "Dr. Roberto Sánchez", email: "rsanchez@univ.edu", specialty: "Sistemas de Información", theses: 4 },
-  { id: "4", name: "Dra. Patricia Méndez", email: "pmendez@univ.edu", specialty: "IA en Salud", theses: 1 },
-];
+// start with empty list; actual evaluators come from backend
+const initialEvaluators: Evaluator[] = [];
 
 export default function AdminEvaluators() {
   const [evaluators, setEvaluators] = useState<Evaluator[]>(initialEvaluators);
   const [showRegister, setShowRegister] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [showAssign, setShowAssign] = useState(false);
-  const [newEval, setNewEval] = useState({ name: "", email: "", specialty: "", password: "" });
+  const [thesisId, setThesisId] = useState<string | null>(null);
+  const [thesisInfo, setThesisInfo] = useState<any>(null);
+  const [newEval, setNewEval] = useState({ name: "", institutionalEmail: "", specialty: "", password: "" });
   const [selectedEvaluators, setSelectedEvaluators] = useState<string[]>([]);
   const [isBlind, setIsBlind] = useState(false);
+  const [dueDate, setDueDate] = useState<string>("");
+  const [search] = useSearchParams();
+  const navigate = useNavigate();
 
-  const handleRegister = () => {
-    if (!newEval.name || !newEval.email || !newEval.password) {
-      toast.error("Nombre, correo y contraseña son obligatorios");
+  const handleRegister = async () => {
+    if (!newEval.name || !newEval.institutionalEmail || (!editingId && !newEval.password)) {
+      toast.error("Nombre, correo institucional y contraseña (para nuevo) son obligatorios");
       return;
     }
-    const ev: Evaluator = {
-      id: String(evaluators.length + 1),
-      name: newEval.name,
-      email: newEval.email,
-      specialty: newEval.specialty,
-      theses: 0,
-    };
-    setEvaluators((prev) => [...prev, ev]);
-    setNewEval({ name: "", email: "", specialty: "", password: "" });
-    setShowRegister(false);
-    toast.success(`Evaluador ${ev.name} registrado exitosamente`);
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) throw new Error('No autorizado, inicia sesión de nuevo');
+      let resp;
+      if (editingId) {
+        // update existing evaluator
+        const payload: any = {
+          full_name: newEval.name,
+          institutional_email: newEval.institutionalEmail,
+          specialty: newEval.specialty,
+        };
+        if (newEval.password) payload.password = newEval.password;
+        resp = await fetch(`${API_BASE}/users/${editingId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        resp = await fetch(`${API_BASE}/users`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({
+            institutional_email: newEval.institutionalEmail,
+            password: newEval.password,
+            full_name: newEval.name,
+            specialty: newEval.specialty,
+          }),
+        });
+      }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        throw new Error(err?.error || (editingId ? 'Error actualizando evaluador' : 'Error creando evaluador'));
+      }
+      const created = await resp.json();
+      await fetchEvaluators();
+      setNewEval({ name: "", institutionalEmail: "", specialty: "", password: "" });
+      setEditingId(null);
+      setShowRegister(false);
+      toast.success(editingId ? "Evaluador actualizado" : `Evaluador ${created.full_name || newEval.name} registrado exitosamente`);
+    } catch (e: any) {
+      toast.error(e.message || (editingId ? 'Error actualizando evaluador' : 'Error creando evaluador'));
+    }
   };
 
   const toggleEvaluatorSelection = (id: string) => {
@@ -61,9 +103,54 @@ export default function AdminEvaluators() {
     );
   };
 
-  const handleAssign = () => {
+  const fetchEvaluators = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/users?role=evaluator`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('No se pudieron cargar evaluadores');
+      const list = await resp.json();
+      // map to Evaluator interface
+      const mapped: Evaluator[] = list.map((u: any) => ({
+        id: u.id,
+        name: u.full_name || '',
+        institutionalEmail: u.institutional_email || '',
+        specialty: u.specialty || '',
+        theses: u.theses || 0,
+      }));
+      setEvaluators(mapped);
+    } catch (err) {
+      console.error('fetchEvaluators', err);
+    }
+  };
+
+  const handleAssign = async () => {
     if (selectedEvaluators.length !== 2) {
       toast.error("Debe seleccionar exactamente 2 evaluadores");
+      return;
+    }
+    if (thesisId) {
+      // use batch assignment endpoint
+      try {
+        const token = localStorage.getItem('token');
+        const payload: any = { evaluator_ids: selectedEvaluators, is_blind: isBlind ? 1 : 0 };
+        if (dueDate) payload.due_date = dueDate;
+        const resp = await fetch(`${API_BASE}/theses/${thesisId}/assign-evaluators`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error('assignment failed');
+        toast.success('Evaluadores asignados');
+        setSelectedEvaluators([]);
+        setIsBlind(false);
+        setDueDate("");
+        setShowAssign(false);
+        navigate('/admin/theses', { state: { msg: 'Evaluadores asignados' } });
+      } catch (e: any) {
+        toast.error(e.message);
+      }
       return;
     }
     const names = selectedEvaluators.map((id) => evaluators.find((e) => e.id === id)?.name).join(" y ");
@@ -71,6 +158,48 @@ export default function AdminEvaluators() {
     setSelectedEvaluators([]);
     setIsBlind(false);
     setShowAssign(false);
+  };
+
+  useEffect(() => {
+    // load evaluators list initially
+    fetchEvaluators();
+    const tid = search.get('thesis');
+    if (tid) {
+      setThesisId(tid);
+      setShowAssign(true);
+      // optionally fetch thesis info for display
+      fetch(`${API_BASE}/theses/${tid}`, { headers: { Authorization: localStorage.getItem('token') ? `Bearer ${localStorage.getItem('token')}` : '' } })
+        .then(r => r.json())
+        .then(setThesisInfo)
+        .catch(() => {});
+    }
+  }, [search]);
+
+  const handleEditEvaluator = (u: Evaluator) => {
+    setEditingId(u.id);
+    setNewEval({
+      name: u.name,
+      institutionalEmail: u.institutionalEmail,
+      specialty: u.specialty,
+      password: "",
+    });
+    setShowRegister(true);
+  };
+
+  const handleDeleteEvaluator = async (id: string) => {
+    if (!confirm("¿Eliminar este evaluador? Esta acción no se puede deshacer.")) return;
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/users/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('Error eliminando evaluador');
+      toast.success('Evaluador eliminado');
+      fetchEvaluators();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
   };
 
   return (
@@ -85,16 +214,23 @@ export default function AdminEvaluators() {
           </div>
           <div className="flex gap-2">
             {/* Register new evaluator */}
-            <Dialog open={showRegister} onOpenChange={setShowRegister}>
+            <Dialog open={showRegister} onOpenChange={(open) => {
+              setShowRegister(open);
+              if (!open) {
+                // reset when dialog closes
+                setNewEval({ name: "", institutionalEmail: "", specialty: "", password: "" });
+                setEditingId(null);
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm">
                   <UserPlus className="w-4 h-4 mr-1" />
-                  Registrar
+                  {editingId ? 'Editar' : 'Registrar'}
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle className="font-heading">Registrar Nuevo Evaluador</DialogTitle>
+                  <DialogTitle className="font-heading">{editingId ? 'Editar Evaluador' : 'Registrar Nuevo Evaluador'}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 mt-4">
                   <div>
@@ -103,17 +239,17 @@ export default function AdminEvaluators() {
                   </div>
                   <div>
                     <Label>Correo Institucional</Label>
-                    <Input type="email" value={newEval.email} onChange={(e) => setNewEval({ ...newEval, email: e.target.value })} placeholder="jperez@univ.edu" />
+                    <Input type="email" value={newEval.institutionalEmail} onChange={(e) => setNewEval({ ...newEval, institutionalEmail: e.target.value })} placeholder="jperez@univ.edu" />
                   </div>
                   <div>
-                    <Label>Contraseña</Label>
+                    <Label>{editingId ? 'Contraseña (dejar en blanco para no cambiar)' : 'Contraseña'}</Label>
                     <Input type="password" value={newEval.password} onChange={(e) => setNewEval({ ...newEval, password: e.target.value })} placeholder="Mínimo 6 caracteres" />
                   </div>
                   <div>
                     <Label>Especialidad</Label>
                     <Input value={newEval.specialty} onChange={(e) => setNewEval({ ...newEval, specialty: e.target.value })} placeholder="Redes y Seguridad" />
                   </div>
-                  <Button onClick={handleRegister} className="w-full">Registrar Evaluador</Button>
+                  <Button onClick={handleRegister} className="w-full">{editingId ? 'Guardar cambios' : 'Registrar Evaluador'}</Button>
                 </div>
               </DialogContent>
             </Dialog>
@@ -128,7 +264,9 @@ export default function AdminEvaluators() {
               </DialogTrigger>
               <DialogContent className="max-w-lg">
                 <DialogHeader>
-                  <DialogTitle className="font-heading">Asignar Evaluadores a Tesis</DialogTitle>
+                  <DialogTitle className="font-heading">
+                    Asignar Evaluadores {thesisInfo ? `a: ${thesisInfo.title}` : 'a Tesis'}
+                  </DialogTitle>
                 </DialogHeader>
                 <div className="mt-4 space-y-4">
                   <p className="text-sm text-muted-foreground">
@@ -153,7 +291,7 @@ export default function AdminEvaluators() {
                           </div>
                           <div className="flex-1">
                             <p className="text-sm font-medium text-foreground">{ev.name}</p>
-                            <p className="text-xs text-muted-foreground">{ev.specialty || ev.email}</p>
+                            <p className="text-xs text-muted-foreground">{ev.specialty || ev.institutionalEmail}</p>
                           </div>
                           {isSelected && (
                             <span className="text-xs font-medium text-accent">✓</span>
@@ -163,8 +301,14 @@ export default function AdminEvaluators() {
                     })}
                   </div>
 
-                  {/* Blind review toggle */}
-                  <div className="flex items-center justify-between bg-secondary/50 rounded-lg p-3">
+                  {/* Due date and blind review toggle */}
+                  <div className="flex items-center gap-4">
+                    <div>
+                      <Label>Fecha límite</Label>
+                      <input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} className="border px-2 py-1 rounded" />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between bg-secondary/50 rounded-lg p-3 mt-2">
                     <div className="flex items-center gap-2">
                       <EyeOff className="w-4 h-4 text-muted-foreground" />
                       <div>
@@ -202,7 +346,7 @@ export default function AdminEvaluators() {
                   <h4 className="font-heading font-semibold text-foreground text-sm">{ev.name}</h4>
                   <p className="text-xs text-muted-foreground flex items-center gap-1">
                     <Mail className="w-3 h-3" />
-                    {ev.email}
+                    {ev.institutionalEmail}
                   </p>
                 </div>
               </div>
@@ -212,6 +356,14 @@ export default function AdminEvaluators() {
                   {ev.specialty}
                 </span>
                 <span className="status-badge bg-secondary text-secondary-foreground">{ev.theses} tesis</span>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button size="xs" variant="outline" onClick={() => handleEditEvaluator(ev)}>
+                  Editar
+                </Button>
+                <Button size="xs" variant="destructive" onClick={() => handleDeleteEvaluator(ev.id)}>
+                  Eliminar
+                </Button>
               </div>
             </div>
           ))}
