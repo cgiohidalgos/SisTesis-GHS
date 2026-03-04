@@ -21,7 +21,7 @@ export default function AdminDashboard() {
         setStats([
           { label: 'Total Tesis', value: sjson.totalTheses, icon: FileText, color: 'text-info' },
           { label: 'En Evaluación', value: sjson.inEvaluation, icon: Clock, color: 'text-warning' },
-          { label: 'Aprobadas', value: sjson.approved, icon: CheckCircle2, color: 'text-success' },
+          { label: 'Finalizadas', value: sjson.finalized, icon: CheckCircle2, color: 'text-success' },
           { label: 'Evaluadores', value: sjson.evaluators, icon: Users, color: 'text-accent' },
         ]);
       }

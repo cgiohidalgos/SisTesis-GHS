@@ -181,7 +181,7 @@ export default function StudentRegister() {
           <Button
             type="submit"
             className="w-full"
-            disabled={loading || errors.studentCode || errors.cedula}
+            disabled={loading || !!errors.studentCode || !!errors.cedula}
           >
             {loading ? "Registrando..." : "Registrarse"}
           </Button>

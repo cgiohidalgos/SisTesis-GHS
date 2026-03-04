@@ -12,6 +12,8 @@ export type ThesisStatus =
   | "finalized"
   | "revision_minima"
   | "revision_cuidados"
+  | "revision_submitted"
+  | "second_evaluation"
   | "sustentacion"  // aprobado para sustentación
   | "evaluator_thanks";  // mensaje de agradecimiento al evaluador
 
@@ -32,6 +34,8 @@ export interface TimelineEvent {
   evaluatorRecommendations?: string;
   // any files the evaluators attached during their evaluation
   evaluatorFiles?: { name: string; url: string }[];
+  // files uploaded by student when submitting a revision/response
+  revisionFiles?: { name: string; url: string }[];
   // details provided when a defense is scheduled
   defense_date?: string;
   defense_location?: string;
@@ -98,7 +102,9 @@ export const statusLabels: Record<ThesisStatus, string> = {
   finalized: "Proceso Finalizado",
   revision_minima: "Revisión Mínima",
   revision_cuidados: "Revisión Cuidados",
-  sustentacion: "Aprobada para Sustentación",
+  revision_submitted: "Revisión Enviada",
+  second_evaluation: "Segunda Evaluación",
+  sustentacion: "Finalizada",
   evaluator_thanks: "Evaluación completada",
 };
 
@@ -117,6 +123,7 @@ export const statusColors: Record<ThesisStatus, string> = {
   revision_minima: "warning",
   revision_cuidados: "destructive",
   sustentacion: "success",
+  evaluator_thanks: "success",
 };
 
 export const defaultRubric: RubricSection[] = [
@@ -319,8 +326,8 @@ export const mockTheses: Thesis[] = [
     ],
     status: "approved_for_defense",
     evaluators: [
-      { id: "e1", name: "Dr. Carlos Pérez", email: "cperez@univ.edu", specialty: "Redes y Seguridad" },
-      { id: "e2", name: "Dra. Ana Rodríguez", email: "arodriguez@univ.edu", specialty: "Machine Learning" },
+      { id: "e1", name: "Dr. Carlos Pérez" },
+      { id: "e2", name: "Dra. Ana Rodríguez" },
     ],
     submittedAt: "2025-01-15",
     timeline: mockTimeline,
@@ -333,8 +340,8 @@ export const mockTheses: Thesis[] = [
     ],
     status: "academic_evaluation",
     evaluators: [
-      { id: "e3", name: "Dr. Roberto Sánchez", email: "rsanchez@univ.edu", specialty: "Sistemas de Información" },
-      { id: "e4", name: "Dra. Patricia Méndez", email: "pmendez@univ.edu", specialty: "IA en Salud" },
+      { id: "e3", name: "Dr. Roberto Sánchez" },
+      { id: "e4", name: "Dra. Patricia Méndez" },
     ],
     submittedAt: "2025-02-01",
     timeline: mockTimeline.slice(0, 4).map((e, i) => ({

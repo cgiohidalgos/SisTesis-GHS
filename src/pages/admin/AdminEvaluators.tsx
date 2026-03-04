@@ -358,10 +358,10 @@ export default function AdminEvaluators() {
                 <span className="status-badge bg-secondary text-secondary-foreground">{ev.theses} tesis</span>
               </div>
               <div className="mt-3 flex gap-2">
-                <Button size="xs" variant="outline" onClick={() => handleEditEvaluator(ev)}>
+                <Button size="sm" variant="outline" onClick={() => handleEditEvaluator(ev)}>
                   Editar
                 </Button>
-                <Button size="xs" variant="destructive" onClick={() => handleDeleteEvaluator(ev.id)}>
+                <Button size="sm" variant="destructive" onClick={() => handleDeleteEvaluator(ev.id)}>
                   Eliminar
                 </Button>
               </div>

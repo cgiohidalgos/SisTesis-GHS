@@ -55,6 +55,25 @@ export default function EvaluatorDashboard() {
         seen.add(t.id);
         return true;
       });
+
+      // Fetch acta status for each thesis to know if it has a complete acta
+      const token2 = localStorage.getItem('token');
+      const actaPromises = data.map(async (t:any) => {
+        try {
+          const r = await fetch(`${API_BASE}/theses/${t.id}/acta/status`, {
+            headers: { Authorization: token2 ? `Bearer ${token2}` : '' },
+          });
+          if (r.ok) {
+            const st = await r.json();
+            return { id: t.id, allSigned: !!st.allSigned };
+          }
+        } catch {}
+        return { id: t.id, allSigned: false };
+      });
+      const actaResults = await Promise.all(actaPromises);
+      const actaMap = Object.fromEntries(actaResults.map(a => [a.id, a.allSigned]));
+      data = data.map((t:any) => ({ ...t, hasActa: !!actaMap[t.id] }));
+
       setTheses(data);
     } catch (e) {
       console.error(e);
@@ -88,6 +107,7 @@ export default function EvaluatorDashboard() {
                 linkTo={`/evaluator/rubric/${thesis.id}`}
                 evaluated={thesis.evaluated}
                 evalCompleted={thesis.evalCompleted}
+                hasActa={thesis.hasActa}
               />
             ))}
           </div>

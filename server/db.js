@@ -65,6 +65,7 @@ db.prepare(`CREATE TABLE IF NOT EXISTS theses (
   abstract TEXT,
   keywords TEXT,
   created_by TEXT,
+  revision_round INTEGER DEFAULT 0,
   status TEXT DEFAULT 'draft',
   created_at INTEGER DEFAULT (strftime('%s','now')),
   updated_at INTEGER DEFAULT (strftime('%s','now'))
@@ -102,6 +103,12 @@ try {
 } catch (e) {
   // ignore if already exists
 }
+try {
+  db.prepare('ALTER TABLE theses ADD COLUMN revision_round INTEGER DEFAULT 0').run();
+  console.log('migration: added revision_round column to theses');
+} catch (e) {
+  // ignore if already exists
+}
 
 // add defense scheduling columns one by one so a failure on one doesn't block others
 try {
@@ -129,10 +136,17 @@ db.prepare(`CREATE TABLE IF NOT EXISTS thesis_files (
   file_name TEXT,
   file_type TEXT,
   file_url TEXT,
+  timeline_event_id TEXT,
   uploaded_at INTEGER DEFAULT (strftime('%s','now')),
   uploaded_by TEXT,
   FOREIGN KEY(thesis_id) REFERENCES theses(id)
 )`).run();
+try {
+  db.prepare('ALTER TABLE thesis_files ADD COLUMN timeline_event_id TEXT').run();
+  console.log('migration: added timeline_event_id column to thesis_files');
+} catch (e) {
+  // ignore if already exists
+}
 
 db.prepare(`CREATE TABLE IF NOT EXISTS thesis_directors (
   id TEXT PRIMARY KEY,
@@ -249,6 +263,7 @@ db.prepare(`CREATE TABLE IF NOT EXISTS evaluations (
   thesis_evaluator_id TEXT,
   concept TEXT,
   evaluation_type TEXT DEFAULT 'document',
+  revision_round INTEGER DEFAULT 0,
   created_at INTEGER DEFAULT (strftime('%s','now')),
   final_score INTEGER,
   general_observations TEXT,
@@ -256,6 +271,13 @@ db.prepare(`CREATE TABLE IF NOT EXISTS evaluations (
   updated_at INTEGER DEFAULT (strftime('%s','now')),
   FOREIGN KEY(thesis_evaluator_id) REFERENCES thesis_evaluators(id)
 )`).run();
+
+try {
+  db.prepare('ALTER TABLE evaluations ADD COLUMN revision_round INTEGER DEFAULT 0').run();
+  console.log('migration: added revision_round column to evaluations');
+} catch (e) {
+  // ignore if already exists
+}
 
 // migrate existing rows: set evaluation_type='document' if null
 try {
@@ -295,6 +317,19 @@ db.prepare(`CREATE TABLE IF NOT EXISTS timeline_events (
   attachments TEXT,
   created_at INTEGER DEFAULT (strftime('%s','now')),
   FOREIGN KEY(thesis_id) REFERENCES theses(id)
+)`).run();
+
+// firmas del acta de sustentación (evaluadores y director/es)
+db.prepare(`CREATE TABLE IF NOT EXISTS acta_signatures (
+  id TEXT PRIMARY KEY,
+  thesis_id TEXT,
+  signer_user_id TEXT,
+  signer_name TEXT,
+  signer_role TEXT,
+  file_url TEXT,
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  FOREIGN KEY(thesis_id) REFERENCES theses(id),
+  FOREIGN KEY(signer_user_id) REFERENCES users(id)
 )`).run();
 
 module.exports = db;

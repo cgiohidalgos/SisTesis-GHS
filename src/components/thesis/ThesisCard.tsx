@@ -8,9 +8,10 @@ interface ThesisCardProps {
   linkTo: string;
   evaluated?: boolean;
   evalCompleted?: boolean;
+  hasActa?: boolean;
 }
 
-export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted }: ThesisCardProps) {
+export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, hasActa }: ThesisCardProps) {
   return (
     <Link
       to={linkTo}
@@ -24,9 +25,7 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted }:
           <div className="flex items-center gap-2">
             {evalCompleted ? (
               <>
-                <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">Evaluación terminada</span>
-                {/* when the evaluator has finished, the workflow has already moved past "Aprobada para Sustentación",
-                    we don't need to show that status on the card anymore */}
+                <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">{hasActa ? 'Terminada con Acta' : 'Evaluación terminada'}</span>
               </>
             ) : evaluated ? (
               <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">Evaluado</span>
@@ -45,7 +44,7 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted }:
           {thesis.programs && thesis.programs.length > 0 && (
             <span className="flex items-center gap-1.5">
               📚
-              {thesis.programs.map((p:any) => p.name).join(", ")}
+              {thesis.programs.map((p) => p.name).join(", ")}
             </span>
           )}
           <span className="flex items-center gap-1.5">

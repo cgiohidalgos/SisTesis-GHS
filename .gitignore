@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Database and server files
+server/uploads/
+server/data/
+server/templates/
+server/thesis.db
+*.db
+server/test*.js
+test_template.js
+tmp_check_export.sh

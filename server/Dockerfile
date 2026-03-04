@@ -17,8 +17,8 @@ RUN apt-get update && \
 COPY server/package.json server/package-lock.json* ./
 RUN npm install
 
-# Instalar sqlite3 CLI para depuración
-RUN apt-get update && apt-get install -y sqlite3 && rm -rf /var/lib/apt/lists/*
+# Instalar sqlite3 CLI para depuración y LibreOffice Writer para conversión DOCX→PDF
+RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 libreoffice-writer && rm -rf /var/lib/apt/lists/*
 
 # copy server code
 COPY server/ ./

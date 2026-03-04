@@ -2,6 +2,8 @@ import { Check, Clock, Circle, FileText, User, Shield, Download, MessageSquare }
 import { cn } from "@/lib/utils";
 import type { TimelineEvent } from "@/lib/mock-data";
 
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+
 interface ThesisTimelineProps {
   events: TimelineEvent[];
   evaluatorFiles?: { name: string; url: string }[];
@@ -127,7 +129,7 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
               )}
 
               {/* Show evaluator recommendations and files on concept_issued */}
-              {(isConceptIssued || event.status === 'evaluation_submitted' || event.status === 'evaluations_summary') && event.completed && (
+              {(isConceptIssued || event.status === 'evaluator_thanks') && event.completed && (
                 <div className="mt-3 space-y-3">
                   {(event.evaluatorRecommendations || evaluatorRecommendations) && (
                     <div className="bg-secondary/50 rounded-md p-3">
@@ -140,6 +142,17 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                       </p>
                     </div>
                   )}
+              {event.status === 'revision_submitted' && event.observations && (
+                <div className="bg-secondary/50 rounded-md p-3">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-foreground mb-1.5">
+                    <MessageSquare className="w-3 h-3" />
+                    Comentarios del Estudiante
+                  </div>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {event.observations}
+                  </p>
+                </div>
+              )}
 
                   {(event.evaluatorFiles?.length > 0 || (evaluatorFiles && evaluatorFiles.length > 0)) && (
                     <div className="bg-secondary/50 rounded-md p-3">
@@ -148,7 +161,27 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                         {(event.evaluatorFiles || evaluatorFiles || []).map((file, i) => (
                           <a
                             key={i}
-                            href={file.url}
+                            href={`${API_BASE}${file.url.startsWith('/') ? '' : '/'}${file.url}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 text-sm text-accent hover:underline"
+                          >
+                            <Download className="w-3 h-3" />
+                            {file.name}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {event.revisionFiles && event.revisionFiles.length > 0 && (
+                    <div className="bg-secondary/50 rounded-md p-3">
+                      <p className="text-xs font-medium text-foreground mb-2">Archivos de la revisión</p>
+                      <div className="space-y-1.5">
+                        {event.revisionFiles.map((file, i) => (
+                          <a
+                            key={i}
+                            href={`${API_BASE}${file.url.startsWith('/') ? '' : '/'}${file.url}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-2 text-sm text-accent hover:underline"
@@ -178,7 +211,7 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
         );
       })}
       {/* thank you message at completion */}
-      {events.length > 0 && events[events.length - 1].status === 'evaluations_summary' && (
+      {events.length > 0 && events[events.length - 1].status === 'evaluator_thanks' && (
         <div className="relative pl-10 pb-8 last:pb-0 animate-fade-in" style={{ animationDelay: `${events.length * 80}ms` }}>
           <div className="rounded-lg border p-4 bg-secondary/10">
             <p className="text-sm font-medium text-foreground">
