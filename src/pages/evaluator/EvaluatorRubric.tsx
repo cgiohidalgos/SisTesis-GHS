@@ -17,6 +17,7 @@ export default function EvaluatorRubric() {
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
   const [actaStatus, setActaStatus] = useState<any>(null);
   const [signFile, setSignFile] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -70,10 +71,17 @@ export default function EvaluatorRubric() {
     ev.evaluator_id === user?.id
   ) || [];
   const docEvalsCurrentRound = myDocEvals.filter((ev: any) => Number(ev.revision_round || 0) === currentRound);
-  const docEval = docEvalsCurrentRound.sort((a: any, b: any) => (b.submitted_at || b.created_at || 0) - (a.submitted_at || a.created_at || 0))[0];
+  let docEval = docEvalsCurrentRound.sort((a: any, b: any) => (b.submitted_at || b.created_at || 0) - (a.submitted_at || a.created_at || 0))[0];
   const previousDocEval = myDocEvals
     .filter((ev: any) => Number(ev.revision_round || 0) < currentRound)
     .sort((a: any, b: any) => (b.submitted_at || b.created_at || 0) - (a.submitted_at || a.created_at || 0))[0];
+
+  // If evaluator already gave "accepted" in a previous round, they don't need to re-evaluate.
+  // Use the previous evaluation as the effective one so the rubric shows as completed.
+  const thesisIsDone = thesis.status === 'sustentacion' || thesis.status === 'finalized';
+  if (!docEval && previousDocEval && (previousDocEval.concept === 'accepted' || thesisIsDone)) {
+    docEval = previousDocEval;
+  }
 
   const myPresEvals = thesis.evaluations?.filter((ev: any) =>
     (ev.evaluation_type === "presentation" || ev.type === "presentation") &&
@@ -84,6 +92,8 @@ export default function EvaluatorRubric() {
   const wantPresentation = !!thesis.defense_date;
 
   const submitEvaluation = async (data: { score: number | null; observations: string; concept?: any; sections?: any; files?: File[] }, type: 'document' | 'presentation') => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const token = localStorage.getItem('token');
       const authHeader = token ? 'Bearer ' + token : '';
@@ -140,6 +150,8 @@ export default function EvaluatorRubric() {
       if (actaResp.ok) setActaStatus(await actaResp.json());
     } catch (e:any) {
       toast.error(e.message || 'Error al enviar evaluación');
+    } finally {
+      setSubmitting(false);
     }
   };
   // find the evaluator record in thesis for due dates
@@ -289,8 +301,8 @@ export default function EvaluatorRubric() {
                   thesis={thesis}
                   onSubmit={(data) => submitEvaluation(data, 'document')}
                   onUploadFiles={docEval ? (files) => uploadFilesToEval(docEval.id, files) : undefined}
-                  readOnly={false}
-                  submitDisabled={false}
+                  readOnly={!!docEval}
+                  submitDisabled={!!docEval || submitting}
                   showConcept={true}
                   showFiles={true}
                   initialConcept={docEval?.concept || null}
@@ -328,8 +340,8 @@ export default function EvaluatorRubric() {
                   thesis={thesis}
                   onSubmit={(data) => submitEvaluation(data, 'presentation')}
                   onUploadFiles={presEval ? (files) => uploadFilesToEval(presEval.id, files) : undefined}
-                  readOnly={false}
-                  submitDisabled={false}
+                  readOnly={!!presEval}
+                  submitDisabled={!!presEval || submitting}
                   showConcept={false}
                   showFiles={true}
                   initialConcept={presEval?.concept || null}

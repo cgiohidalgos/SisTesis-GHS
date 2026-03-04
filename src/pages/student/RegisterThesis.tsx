@@ -20,6 +20,8 @@ export default function RegisterThesis() {
   const [document, setDocument] = useState<File | null>(null);
   const [endorsement, setEndorsement] = useState<File | null>(null);
   const [url, setUrl] = useState("");
+  const [existingDoc, setExistingDoc] = useState<{file_name:string; file_url:string}|null>(null);
+  const [existingEndorsement, setExistingEndorsement] = useState<{file_name:string; file_url:string}|null>(null);
   const [loading, setLoading] = useState(false);
 
   // companion information
@@ -67,6 +69,15 @@ export default function RegisterThesis() {
           cedula: other.cedula || "",
           password: "",
         });
+      }
+      // load existing files
+      if (existing.files && existing.files.length > 0) {
+        const docFile = existing.files.find((f: any) => f.file_type === 'document');
+        const endorseFile = existing.files.find((f: any) => f.file_type === 'endorsement');
+        const urlFile = existing.files.find((f: any) => f.file_type === 'url');
+        if (docFile) setExistingDoc({ file_name: docFile.file_name, file_url: docFile.file_url });
+        if (endorseFile) setExistingEndorsement({ file_name: endorseFile.file_name, file_url: endorseFile.file_url });
+        if (urlFile) setUrl(urlFile.file_name || "");
       }
     }
   }, [existing, user]);
@@ -292,10 +303,20 @@ export default function RegisterThesis() {
         </div>
         <div>
           <Label>Documento de Tesis (PDF/DOCX)</Label>
-          <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => setDocument(e.target.files?.[0] || null)} required={!existing} disabled={!isEditable} />
+          {existingDoc && !document && (
+            <p className="text-sm text-blue-600 mb-1">
+              📄 Archivo actual: <a href={`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}${existingDoc.file_url}`} target="_blank" rel="noopener noreferrer" className="underline">{existingDoc.file_name}</a>
+            </p>
+          )}
+          <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => setDocument(e.target.files?.[0] || null)} required={!existing && !existingDoc} disabled={!isEditable} />
         </div>
         <div>
           <Label>Carta de Aval (PDF/DOCX)</Label>
+          {existingEndorsement && !endorsement && (
+            <p className="text-sm text-blue-600 mb-1">
+              📄 Archivo actual: <a href={`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}${existingEndorsement.file_url}`} target="_blank" rel="noopener noreferrer" className="underline">{existingEndorsement.file_name}</a>
+            </p>
+          )}
           <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => setEndorsement(e.target.files?.[0] || null)} disabled={!isEditable} />
         </div>
         <div>

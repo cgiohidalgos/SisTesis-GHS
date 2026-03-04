@@ -186,7 +186,7 @@ export default function StudentTimeline() {
             />
 
             {/* revision submission form for students when applicable */}
-            {(thesis.status === 'revision_minima' || thesis.status === 'revision_cuidados' || (thesis.timeline || []).some((e:any)=>e.status==='revision_submitted')) && (
+            {(thesis.status === 'revision_minima' || thesis.status === 'revision_cuidados') && (
               <div className="mt-8 p-6 border rounded-lg bg-white dark:bg-slate-950 space-y-4">
                 <h3 className="text-lg font-bold">Enviar Revisión / Respuesta</h3>
                 <p className="text-sm text-muted-foreground">
@@ -327,6 +327,7 @@ export default function StudentTimeline() {
                 </div>
               );
             })()}
+
           </>
         )}
       </div>

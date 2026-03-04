@@ -1,8 +1,20 @@
-import { Check, Clock, Circle, FileText, User, Shield, Download, MessageSquare } from "lucide-react";
+import { useState } from "react";
+import { Check, Clock, Circle, FileText, User, Shield, Download, MessageSquare, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { TimelineEvent } from "@/lib/mock-data";
+import { defaultRubric, presentationRubric, type TimelineEvent } from "@/lib/mock-data";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+
+// Build lookup maps from rubric definitions
+const allRubrics = [...defaultRubric, ...presentationRubric];
+const sectionMap: Record<string, string> = {};
+const criterionMap: Record<string, { name: string; maxScore: number }> = {};
+for (const s of allRubrics) {
+  sectionMap[s.id] = s.name;
+  for (const c of s.criteria) {
+    criterionMap[c.id] = { name: c.name, maxScore: c.maxScore };
+  }
+}
 
 interface ThesisTimelineProps {
   events: TimelineEvent[];
@@ -163,6 +175,10 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                       </div>
                     </div>
                   )}
+                  {/* Per-criterion scores and observations */}
+                  {event.evaluationScores && event.evaluationScores.length > 0 && (
+                    <EvalScoresDetail scores={event.evaluationScores} evaluationType={event.evaluationType} />
+                  )}
                 </div>
               )}
 
@@ -226,6 +242,70 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                 : '¡Gracias por completar la evaluación! No olvides subir este trabajo a tu CVLAC.'}
             </p>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible per-criterion scores and observations inside a timeline event */
+function EvalScoresDetail({ scores, evaluationType }: { scores: any[]; evaluationType?: string }) {
+  const [open, setOpen] = useState(false);
+  const rubric = evaluationType === 'presentation' ? presentationRubric : defaultRubric;
+
+  // Group scores by section
+  const grouped: Record<string, any[]> = {};
+  for (const sc of scores) {
+    if (!grouped[sc.section_id]) grouped[sc.section_id] = [];
+    grouped[sc.section_id].push(sc);
+  }
+
+  return (
+    <div className="bg-secondary/50 rounded-md overflow-hidden">
+      <button
+        type="button"
+        className="w-full flex items-center justify-between p-3 text-left hover:bg-secondary/70 transition-colors"
+        onClick={() => setOpen(o => !o)}
+      >
+        <span className="text-xs font-medium text-foreground">Detalle por criterio</span>
+        {open ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-3">
+          {rubric.map((section) => {
+            const sectionScores = grouped[section.id] || [];
+            if (!sectionScores.length) return null;
+            return (
+              <div key={section.id}>
+                <h5 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-1.5">
+                  {sectionMap[section.id] || section.id}
+                </h5>
+                <div className="space-y-1.5">
+                  {section.criteria.map((crit) => {
+                    const sc = sectionScores.find((s: any) => s.criterion_id === crit.id);
+                    if (!sc) return null;
+                    const info = criterionMap[crit.id];
+                    return (
+                      <div key={crit.id} className="pl-2 border-l-2 border-muted">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-foreground">{info?.name || crit.id}</span>
+                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-muted">
+                            {sc.score}/{info?.maxScore ?? 5}
+                          </span>
+                        </div>
+                        {sc.observations && (
+                          <div className="flex items-start gap-1 text-sm text-muted-foreground mt-0.5">
+                            <MessageSquare className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span className="whitespace-pre-wrap">{sc.observations}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

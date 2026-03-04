@@ -104,7 +104,7 @@ export const statusLabels: Record<ThesisStatus, string> = {
   revision_cuidados: "Revisión Cuidados",
   revision_submitted: "Revisión Enviada",
   second_evaluation: "Segunda Evaluación",
-  sustentacion: "Finalizada",
+  sustentacion: "Aprobada para Sustentación",
   evaluator_thanks: "Evaluación completada",
 };
 
@@ -122,7 +122,7 @@ export const statusColors: Record<ThesisStatus, string> = {
   finalized: "success",
   revision_minima: "warning",
   revision_cuidados: "destructive",
-  sustentacion: "success",
+  sustentacion: "info",
   evaluator_thanks: "success",
 };
 

@@ -53,7 +53,8 @@ export default function StudentDashboard() {
             {theses[0].status === "draft" && (
               <div className="flex gap-3 mt-4">
                 <Button
-                  variant="secondary"
+                  variant="default"
+                  className="bg-green-600 hover:bg-green-700 text-white font-semibold"
                   onClick={async () => {
                     try {
                       const token = localStorage.getItem("token");

@@ -39,13 +39,26 @@ export default function EvaluatorDashboard() {
             : [];
           const currentRound = Number(t.revision_round || 0);
           const myCurrentRoundEvals = myEvals.filter((e:any) => Number(e.revision_round || 0) === currentRound);
-          const hasDoc = myCurrentRoundEvals.some((e:any) => e.evaluation_type !== 'presentation');
+          let hasDoc = myCurrentRoundEvals.some((e:any) => e.evaluation_type !== 'presentation');
           const hasPres = myCurrentRoundEvals.some((e:any) => e.evaluation_type === 'presentation');
+
+          // If evaluator gave "accepted" in a previous round or thesis is already in sustentacion/finalized,
+          // consider document evaluation as done even if not present in current round
+          if (!hasDoc) {
+            const thesisIsDone = t.status === 'sustentacion' || t.status === 'finalized';
+            const prevAccepted = myEvals.some((e:any) =>
+              e.evaluation_type !== 'presentation' &&
+              Number(e.revision_round || 0) < currentRound &&
+              e.concept === 'accepted'
+            );
+            if (prevAccepted || thesisIsDone) hasDoc = true;
+          }
+
           // completed when doc eval exists and either no defense scheduled or presentation also done
           const completed = hasDoc && (!t.defense_date || hasPres);
           return {
             ...t,
-            evaluated: myCurrentRoundEvals.length > 0,
+            evaluated: myCurrentRoundEvals.length > 0 || hasDoc,
             evalCompleted: completed,
           };
         });

@@ -485,8 +485,9 @@ app.post('/theses/:id/files', authMiddleware, upload.fields([
       savedFiles.push({ id, file_name: f.originalname, file_type: field, file_path: basename });
     }
   }
-  // Guardar URL si se envía
+  // Guardar URL si se envía (eliminar la anterior primero)
   if (url) {
+    db.prepare("DELETE FROM thesis_files WHERE thesis_id = ? AND file_type = 'url'").run(thesis_id);
     const id = uuidv4();
     db.prepare('INSERT INTO thesis_files (id, thesis_id, file_name, file_type, file_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id, thesis_id, url, 'url', url, req.user.id);
@@ -729,11 +730,11 @@ app.put('/theses/:id', authMiddleware, async (req, res) => {
     // ensure no other user has the same code or cedula
     let dup;
     if (existingComp) {
-      dup = db.prepare('SELECT id FROM users WHERE (student_code = ? OR cedula = ?) AND id != ?')
-        .get(companion.student_code, companion.cedula, existingComp.id);
+      dup = db.prepare('SELECT id FROM users WHERE (student_code = ? OR cedula = ?) AND id != ? AND id != ?')
+        .get(companion.student_code, companion.cedula, existingComp.id, req.user.id);
     } else {
-      dup = db.prepare('SELECT id FROM users WHERE student_code = ? OR cedula = ?')
-        .get(companion.student_code, companion.cedula);
+      dup = db.prepare('SELECT id FROM users WHERE (student_code = ? OR cedula = ?) AND id != ?')
+        .get(companion.student_code, companion.cedula, req.user.id);
     }
     if (dup) {
       return res.status(400).json({ error: 'companion student_code or cedula already used' });
@@ -1275,9 +1276,9 @@ app.get('/super/review-items', authMiddleware, (req, res) => {
 
 // weights configuration for document vs presentation
 app.get('/super/weights', authMiddleware, (req, res) => {
-  // allow admin, superadmin and evaluators to read weights
+  // allow any authenticated user to read weights
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
-  if (!roles.includes('admin') && !roles.includes('superadmin') && !roles.includes('evaluator')) {
+  if (!roles.includes('admin') && !roles.includes('superadmin') && !roles.includes('evaluator') && !roles.includes('student')) {
     return res.status(403).json({ error: 'forbidden' });
   }
   const rows = db.prepare('SELECT key, value FROM settings WHERE key IN (?,?)').all('doc_weight','presentation_weight');
@@ -1676,6 +1677,8 @@ app.get('/theses', authMiddleware, (req, res) => {
         };
         if (ev.general_observations) event.evaluatorRecommendations = ev.general_observations;
         if (ev.files && ev.files.length) event.evaluatorFiles = ev.files.map(f=>({name:f.file_name,url:f.file_url}));
+        if (ev.scores && ev.scores.length) event.evaluationScores = ev.scores;
+        event.evaluationType = ev.evaluation_type;
         return event;
       });
       enrichedTimeline = enrichedTimeline.concat(evalEvents);
@@ -1721,7 +1724,25 @@ app.get('/theses', authMiddleware, (req, res) => {
       });
     }
     // ensure the timeline is ordered by date so scheduled event appears after evaluations
-    enrichedTimeline.sort((a,b) => (a.date||0) - (b.date||0));
+    // when events are nearly simultaneous (< 5s apart), use priority: status_changed and
+    // concept events appear before evaluation_submitted so the student sees the result first.
+    const eventPriority = (status) => {
+      if (status === 'status_changed') return 0;
+      if (status === 'concept_issued') return 1;
+      if (status === 'evaluation_submitted') return 2;
+      if (status === 'evaluations_summary') return 3;
+      return 1;
+    };
+    enrichedTimeline.sort((a, b) => {
+      const da = a.date || 0;
+      const db_ = b.date || 0;
+      if (Math.abs(da - db_) < 5000) {
+        const pa = eventPriority(a.status);
+        const pb = eventPriority(b.status);
+        if (pa !== pb) return pa - pb;
+      }
+      return da - db_;
+    });
     const weighted = computeFinalWeightedForThesis(t.id);
     return { ...t, students, evaluators, directors, programs, timeline: enrichedTimeline, files, evaluations, weighted };
   });
@@ -1898,7 +1919,23 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
 
 // helper to recalc thesis status based on evaluations
 function recalcThesisStatus(thesis_id) {
-  // consider only the most recent evaluation submitted by each evaluator
+  // Check for presentation evaluations first — if any exist, thesis is finalized
+  const presEvals = db.prepare(
+    `SELECT e.id FROM evaluations e
+     JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+     WHERE te.thesis_id = ? AND e.evaluation_type = 'presentation'`
+  ).all(thesis_id);
+  if (presEvals.length > 0) {
+    const th = db.prepare('SELECT status FROM theses WHERE id = ?').get(thesis_id);
+    if (th && th.status !== 'finalized') {
+      db.prepare('UPDATE theses SET status = ? WHERE id = ?').run('finalized', thesis_id);
+      db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(uuidv4(), thesis_id, 'status_changed', 'Estado cambiado a finalized', 1, Date.now());
+    }
+    return;
+  }
+
+  // consider only the most recent document evaluation submitted by each evaluator
   const evals = db.prepare(
     `SELECT e.concept FROM evaluations e
      JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
@@ -1941,8 +1978,16 @@ app.post('/evaluations', authMiddleware, requireRole('evaluator'), (req, res) =>
   const id = uuidv4();
   const now = Date.now();
   const type = evaluation_type === 'presentation' ? 'presentation' : 'document';
+  const round = Number(thesisRow.revision_round || 0);
+
+  // Prevent duplicate evaluation for same evaluator, type and round
+  const existingEval = db.prepare('SELECT id FROM evaluations WHERE thesis_evaluator_id = ? AND evaluation_type = ? AND revision_round = ?').get(te.id, type, round);
+  if (existingEval) {
+    return res.status(409).json({ error: 'Ya existe una evaluación para este tipo y ronda', existing_id: existingEval.id });
+  }
+
   db.prepare('INSERT INTO evaluations (id, thesis_evaluator_id, concept, evaluation_type, revision_round, final_score, general_observations, submitted_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, te.id, concept || null, type, Number(thesisRow.revision_round || 0), score || null, observations || null, now, now);
+    .run(id, te.id, concept || null, type, round, score || null, observations || null, now, now);
 
   // store individual criterion scores if provided
   if (sections && Array.isArray(sections)) {
