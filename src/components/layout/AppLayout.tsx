@@ -34,6 +34,7 @@ const navItems = {
     { label: "Evaluadores", href: "/admin/evaluators", icon: Users },
     { label: "Programas", href: "/admin/programs", icon: BookOpen },
     { label: "Rúbricas", href: "/admin/rubrics", icon: BookOpen },
+    { label: "Elementos de Revisión", href: "/admin/review-items", icon: BookOpen },
     { label: "Pesos de Evaluación", href: "/admin/weights", icon: BookOpen },
   ],
 };

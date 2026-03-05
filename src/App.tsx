@@ -17,6 +17,7 @@ import AdminThesisDetail from "./pages/admin/AdminThesisDetail";
 import AdminEvaluators from "./pages/admin/AdminEvaluators";
 import AdminPrograms from "./pages/admin/AdminPrograms";
 import AdminRubrics from "./pages/admin/AdminRubrics";
+import AdminReviewItems from "./pages/admin/AdminReviewItems";
 import AdminWeights from "./pages/admin/AdminWeights";
 import AdminUsers from "./pages/admin/AdminUsers";
 import SuperReviewItems from "./pages/admin/SuperReviewItems";
@@ -58,6 +59,7 @@ const App = () => (
             <Route path="/admin/evaluators" element={<AdminEvaluators />} />
             <Route path="/admin/programs" element={<AdminPrograms />} />
             <Route path="/admin/rubrics" element={<AdminRubrics />} />
+            <Route path="/admin/review-items" element={<AdminReviewItems />} />
             <Route path="/admin/weights" element={<AdminWeights />} />
             <Route path="/admin/users" element={<AdminUsers />} />
             <Route path="*" element={<NotFound />} />
