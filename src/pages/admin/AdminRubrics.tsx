@@ -137,7 +137,14 @@ export default function AdminRubrics() {
         body: JSON.stringify({ sections: editSections }),
       });
       if (!resp.ok) throw new Error('Error guardando rúbrica');
-      const data = await resp.json();
+      let data = await resp.json();
+      // Parse sections_json if it's a string
+      data = {
+        ...data,
+        sections_json: typeof data.sections_json === 'string' 
+          ? JSON.parse(data.sections_json) 
+          : data.sections_json
+      };
       setRubrics(prev => {
         const idx = prev.findIndex(r => r.evaluation_type === editingType);
         if (idx >= 0) {
