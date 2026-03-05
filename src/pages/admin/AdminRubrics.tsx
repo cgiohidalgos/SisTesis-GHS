@@ -72,8 +72,12 @@ export default function AdminRubrics() {
           }
           
           setPrograms(data);
+          // Reset selected program to first available
           if (data.length > 0) {
-            setSelectedProgram(data[0].id);
+            const firstId = data[0].id;
+            setSelectedProgram(firstId);
+          } else {
+            setSelectedProgram("");
           }
         }
       } catch (err) {
@@ -81,7 +85,7 @@ export default function AdminRubrics() {
       }
     };
     loadPrograms();
-  }, [user, isSuper]);
+  }, [user?.id, isSuper]);
 
   useEffect(() => {
     if (!selectedProgram) return;
@@ -93,7 +97,14 @@ export default function AdminRubrics() {
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (resp.ok) {
-          const data = await resp.json();
+          let data = await resp.json();
+          // Parse sections_json if it's a string
+          data = data.map((r: any) => ({
+            ...r,
+            sections_json: typeof r.sections_json === 'string' 
+              ? JSON.parse(r.sections_json) 
+              : r.sections_json
+          }));
           setRubrics(data);
         } else {
           toast.error('Error cargando rúbricas');
@@ -336,24 +347,30 @@ export default function AdminRubrics() {
                       ) : (
                         // Modo lectura
                         <div className="space-y-3">
-                          {rubric.sections_json.map((section: RubricSection, sectionIdx: number) => (
-                            <div key={sectionIdx} className="border-l-4 border-blue-500 pl-3">
-                              <div className="flex justify-between items-start mb-2">
-                                <h4 className="font-medium">{section.name}</h4>
-                                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">{section.weight}%</span>
-                              </div>
-                              <ul className="space-y-1 text-sm text-muted-foreground">
-                                {section.criteria.map((c: any) => (
-                                  <li key={c.id}>• {c.name} (máx. {c.maxScore})</li>
-                                ))}
-                              </ul>
-                            </div>
-                          ))}
+                          {rubric.sections_json && Array.isArray(rubric.sections_json) ? (
+                            <>
+                              {rubric.sections_json.map((section: RubricSection, sectionIdx: number) => (
+                                <div key={sectionIdx} className="border-l-4 border-blue-500 pl-3">
+                                  <div className="flex justify-between items-start mb-2">
+                                    <h4 className="font-medium">{section.name}</h4>
+                                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">{section.weight}%</span>
+                                  </div>
+                                  <ul className="space-y-1 text-sm text-muted-foreground">
+                                    {section.criteria.map((c: any) => (
+                                      <li key={c.id}>• {c.name} (máx. {c.maxScore})</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ))}
+                            </>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">No hay secciones definidas</p>
+                          )}
 
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleEditRubric(rubric.evaluation_type, rubric.sections_json)}
+                            onClick={() => handleEditRubric(rubric.evaluation_type, rubric.sections_json || [])}
                             className="w-full"
                           >
                             ✏️ Editar
