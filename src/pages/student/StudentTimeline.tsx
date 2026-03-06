@@ -6,7 +6,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+import { getApiBase } from "@/lib/utils";
+const API_BASE = getApiBase();
 
 function ScoreCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (

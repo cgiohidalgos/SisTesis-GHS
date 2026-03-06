@@ -10,6 +10,10 @@ interface ReviewItem {
   sort_order: number;
 }
 
+import { getApiBase } from "@/lib/utils";
+
+const API_BASE = getApiBase();
+
 export default function SuperReviewItems() {
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [newLabel, setNewLabel] = useState("");
@@ -18,7 +22,7 @@ export default function SuperReviewItems() {
   const fetchItems = async () => {
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/super/review-items`, {
+      const resp = await fetch(`${API_BASE}/super/review-items`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!resp.ok) throw new Error("Error cargando elementos");
@@ -38,7 +42,7 @@ export default function SuperReviewItems() {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/super/review-items`, {
+      const resp = await fetch(`${API_BASE}/super/review-items`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ label: newLabel.trim() }),
@@ -57,7 +61,7 @@ export default function SuperReviewItems() {
   const handleUpdate = async (id: string, label: string) => {
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/super/review-items/${id}`, {
+      const resp = await fetch(`${API_BASE}/super/review-items/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ label }),
@@ -74,7 +78,7 @@ export default function SuperReviewItems() {
     if (!confirm("¿Eliminar este elemento de revisión?")) return;
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/super/review-items/${id}`, {
+      const resp = await fetch(`${API_BASE}/super/review-items/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

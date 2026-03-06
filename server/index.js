@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
@@ -13,7 +13,27 @@ const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 
 const app = express();
-app.use(cors({ exposedHeaders: ['Content-Disposition'] }));
+// Logging de todas las peticiones para depuración de CORS y preflight
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  console.log('Headers:', req.headers);
+  next();
+});
+app.use(cors({
+  exposedHeaders: ['Content-Disposition'],
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+// Manejo explícito de preflight OPTIONS para todas las rutas
+app.options('*', cors({
+  exposedHeaders: ['Content-Disposition'],
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(express.json());
 
 // other middleware and helper functions might go here
@@ -4337,6 +4357,6 @@ app.post('/admin/program-rubrics/:programId/initialize', authMiddleware, (req, r
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
 });

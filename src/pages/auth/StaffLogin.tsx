@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getApiBase } from "@/lib/utils";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,14 +22,23 @@ export default function StaffLogin() {
 
     setLoading(true);
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/auth/login`, {
+      const url = `${getApiBase()}/auth/login`;
+      console.log('StaffLogin: POST', url);
+      // simple timeout helper
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier: email, password }),
+        signal: controller.signal,
       });
-      if (!resp.ok) throw new Error('invalid credentials');
+      clearTimeout(timeoutId);
+      if (!resp.ok) throw new Error(`status ${resp.status}`);
       const { user, token } = await resp.json();
-      const rolesResp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/user_roles?user_id=${encodeURIComponent(user.id)}`);
+      const rolesUrl = `${getApiBase()}/user_roles?user_id=${encodeURIComponent(user.id)}`;
+      console.log('StaffLogin: GET', rolesUrl);
+      const rolesResp = await fetch(rolesUrl, { signal: controller.signal });
       const roles = await rolesResp.json();
       const userRole = roles?.[0];
       if (token) localStorage.setItem('token', token);
@@ -43,7 +53,12 @@ export default function StaffLogin() {
       // reload app so AuthProvider picks up the new roles on the target page
       window.location.reload();
     } catch (error: any) {
-      toast.error("Correo o contraseña incorrectos");
+      console.error('login error', error);
+      if (error.name === 'AbortError') {
+        toast.error('La petición tomó demasiado tiempo, revisa la conexión o el servidor');
+      } else {
+        toast.error("Correo o contraseña incorrectos");
+      }
     } finally {
       setLoading(false);
     }

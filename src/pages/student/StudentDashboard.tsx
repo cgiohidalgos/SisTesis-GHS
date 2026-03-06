@@ -5,6 +5,10 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
+import { getApiBase } from "@/lib/utils";
+
+const API_BASE = getApiBase();
+
 export default function StudentDashboard() {
   const [theses, setTheses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -15,7 +19,7 @@ export default function StudentDashboard() {
       setLoading(true);
       try {
         const token = localStorage.getItem("token");
-        const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses`, {
+        const resp = await fetch(`${API_BASE}/theses`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!resp.ok) throw new Error("Error consultando tesis");
@@ -58,7 +62,7 @@ export default function StudentDashboard() {
                   onClick={async () => {
                     try {
                       const token = localStorage.getItem("token");
-                      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses/${theses[0].id}/submit`, {
+                      const resp = await fetch(`${API_BASE}/theses/${theses[0].id}/submit`, {
                         method: "PUT",
                         headers: { Authorization: `Bearer ${token}` },
                       });
@@ -66,7 +70,7 @@ export default function StudentDashboard() {
                       toast.success("Tesis enviada a evaluación");
                       // recargar
                       setLoading(true);
-                      const r2 = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses`, {
+                      const r2 = await fetch(`${API_BASE}/theses`, {
                         headers: { Authorization: `Bearer ${token}` },
                       });
                       setTheses(await r2.json());
@@ -87,7 +91,7 @@ export default function StudentDashboard() {
                     if (!confirm("¿Eliminar tesis? Esta acción no se puede deshacer.")) return;
                     try {
                       const token = localStorage.getItem("token");
-                      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses/${theses[0].id}`, {
+                      const resp = await fetch(`${API_BASE}/theses/${theses[0].id}`, {
                         method: "DELETE",
                         headers: { Authorization: `Bearer ${token}` },
                       });

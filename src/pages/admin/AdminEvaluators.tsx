@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { getApiBase } from "@/lib/utils";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+const API_BASE = getApiBase();
 import AppLayout from "@/components/layout/AppLayout";
 import { User, Mail, BookOpen, Plus, EyeOff, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";

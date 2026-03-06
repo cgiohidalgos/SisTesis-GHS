@@ -9,6 +9,10 @@ interface Weights {
   presentation: number;
 }
 
+import { getApiBase } from "@/lib/utils";
+
+const API_BASE = getApiBase();
+
 export default function SuperWeights() {
   const [weights, setWeights] = useState<Weights>({ doc: 70, presentation: 30 });
   const [loading, setLoading] = useState(false);
@@ -16,7 +20,7 @@ export default function SuperWeights() {
   const fetchWeights = async () => {
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/super/weights`, {
+      const resp = await fetch(`${API_BASE}/super/weights`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!resp.ok) throw new Error("Error cargando pesos");
@@ -35,7 +39,7 @@ export default function SuperWeights() {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/super/weights`, {
+      const resp = await fetch(`${API_BASE}/super/weights`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(weights),

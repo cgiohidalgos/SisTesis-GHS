@@ -6,6 +6,10 @@ import { Label } from "@/components/ui/label";
 import { GraduationCap } from "lucide-react";
 import { toast } from "sonner";
 
+import { getApiBase } from "@/lib/utils";
+
+const API_BASE = getApiBase();
+
 export default function StudentRegister() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -33,7 +37,7 @@ export default function StudentRegister() {
       if (field === 'studentCode') params.set('student_code', value);
         else if (field === 'cedula') params.set('cedula', value);
         else if (field === 'institutionalEmail') params.set('institutional_email', value);
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/users/check?${params.toString()}`, {
+      const resp = await fetch(`${API_BASE}/users/check?${params.toString()}`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (!resp.ok) return;
@@ -71,7 +75,7 @@ export default function StudentRegister() {
 
     setLoading(true);
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/auth/register`, {
+      const resp = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

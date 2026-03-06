@@ -17,7 +17,8 @@ import {
   Cell,
 } from "recharts";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+import { getApiBase } from "@/lib/utils";
+const API_BASE = getApiBase();
 
 export default function AdminDashboard() {
   const { isSuper } = useAuth();
@@ -30,10 +31,15 @@ export default function AdminDashboard() {
   const fetchData = async () => {
     try {
       const token = localStorage.getItem('token');
+      const headers = { Authorization: token ? `Bearer ${token}` : '' };
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      console.log('AdminDashboard fetching stats and theses');
       const [sresp, tresp] = await Promise.all([
-        fetch(`${API_BASE}/admin/stats`, { headers: { Authorization: token ? `Bearer ${token}` : '' } }),
-        fetch(`${API_BASE}/theses`, { headers: { Authorization: token ? `Bearer ${token}` : '' } }),
+        fetch(`${API_BASE}/admin/stats`, { headers, signal: controller.signal }),
+        fetch(`${API_BASE}/theses`, { headers, signal: controller.signal }),
       ]);
+      clearTimeout(timeoutId);
       if (sresp.ok) {
         const sjson = await sresp.json();
         console.log('stats response', sjson);

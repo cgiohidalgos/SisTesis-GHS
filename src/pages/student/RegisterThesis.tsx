@@ -7,6 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 
+import { getApiBase } from "@/lib/utils";
+
+const API_BASE = getApiBase();
+
 export default function RegisterThesis() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -46,7 +50,7 @@ export default function RegisterThesis() {
     (async () => {
       try {
         const token = localStorage.getItem('token');
-        const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/programs`, {
+        const resp = await fetch(`${API_BASE}/programs`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (resp.ok) {
@@ -127,7 +131,7 @@ export default function RegisterThesis() {
         // actualizar
         if (selectedPrograms.length) body.program_ids = selectedPrograms;
         console.log('updating thesis with', body);
-        const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses/${existing.id}`, {
+        const resp = await fetch(`${API_BASE}/theses/${existing.id}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -145,7 +149,7 @@ export default function RegisterThesis() {
         // 1. Crear la tesis (POST /theses)
         if (selectedPrograms.length) body.program_ids = selectedPrograms;
         console.log('creating thesis with', body);
-        const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses`, {
+        const resp = await fetch(`${API_BASE}/theses`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -168,7 +172,7 @@ export default function RegisterThesis() {
       if (document) form.append("document", document);
       if (endorsement) form.append("endorsement", endorsement);
       if (url) form.append("url", url);
-      const uploadResp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses/${thesis.id}/files`, {
+      const uploadResp = await fetch(`${API_BASE}/theses/${thesis.id}/files`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -305,7 +309,7 @@ export default function RegisterThesis() {
           <Label>Documento de Tesis (PDF/DOCX)</Label>
           {existingDoc && !document && (
             <p className="text-sm text-blue-600 mb-1">
-              📄 Archivo actual: <a href={`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}${existingDoc.file_url}`} target="_blank" rel="noopener noreferrer" className="underline">{existingDoc.file_name}</a>
+              📄 Archivo actual: <a href={`${API_BASE}${existingDoc.file_url}`} target="_blank" rel="noopener noreferrer" className="underline">{existingDoc.file_name}</a>
             </p>
           )}
           <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => setDocument(e.target.files?.[0] || null)} required={!existing && !existingDoc} disabled={!isEditable} />
@@ -314,7 +318,7 @@ export default function RegisterThesis() {
           <Label>Carta de Aval (PDF/DOCX)</Label>
           {existingEndorsement && !endorsement && (
             <p className="text-sm text-blue-600 mb-1">
-              📄 Archivo actual: <a href={`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}${existingEndorsement.file_url}`} target="_blank" rel="noopener noreferrer" className="underline">{existingEndorsement.file_name}</a>
+              📄 Archivo actual: <a href={`${API_BASE}${existingEndorsement.file_url}`} target="_blank" rel="noopener noreferrer" className="underline">{existingEndorsement.file_name}</a>
             </p>
           )}
           <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => setEndorsement(e.target.files?.[0] || null)} disabled={!isEditable} />

@@ -1,4 +1,120 @@
-# Welcome to your Lovable project
+# Thesis Compass
+
+Aplicación de gestión de evaluación de tesis universitarias. Los roles
+incluyen estudiante, evaluador, administrador y superadministrador. El
+backend está construido con Node/Express y SQLite; el frontend con React y
+Vite.
+
+## ¿Qué hace?
+
+- Permite registrar tesis, asignar evaluadores, cargar documentos y
+  rúbricas.
+- Los estudiantes visualizan su tesis y el progreso en una línea de tiempo.
+- Los evaluadores califican mediante rúbricas y anexan archivos.
+- Los administradores gestionan usuarios, programas, evaluaciones y
+  estadísticas.
+- La app es totalmente SPA y se comunica con la API mediante JWT.
+
+## Estructura de carpetas
+
+```
+/ (root)
+├── docker-compose.yml      # contenedores de desarrollo
+├── Dockerfile              # imagen del frontend
+├── server/                 # código del backend (Express)
+│   ├── index.js
+│   ├── db.js
+│   ├── seed.js
+│   ├── entrypoint.sh
+│   ├── Dockerfile          # imagen del backend
+│   └── ...
+├── src/                    # código del cliente React/Vite
+└── README.md               # este archivo
+```
+
+## Variables de entorno (`.env`)
+
+```env
+# BACKEND
+JWT_SECRET=una_clave_secreta
+ADMIN_EMAIL=admin@admin.com      # usuario inicial de superadmin
+ADMIN_PASSWORD=admin
+# (opcional) ubicación de la base SQLite y uploads
+DATA_DIR=/app/data
+UPLOAD_DIR=/app/uploads
+
+# FRONTEND (para el build)
+VITE_API_BASE=https://api.tu-dominio.com   # URL pública de la API
+```
+
+- `JWT_SECRET`: usado por el backend para firmar tokens.
+- `ADMIN_EMAIL`/`ADMIN_PASSWORD`: se siembran en la DB en el arranque si no
+  existe ningún usuario.
+- `VITE_API_BASE`: se lee durante `npm run build`; puede apuntar al mismo
+dominio del frontend (entonces las rutas son relativas) o a un subdominio.
+
+## Desarrollo local con Docker
+
+1. Clona el repositorio y sitúate en la carpeta raíz.
+2. Crea un `.env` con las variables mínimas (ejemplos arriba).
+3. Ejecuta:
+   ```bash
+   docker compose up -d --build
+   ```
+   - Backend en `http://localhost:4000`
+   - Frontend en `http://localhost:5173`
+4. El backend inicializa la DB y siembra el superadmin.
+5. Si cambias dependencias del servidor usa `docker compose build backend` y
+   luego reinicia.
+6. Para reiniciar la base de datos y borrar cargas:
+   ```bash
+   docker compose down
+   rm -rf server/data/* server/uploads/*
+   docker compose up -d --build
+   ```
+
+## Despliegue en servidor
+
+1. **Construye el frontend** con la variable apropiada:
+   ```bash
+   export VITE_API_BASE=https://api.tudominio.com
+   npm run build
+   ```
+2. Sirve la carpeta `dist` con nginx, Caddy, Apache o desde el propio
+   backend usando `express.static` y una ruta "catch‑all" para SPA.
+3. Asegúrate de que el backend está accesible desde el dominio (`4000` o
+   cualquier puerto) y de que la variable `JWT_SECRET` está definida.
+4. Mounta volúmenes para `data` y `uploads` si usas Docker, o gestiona el
+   almacenamiento en disco.
+5. No necesitas el proxy de Vite en producción: todas las llamadas se
+   harán a la URL establecida en `VITE_API_BASE` (o de forma relativa si
+   frontend y backend comparten origen).
+6. Configura las reglas de CORS en el backend si lo deseas, actualmente
+   permite cualquier origen.
+
+## Consideraciones
+
+- Todos los componentes usan `getApiBase()` para determinar la URL de la
+  API; así se evita hard‑codear hosts y es fácil cambiar el comportamiento
+  según el entorno.
+- Durante el desarrollo el proxy de Vite redirige `/auth`, `/theses`,
+  `/admin/*`, `/profiles`, `/programs`, `/users`, `/super` al backend.
+- En producción el servidor web/proxy debe reenviar esas rutas a la API
+  o el frontend debe conocer la URL completa.
+- El esquema de la base de datos se migra automáticamente al arrancar el
+  servidor. Si agregas columnas nuevos al `db.js` reinicia el backend.
+
+## Tecnologías principales
+
+- **Frontend**: React, TypeScript, Vite, Tailwind CSS, shadcn‑ui.
+- **Backend**: Node.js, Express, SQLite, bcryptjs, JWT.
+- **DevOps**: Docker Compose (frontend + backend).
+
+Con estos pasos podrás clonar el repo, arrancarlo localmente y después
+subirlo a cualquier servidor con dominio propio usando contenedores o
+servicios tradicionales.
+
+¡Listo para el despliegue! 🎯
 
 ## Project info
 

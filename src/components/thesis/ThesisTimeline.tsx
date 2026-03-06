@@ -3,7 +3,8 @@ import { Check, Clock, Circle, FileText, User, Shield, Download, MessageSquare, 
 import { cn } from "@/lib/utils";
 import { defaultRubric, presentationRubric, type TimelineEvent } from "@/lib/mock-data";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+import { getApiBase } from "@/lib/utils";
+const API_BASE = getApiBase();
 
 // Build lookup maps from rubric definitions
 const allRubrics = [...defaultRubric, ...presentationRubric];

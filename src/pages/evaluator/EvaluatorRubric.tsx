@@ -7,8 +7,9 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { defaultRubric, presentationRubric } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/useAuth";
+import { getApiBase } from "@/lib/utils";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+const API_BASE = getApiBase();
 
 export default function EvaluatorRubric() {
   const { id } = useParams();

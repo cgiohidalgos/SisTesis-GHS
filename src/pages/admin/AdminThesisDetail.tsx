@@ -8,8 +8,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { defaultRubric, presentationRubric } from "@/lib/mock-data";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import RubricEvaluation from "@/components/thesis/RubricEvaluation";
+import { getApiBase } from "@/lib/utils";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+const API_BASE = getApiBase();
 
 export default function AdminThesisDetail() {
   const { id } = useParams();

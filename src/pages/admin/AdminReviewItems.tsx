@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { getApiBase } from "@/lib/utils";
 
 interface ReviewItem {
   id: string;
@@ -11,7 +12,7 @@ interface ReviewItem {
   sort_order: number;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+const API_BASE = getApiBase();
 
 export default function AdminReviewItems() {
   const { user, isSuper } = useAuth();

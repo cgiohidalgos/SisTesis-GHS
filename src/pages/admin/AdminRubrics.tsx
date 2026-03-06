@@ -6,8 +6,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { getApiBase } from "@/lib/utils";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+const API_BASE = getApiBase();
 
 interface RubricSection {
   id: string;

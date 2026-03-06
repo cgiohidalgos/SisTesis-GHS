@@ -4,13 +4,17 @@ import ThesisCard from "@/components/thesis/ThesisCard";
 import StatusBadge from "@/components/thesis/StatusBadge";
 import { toast } from "sonner";
 
+import { getApiBase } from "@/lib/utils";
+
+const API_BASE = getApiBase();
+
 export default function AdminTheses() {
   const [theses, setTheses] = useState<any[]>([]);
 
   const fetchTheses = async () => {
     try {
       const token = localStorage.getItem('token');
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses`, {
+      const resp = await fetch(`${API_BASE}/theses`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (!resp.ok) throw new Error('Error cargando tesis');
@@ -27,7 +31,7 @@ export default function AdminTheses() {
     setTheses((prev) => prev.filter((t) => t.id !== id));
     try {
       const token = localStorage.getItem('token');
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/theses/${id}`, {
+      const resp = await fetch(`${API_BASE}/theses/${id}`, {
         method: 'DELETE',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });

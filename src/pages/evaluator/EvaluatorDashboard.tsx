@@ -1,8 +1,9 @@
 import AppLayout from "@/components/layout/AppLayout";
 import ThesisCard from "@/components/thesis/ThesisCard";
 import { useEffect, useState } from "react";
+import { getApiBase } from "@/lib/utils";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+const API_BASE = getApiBase();
 
 export default function EvaluatorDashboard() {
   const [theses, setTheses] = useState<any[]>([]);

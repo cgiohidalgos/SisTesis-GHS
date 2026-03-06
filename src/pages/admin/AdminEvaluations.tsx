@@ -3,8 +3,9 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import AppLayout from "@/components/layout/AppLayout";
 import { Table } from "@/components/ui/table"; // if exists otherwise use simple table
 import { toast } from "sonner";
+import { getApiBase } from "@/lib/utils";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+const API_BASE = getApiBase();
 
 export default function AdminEvaluations() {
   const [evaluations, setEvaluations] = useState<any[]>([]);

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { getApiBase } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,13 +22,18 @@ export default function StudentLogin() {
 
     setLoading(true);
     try {
-      // send the raw identifier (correo institucional, código o cédula)
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/auth/login`, {
+      const url = `${getApiBase()}/auth/login`;
+      console.log('StudentLogin: POST', url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier: studentCode, password }),
+        signal: controller.signal,
       });
-      if (!resp.ok) throw new Error('invalid credentials');
+      clearTimeout(timeoutId);
+      if (!resp.ok) throw new Error(`status ${resp.status}`);
       const data = await resp.json();
       if (data.token) localStorage.setItem('token', data.token);
       toast.success("Bienvenido(a)");
@@ -35,7 +41,12 @@ export default function StudentLogin() {
       // reload after navigation so AuthProvider picks up roles for current route
       window.location.reload();
     } catch (error: any) {
-      toast.error("Código o contraseña incorrectos");
+      console.error('student login error', error);
+      if (error.name === 'AbortError') {
+        toast.error('La petición tomó demasiado tiempo, revisa la conexión o el servidor');
+      } else {
+        toast.error("Código o contraseña incorrectos");
+      }
     } finally {
       setLoading(false);
     }

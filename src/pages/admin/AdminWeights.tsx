@@ -10,7 +10,8 @@ interface Weights {
   presentation: number;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000";
+import { getApiBase } from "@/lib/utils";
+const API_BASE = getApiBase();
 
 export default function AdminWeights() {
   const { user, isSuper } = useAuth();

@@ -11,6 +11,10 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
+import { getApiBase } from "@/lib/utils";
+
+const API_BASE = getApiBase();
+
 export default function AdminPrograms() {
   const [programs, setPrograms] = useState<{ id: string; name: string; admin_user_ids?: string[] }[]>([]);
   const [admins, setAdmins] = useState<{id:string;full_name:string;institutional_email:string}[]>([]);
@@ -29,11 +33,11 @@ export default function AdminPrograms() {
   const fetchPrograms = async () => {
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/programs`, {
+      const resp = await fetch(`${API_BASE}/programs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       // also fetch admins list
-      const resp2 = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/users?role=admin`, {
+      const resp2 = await fetch(`${API_BASE}/users?role=admin`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (resp2.ok) setAdmins(await resp2.json());
@@ -58,7 +62,7 @@ export default function AdminPrograms() {
       const payload: any = { name: name.trim() };
       if (adminIds.length) payload.admin_user_ids = adminIds;
       if (editingId) {
-        resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/programs/${editingId}`, {
+        resp = await fetch(`${API_BASE}/programs/${editingId}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -67,7 +71,7 @@ export default function AdminPrograms() {
           body: JSON.stringify(payload),
         });
       } else {
-        resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/programs`, {
+        resp = await fetch(`${API_BASE}/programs`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -109,7 +113,7 @@ export default function AdminPrograms() {
     if (!confirm("¿Eliminar este programa?")) return;
     try {
       const token = localStorage.getItem("token");
-      const resp = await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:4000'}/programs/${id}`, {
+      const resp = await fetch(`${API_BASE}/programs/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

@@ -1,5 +1,5 @@
 const db = require('./db');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
 async function run() {
