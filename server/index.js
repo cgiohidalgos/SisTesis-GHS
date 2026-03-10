@@ -2749,258 +2749,91 @@ app.get('/theses/:id/acta/download-for-signing', authMiddleware, async (req, res
   const dateText = `${defenseDate.getDate()} de ${months[defenseDate.getMonth()]} de ${defenseDate.getFullYear()}`;
   const timeText = defenseDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
 
-  const templatePath = path.join(__dirname, 'templates', 'acta_template.docx');
-  
   try {
     let pdfBuffer;
 
-    if (fs.existsSync(templatePath)) {
-      // Generar DOCX y convertir a PDF
-      const content = fs.readFileSync(templatePath, 'binary');
-      const zip = new PizZip(content);
-      
-      // Obtener firmatarios por rol (pueden estar vacíos para firma digital)
-      const directorSigs = signatures.filter((s) => s.signer_role === 'director');
-      const evaluatorSigs = signatures.filter((s) => s.signer_role === 'evaluator');
-      const programDirectorSig = signatures.find(s => s.signer_role === 'program_director');
-      
-      const doc = new Docxtemplater(zip, {
-        paragraphLoop: true,
-        linebreaks: true,
-        nullGetter: () => '',
-      });
-
-      // Calcular año y período
+    {
+      // Calcular año, período y consecutivo
       const defenseYear = defenseDate.getFullYear();
       const defenseMonth = defenseDate.getMonth() + 1;
       const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
 
-      // Calcular consecutivo
       const periodStart = defensePeriod === 'I'
         ? new Date(defenseYear, 0, 1).getTime()
         : new Date(defenseYear, 6, 1).getTime();
       const periodEnd = defensePeriod === 'I'
         ? new Date(defenseYear, 6, 1).getTime()
         : new Date(defenseYear + 1, 0, 1).getTime();
-
       const thesesInPeriod = db.prepare(
-        `SELECT id, defense_date FROM theses
-         WHERE defense_date IS NOT NULL
-           AND CAST(defense_date AS INTEGER) >= ?
-           AND CAST(defense_date AS INTEGER) < ?
-         ORDER BY CAST(defense_date AS INTEGER) ASC`
+        `SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`
       ).all(periodStart, periodEnd);
+      let thesisPos = 1;
+      for (let i = 0; i < thesesInPeriod.length; i++) { if (thesesInPeriod[i].id === thesis.id) { thesisPos = i + 1; break; } }
+      const thesisNumber = String(thesisPos).padStart(2, '0');
 
-      let thesisPosition = 1;
-      for (let i = 0; i < thesesInPeriod.length; i++) {
-        if (thesesInPeriod[i].id === thesis.id) {
-          thesisPosition = i + 1;
-          break;
-        }
-      }
-      const thesisNumber = String(thesisPosition).padStart(2, '0');
-
-      // Helper para número en texto
-      const numberToText = (n) => {
+      // Helpers para texto de números
+      function numToText(n) {
         const units = ['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve'];
         const teens = ['diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];
-        const tens = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
+        const tens2 = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
         if (n < 10) return units[n];
         if (n < 20) return teens[n - 10];
         const t = Math.floor(n / 10), u = n % 10;
-        if (u === 0) return tens[t];
+        if (u === 0) return tens2[t];
         if (t === 2) return 'veinti' + units[u];
-        return tens[t] + ' y ' + units[u];
-      };
+        return tens2[t] + ' y ' + units[u];
+      }
+      function numToTextYear(n) {
+        if (n < 1000) return numToText(n);
+        const th = Math.floor(n / 1000), rest = n % 1000;
+        const thW = th === 1 ? 'mil' : numToText(th) + ' mil';
+        return rest === 0 ? thW : thW + ' ' + numToText(rest);
+      }
 
-      // Datos del template (usando las mismas variables dinámicas que el export)
-      const templateData = {
+      // Directores de programa (incluye param manual si se pasa)
+      const effectiveProgramDirectors = progDirectorNameParam
+        ? [{ name: progDirectorNameParam, program: programDirectors[0]?.program || programName || 'Programa Académico', id: null }, ...programDirectors.slice(1)]
+        : programDirectors;
+
+      const docxBuf = generateActaDocx({
+        thesisNumber,
+        year: defenseYear,
+        period: defensePeriod,
         lugar: thesis.defense_location || 'Auditorio por definir',
-        fecha: dateText,
         hora: timeText,
+        dia_numero: defenseDate.getDate(),
+        dia_texto: numToText(defenseDate.getDate()),
+        mes_nombre: months[defenseDate.getMonth()],
+        year_text: `${defenseYear} (${numToTextYear(defenseYear)})`,
         titulo: thesis.title || '',
         estudiantes: studentNames,
         codigos: studentCodes || 'N/A',
         director: directorNames,
         evaluadores: evalNames,
         observaciones: thesis.defense_info || 'Sin observaciones registradas',
-        calificacion_letras: scoreToSpanishText(weighted.finalScore),
+        classification,
         nota: Number(weighted.finalScore || 0).toFixed(2),
-        fecha_firma: dateText,
-        clasificacion: classification,
-        marca_laureada: classification === 'APROBADA LAUREADA' ? 'X' : ' ',
-        marca_meritoria: classification === 'APROBADA MERITORIA' ? 'X' : ' ',
-        marca_aprobada: classification === 'APROBADA' ? 'X' : ' ',
-        marca_modificaciones: ' ',
-        marca_no_aprobada: classification === 'NO APROBADA' ? 'X' : ' ',
-        // Evaluadores (siempre 2)
-        evaluador1_name: evaluators[0]?.name || '',
-        evaluador2_name: evaluators[1]?.name || '',
-        firma_eval1: '',
-        firma_eval2: '',
-        evaluador1_role: evaluators[0]?.name ? 'Jurado' : '',
-        evaluador2_role: evaluators[1]?.name ? 'Jurado' : '',
-        // Directores de tesis (1 o 2)
-        director1_name: directors[0] || '',
-        director2_name: directors[1] || '',
-        firma_dir1: '',
-        firma_dir2: '',
-        director1_role: directors[0] ? 'Director de Proyecto de Grado' : '',
-        director2_role: directors[1] ? 'Director de Proyecto de Grado' : '',
-        // Directores de Programa (1 o 2, usa query param o datos de BD)
-        prog_director1_name: progDirectorNameParam || programDirectors[0]?.name || '',
-        prog_director1_role: (progDirectorNameParam || programDirectors[0]) ? `Director del Programa de ${programDirectors[0]?.program || programName || 'Programa Académico'}` : '',
-        firma_prog1: '',
-        prog_director2_name: programDirectors[1]?.name || '',
-        prog_director2_role: programDirectors[1] ? `Director del Programa de ${programDirectors[1].program}` : '',
-        firma_prog2: '',
-        // Otros
-        program_name: (programName || 'Programa Académico').toUpperCase(),
-        thesis_number: thesisNumber,
-        year: defenseYear,
-        period: defensePeriod,
-        year_text: `${defenseYear}`,
-        dia_numero: defenseDate.getDate(),
-        dia_texto: numberToText(defenseDate.getDate()),
-        mes_nombre: ` ${months[defenseDate.getMonth()]} `,
-        // Preservar placeholder para reemplazo posterior
-        TABLA_FIRMAS_DINAMICA: '{TABLA_FIRMAS_DINAMICA}',
-      };
-
-      console.log('📄 PDF para firmar - Datos de tabla de firmas:');
-      console.log(`   Evaluador 1: "${templateData.evaluador1_name}"`);
-      console.log(`   Evaluador 2: "${templateData.evaluador2_name}"`);
-      console.log(`   Director 1: "${templateData.director1_name}"`);
-      console.log(`   Director 2: "${templateData.director2_name}"`);
-      console.log(`   Dir Programa 1: "${templateData.prog_director1_name}"`);
-      console.log(`   Dir Programa 2: "${templateData.prog_director2_name}"`);
-
-      doc.render(templateData);
-
-      // Generar tabla de firmas dinámica y reemplazar en el documento
-      const signatureTableData = {
-        evaluators: evaluators.map(e => ({ name: e.name, firma: '' })),
-        directors: directors.filter(d => d).map(d => ({ name: d, firma: '' })),
-        programDirectors: [
-          { name: progDirectorNameParam || programDirectors[0]?.name || '', program: programDirectors[0]?.program || programName || 'Programa Académico', firma: '' },
-          ...(programDirectors[1] ? [{ name: programDirectors[1].name, program: programDirectors[1].program, firma: '' }] : [])
-        ].filter(p => p.name)
-      };
-      
-      const dynamicTableXml = generateSignatureTableXml(signatureTableData);
-      
-      // Reemplazar el placeholder en document.xml
-      const docZip = doc.getZip();
-      const documentXmlPath = 'word/document.xml';
-      let documentXml = docZip.file(documentXmlPath).asText();
-      
-      // Reemplazar el párrafo completo que contiene el placeholder con la tabla
-      // Buscar manualmente el párrafo que contiene el placeholder
-      const placeholderText = '{TABLA_FIRMAS_DINAMICA}';
-      const placeholderIdx = documentXml.indexOf(placeholderText);
-      console.log('🔍 Buscando placeholder:', placeholderText);
-      console.log('🔍 Índice encontrado:', placeholderIdx);
-      if (placeholderIdx >= 0) {
-        console.log('✅ Placeholder encontrado en posición:', placeholderIdx);
-        // Encontrar el <w:p> o <w:p  más cercano hacia atrás
-        let pStart = placeholderIdx;
-        while (pStart > 0) {
-          pStart--;
-          if (documentXml.substring(pStart, pStart + 4) === '<w:p' && 
-              (documentXml[pStart + 4] === '>' || documentXml[pStart + 4] === ' ')) {
-            break;
-          }
-        }
-        // Encontrar el </w:p> más cercano hacia adelante
-        let pEnd = documentXml.indexOf('</w:p>', placeholderIdx);
-        if (pEnd >= 0) {
-          pEnd += 6; // incluir '</w:p>'
-          const paragraphToReplace = documentXml.substring(pStart, pEnd);
-          console.log('📝 Párrafo a reemplazar (longitud):', paragraphToReplace.length);
-          documentXml = documentXml.substring(0, pStart) + dynamicTableXml + documentXml.substring(pEnd);
-        }
-      }
-      
-      // Actualizar el archivo en el zip
-      docZip.file(documentXmlPath, documentXml);
-      
-      console.log('📊 Tabla de firmas generada dinámicamente:');
-      console.log(`   Evaluadores: ${signatureTableData.evaluators.length}`);
-      console.log(`   Directores: ${signatureTableData.directors.length}`);
-      console.log(`   Dir Programa: ${signatureTableData.programDirectors.length}`);
-
-      const docxBuf = docZip.generate({ type: 'nodebuffer' });
+        calificacion_letras: scoreToSpanishText(weighted.finalScore),
+        evaluators,
+        directors,
+        programDirectors: effectiveProgramDirectors,
+        signatures,
+        programName,
+      });
 
       // Convertir a PDF usando LibreOffice
       const { execSync } = require('child_process');
       const tmpDocx = path.join('/tmp', `acta_sign_${thesisId}_${Date.now()}.docx`);
       fs.writeFileSync(tmpDocx, docxBuf);
 
-      // Usar PDF/A-1b para compatibilidad con firmas digitales
       execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, {
-        timeout: 30000,
-        stdio: 'pipe',
+        timeout: 30000, stdio: 'pipe',
       });
 
       const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
       pdfBuffer = fs.readFileSync(tmpPdf);
-
-      // Limpiar temporales
       try { fs.unlinkSync(tmpDocx); } catch {}
       try { fs.unlinkSync(tmpPdf); } catch {}
-
-    } else {
-      // Fallback: generar PDF simple con pdf-lib
-      const pdfDoc = await PDFDocument.create();
-      const page = pdfDoc.addPage([595.28, 841.89]); // A4
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-      let y = 800;
-      const lineHeight = 18;
-
-      page.drawText('ACTA DE SUSTENTACIÓN', { x: 180, y, font: fontBold, size: 16 });
-      y -= lineHeight * 2;
-      page.drawText(`Proyecto: ${thesis.title || 'Sin título'}`, { x: 50, y, font, size: 11 });
-      y -= lineHeight;
-      page.drawText(`Fecha: ${dateText} - ${timeText}`, { x: 50, y, font, size: 11 });
-      y -= lineHeight;
-      page.drawText(`Lugar: ${thesis.defense_location || 'Por definir'}`, { x: 50, y, font, size: 11 });
-      y -= lineHeight;
-      page.drawText(`Estudiantes: ${studentNames || 'N/A'}`, { x: 50, y, font, size: 11 });
-      y -= lineHeight;
-      page.drawText(`Directores: ${directorNames || 'N/A'}`, { x: 50, y, font, size: 11 });
-      y -= lineHeight;
-      page.drawText(`Evaluadores: ${evalNames || 'N/A'}`, { x: 50, y, font, size: 11 });
-      y -= lineHeight * 2;
-      page.drawText(`Calificación: ${classification}`, { x: 50, y, font: fontBold, size: 12 });
-      y -= lineHeight;
-      page.drawText(`Nota: ${Number(weighted.finalScore || 0).toFixed(2)}`, { x: 50, y, font, size: 11 });
-      
-      // Sección de firmas
-      y -= lineHeight * 3;
-      page.drawText('FIRMAS:', { x: 50, y, font: fontBold, size: 12 });
-      y -= lineHeight * 2;
-
-      // Espacios para firmas de evaluadores
-      evaluators.forEach((ev, i) => {
-        page.drawText(`Evaluador ${i + 1}: ${ev.name}`, { x: 50, y, font, size: 10 });
-        page.drawText('_______________________________', { x: 300, y, font, size: 10 });
-        y -= lineHeight * 2;
-      });
-
-      // Espacios para firmas de directores
-      directors.forEach((d, i) => {
-        page.drawText(`Director ${i + 1}: ${d}`, { x: 50, y, font, size: 10 });
-        page.drawText('_______________________________', { x: 300, y, font, size: 10 });
-        y -= lineHeight * 2;
-      });
-
-      // Espacio para director del programa
-      page.drawText('Director del Programa:', { x: 50, y, font, size: 10 });
-      page.drawText('_______________________________', { x: 300, y, font, size: 10 });
-
-      pdfBuffer = await pdfDoc.save();
     }
 
     // Guardar el PDF generado
@@ -3193,383 +3026,96 @@ app.get('/theses/:id/acta/export', authMiddleware, (req, res) => {
   const dateText = `${defenseDate.getDate()} de ${months[defenseDate.getMonth()]} de ${defenseDate.getFullYear()}`;
   const timeText = defenseDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
   
-  const templatePath = path.join(__dirname, 'templates', 'acta_template.docx');
-  
-  // Generar documento con docxtemplater (tanto para Word como PDF)
-  if ((format === 'word' || format === 'pdf') && fs.existsSync(templatePath)) {
-    try {
-      const content = fs.readFileSync(templatePath, 'binary');
-      const zip = new PizZip(content);
-      
-      // Obtener firmatarios por rol
-      const directorSigs = signatures.filter((s) => s.signer_role === 'director');
-      const evaluatorSigs = signatures.filter((s) => s.signer_role === 'evaluator');
-      const allSignatories = [...directorSigs, ...evaluatorSigs];
-      
-      console.log(`📄 Firmatarios para acta:`);
-      console.log(`  Directores: ${directorSigs.length} - ${directorSigs.map(d => d.signer_name).join(', ')}`);
-      console.log(`  Evaluadores: ${evaluatorSigs.length} - ${evaluatorSigs.map(e => e.signer_name).join(', ')}`);
-      console.log(`  Director programa: ${programDirectorSig?.signer_name || 'N/A'}`);
-      
-      const doc = new Docxtemplater(zip, {
-        paragraphLoop: true,
-        linebreaks: true,
-        nullGetter: () => '',
-      });
+  // Calcular año, período y consecutivo
+  const defenseYear = defenseDate.getFullYear();
+  const defenseMonth = defenseDate.getMonth() + 1;
+  const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
+  const periodStart2 = defensePeriod === 'I' ? new Date(defenseYear, 0, 1).getTime() : new Date(defenseYear, 6, 1).getTime();
+  const periodEnd2 = defensePeriod === 'I' ? new Date(defenseYear, 6, 1).getTime() : new Date(defenseYear + 1, 0, 1).getTime();
+  const thesesInPeriod2 = db.prepare(`SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`).all(periodStart2, periodEnd2);
+  let thesisPos2 = 1;
+  for (let i = 0; i < thesesInPeriod2.length; i++) { if (thesesInPeriod2[i].id === thesis.id) { thesisPos2 = i + 1; break; } }
+  const thesisNumber2 = String(thesisPos2).padStart(2, '0');
 
-      // Helper para crear texto placeholder de firma
-      const firmaText = (sig) => {
-        if (!sig) return '';
-        if (sig.certificate_cn) return `[Firma digital: ${sig.signer_name} (${sig.certificate_cn})]`;
-        return `[Firma digital: ${sig.signer_name}]`;
-      };
+  function numToText2(n) {
+    const units = ['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve'];
+    const teens = ['diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];
+    const tens2 = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
+    if (n < 10) return units[n];
+    if (n < 20) return teens[n - 10];
+    const t = Math.floor(n / 10), u = n % 10;
+    if (u === 0) return tens2[t];
+    if (t === 2) return 'veinti' + units[u];
+    return tens2[t] + ' y ' + units[u];
+  }
+  function numToTextYear2(n) {
+    if (n < 1000) return numToText2(n);
+    const th = Math.floor(n / 1000), rest = n % 1000;
+    const thW = th === 1 ? 'mil' : numToText2(th) + ' mil';
+    return rest === 0 ? thW : thW + ' ' + numToText2(rest);
+  }
 
-      // Calcular año y período de la sustentación
-      const defenseYear = defenseDate.getFullYear();
-      const defenseMonth = defenseDate.getMonth() + 1;
-      const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
+  try {
+    const buf = generateActaDocx({
+      thesisNumber: thesisNumber2,
+      year: defenseYear,
+      period: defensePeriod,
+      lugar: thesis.defense_location || 'Auditorio por definir',
+      hora: timeText,
+      dia_numero: defenseDate.getDate(),
+      dia_texto: numToText2(defenseDate.getDate()),
+      mes_nombre: months[defenseDate.getMonth()],
+      year_text: `${defenseYear} (${numToTextYear2(defenseYear)})`,
+      titulo: thesis.title || '',
+      estudiantes: studentNames,
+      codigos: studentCodes || 'N/A',
+      director: directorNames,
+      evaluadores: evalNames,
+      observaciones: thesis.defense_info || 'Sin observaciones registradas',
+      classification,
+      nota: Number(weighted.finalScore || 0).toFixed(2),
+      calificacion_letras: scoreToSpanishText(weighted.finalScore),
+      evaluators,
+      directors,
+      programDirectors,
+      signatures,
+      programName,
+    });
 
-      // Calcular número consecutivo de tesis sustentadas en el mismo período
-      // Período I: enero-junio, Período II: julio-diciembre
-      const periodStart = defensePeriod === 'I'
-        ? new Date(defenseYear, 0, 1).getTime()   // 1 de enero
-        : new Date(defenseYear, 6, 1).getTime();   // 1 de julio
-      const periodEnd = defensePeriod === 'I'
-        ? new Date(defenseYear, 6, 1).getTime()    // 1 de julio
-        : new Date(defenseYear + 1, 0, 1).getTime(); // 1 de enero siguiente
+    const studentFileNames = students.map(s => {
+      const parts = (s.name || '').trim().split(/\s+/);
+      return parts.length >= 3 ? parts[0] + parts[Math.ceil(parts.length / 2)] : parts.join('');
+    }).join('-');
+    const baseFileName = `${thesisNumber2}-${defenseYear}-${defensePeriod}-${studentFileNames}`;
 
-      // Contar tesis que ya tienen fecha de sustentación en este período (ordenadas por fecha)
-      const thesesInPeriod = db.prepare(
-        `SELECT id, defense_date FROM theses
-         WHERE defense_date IS NOT NULL
-           AND CAST(defense_date AS INTEGER) >= ?
-           AND CAST(defense_date AS INTEGER) < ?
-         ORDER BY CAST(defense_date AS INTEGER) ASC`
-      ).all(periodStart, periodEnd);
-
-      // Encontrar la posición de esta tesis en el período
-      let thesisPosition = 1;
-      for (let i = 0; i < thesesInPeriod.length; i++) {
-        if (thesesInPeriod[i].id === thesis.id) {
-          thesisPosition = i + 1;
-          break;
-        }
+    if (format === 'pdf') {
+      const { execSync } = require('child_process');
+      const tmpDocx = path.join('/tmp', `acta_${thesisId}_${Date.now()}.docx`);
+      fs.writeFileSync(tmpDocx, buf);
+      try {
+        execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, { timeout: 30000, stdio: 'pipe' });
+        const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
+        if (!fs.existsSync(tmpPdf)) throw new Error('LibreOffice no generó el PDF');
+        const pdfBuf = fs.readFileSync(tmpPdf);
+        try { fs.unlinkSync(tmpDocx); } catch {}
+        try { fs.unlinkSync(tmpPdf); } catch {}
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${baseFileName}.pdf"`);
+        return res.send(pdfBuf);
+      } catch (convErr) {
+        console.error('Error convirtiendo a PDF:', convErr.message);
+        try { fs.unlinkSync(tmpDocx); } catch {}
+        return res.status(500).json({ error: 'Error al convertir a PDF' });
       }
-      const thesisNumber = String(thesisPosition).padStart(2, '0');
-
-      console.log(`📊 Consecutivo: No. ${thesisNumber} / ${defenseYear}-${defensePeriod}`);
-      console.log(`  Tesis en período ${defensePeriod}-${defenseYear}: ${thesesInPeriod.length}`);
-      console.log(`  Posición de esta tesis: ${thesisPosition}`);
-
-      console.log('📝 Mapeo de firmas (pares):');
-      console.log(`  Director 1: "${directorSigs[0]?.signer_name || ''}" | Director 2: "${directorSigs[1]?.signer_name || ''}"`);
-      console.log(`  Evaluador 1: "${evaluatorSigs[0]?.signer_name || ''}" | Evaluador 2: "${evaluatorSigs[1]?.signer_name || ''}"`);
-      console.log(`  Director Programa: "${programDirectorSig?.signer_name || ''}"`);
-
-      const templateData = {
-        lugar: thesis.defense_location || 'Auditorio por definir',
-        fecha: dateText,
-        hora: timeText,
-        titulo: thesis.title || '',
-        estudiantes: studentNames,
-        codigos: studentCodes || 'N/A',
-        director: directorNames,
-        evaluadores: evalNames,
-        observaciones: thesis.defense_info || 'Sin observaciones registradas',
-        calificacion_letras: scoreToSpanishText(weighted.finalScore),
-        nota: Number(weighted.finalScore || 0).toFixed(2),
-        fecha_firma: dateText,
-        clasificacion: classification,
-        marca_laureada: classification === 'APROBADA LAUREADA' ? 'X' : ' ',
-        marca_meritoria: classification === 'APROBADA MERITORIA' ? 'X' : ' ',
-        marca_aprobada: classification === 'APROBADA' ? 'X' : ' ',
-        marca_modificaciones: ' ',
-        marca_no_aprobada: classification === 'NO APROBADA' ? 'X' : ' ',
-        // Evaluadores (siempre 2)
-        evaluador1_name: evaluators[0]?.name || '',
-        evaluador2_name: evaluators[1]?.name || '',
-        firma_eval1: firmaText(evaluatorSigs[0]),
-        firma_eval2: firmaText(evaluatorSigs[1]),
-        evaluador1_role: evaluators[0]?.name ? 'Jurado' : '',
-        evaluador2_role: evaluators[1]?.name ? 'Jurado' : '',
-        // Directores de tesis (1 o 2)
-        director1_name: directors[0] || '',
-        director2_name: directors[1] || '',
-        firma_dir1: firmaText(directorSigs[0]),
-        firma_dir2: firmaText(directorSigs[1]),
-        director1_role: directors[0] ? 'Director de Proyecto de Grado' : '',
-        director2_role: directors[1] ? 'Director de Proyecto de Grado' : '',
-        // Directores de Programa (1 o 2, según programas asociados)
-        prog_director1_name: programDirectors[0]?.name || '',
-        prog_director1_role: programDirectors[0] ? `Director del Programa de ${programDirectors[0].program}` : '',
-        firma_prog1: (() => {
-          const p = programDirectors[0];
-          const sig = signatures.find(s => s.signer_role === 'program_director' &&
-            (String(s.signer_user_id) === String(p?.id) || (p && s.signer_name.toLowerCase() === p.name.toLowerCase())));
-          return firmaText(sig);
-        })(),
-        prog_director2_name: programDirectors[1]?.name || '',
-        prog_director2_role: programDirectors[1] ? `Director del Programa de ${programDirectors[1].program}` : '',
-        firma_prog2: (() => {
-          const p = programDirectors[1];
-          const sig = signatures.find(s => s.signer_role === 'program_director' &&
-            (String(s.signer_user_id) === String(p?.id) || (p && s.signer_name.toLowerCase() === p.name.toLowerCase())));
-          return firmaText(sig);
-        })(),
-        // Otros
-        program_name: (programName || 'Programa Académico').toUpperCase(),
-        thesis_number: thesisNumber,
-        year: defenseYear,
-        period: defensePeriod,
-        year_text: (() => {
-          const units = ['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve'];
-          const teens = ['diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];
-          const tens = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
-          function toWords(n) {
-            if (n === 0) return '';
-            if (n < 10) return units[n];
-            if (n < 20) return teens[n - 10];
-            if (n < 100) {
-              const t = Math.floor(n / 10), u = n % 10;
-              if (u === 0) return tens[t];
-              if (t === 2) return 'veinti' + units[u];
-              return tens[t] + ' y ' + units[u];
-            }
-            if (n < 1000) {
-              const h = Math.floor(n / 100), rest = n % 100;
-              const hWord = h === 1 ? (rest === 0 ? 'cien' : 'ciento') : (h === 5 ? 'quinientos' : h === 7 ? 'setecientos' : h === 9 ? 'novecientos' : units[h] + 'cientos');
-              return rest === 0 ? hWord : hWord + ' ' + toWords(rest);
-            }
-            if (n < 10000) {
-              const th = Math.floor(n / 1000), rest = n % 1000;
-              const thWord = th === 1 ? 'mil' : toWords(th) + ' mil';
-              return rest === 0 ? thWord : thWord + ' ' + toWords(rest);
-            }
-            return String(n);
-          }
-          return `${defenseYear} (${toWords(defenseYear)})`;
-        })(),
-        dia_numero: defenseDate.getDate(),
-        dia_texto: (() => {
-          const units = ['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve'];
-          const teens = ['diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];
-          const tens = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
-          const d = defenseDate.getDate();
-          if (d < 10) return units[d];
-          if (d < 20) return teens[d - 10];
-          const t = Math.floor(d / 10), u = d % 10;
-          if (u === 0) return tens[t];
-          if (t === 2) return 'veinti' + units[u];
-          return tens[t] + ' y ' + units[u];
-        })(),
-        mes_nombre: ` ${['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'][defenseDate.getMonth()]} `,
-        // Preservar placeholder para reemplazo posterior
-        TABLA_FIRMAS_DINAMICA: '{TABLA_FIRMAS_DINAMICA}',
-      };
-
-      console.log('📊 templateData - Datos para tabla de firmas:');
-      console.log(`   Evaluador 1: "${templateData.evaluador1_name}" - ${templateData.evaluador1_role}`);
-      console.log(`   Evaluador 2: "${templateData.evaluador2_name}" - ${templateData.evaluador2_role}`);
-      console.log(`   Director 1: "${templateData.director1_name}" - ${templateData.director1_role}`);
-      console.log(`   Director 2: "${templateData.director2_name}" - ${templateData.director2_role}`);
-      console.log(`   Dir Programa 1: "${templateData.prog_director1_name}" - ${templateData.prog_director1_role}`);
-      console.log(`   Dir Programa 2: "${templateData.prog_director2_name}" - ${templateData.prog_director2_role}`);
-
-      doc.render(templateData);
-
-      // Generar tabla de firmas dinámica y reemplazar en el documento
-      const signatureTableData = {
-        evaluators: evaluators.map(e => ({ 
-          name: e.name, 
-          firma: (() => {
-            const sig = signatures.find(s => s.signer_role === 'evaluator' && String(s.signer_user_id) === String(e.id));
-            return sig ? `[Firma digital: ${sig.signer_name}]` : '';
-          })() 
-        })),
-        directors: directors.filter(d => d).map(d => ({ 
-          name: d, 
-          firma: (() => {
-            const sig = signatures.find(s => s.signer_role === 'director' && s.signer_name.toLowerCase() === d.toLowerCase());
-            return sig ? `[Firma digital: ${sig.signer_name}]` : '';
-          })() 
-        })),
-        programDirectors: programDirectors.filter(p => p.name).map(p => ({
-          name: p.name,
-          program: p.program,
-          firma: (() => {
-            const sig = signatures.find(s => s.signer_role === 'program_director' &&
-              (String(s.signer_user_id) === String(p.id) || s.signer_name.toLowerCase() === p.name.toLowerCase()));
-            return sig ? `[Firma digital: ${sig.signer_name}]` : '';
-          })()
-        }))
-      };
-      
-      const dynamicTableXml = generateSignatureTableXml(signatureTableData);
-      
-      // Reemplazar el placeholder en document.xml
-      const docZip = doc.getZip();
-      const documentXmlPath = 'word/document.xml';
-      let documentXmlContent = docZip.file(documentXmlPath).asText();
-      
-      // Reemplazar el párrafo completo que contiene el placeholder con la tabla
-      // Buscar manualmente el párrafo que contiene el placeholder
-      const placeholderText = '{TABLA_FIRMAS_DINAMICA}';
-      const placeholderIdx = documentXmlContent.indexOf(placeholderText);
-      if (placeholderIdx >= 0) {
-        // Encontrar el <w:p> o <w:p  más cercano hacia atrás
-        let pStart = placeholderIdx;
-        while (pStart > 0) {
-          pStart--;
-          if (documentXmlContent.substring(pStart, pStart + 4) === '<w:p' && 
-              (documentXmlContent[pStart + 4] === '>' || documentXmlContent[pStart + 4] === ' ')) {
-            break;
-          }
-        }
-        // Encontrar el </w:p> más cercano hacia adelante
-        let pEnd = documentXmlContent.indexOf('</w:p>', placeholderIdx);
-        if (pEnd >= 0) {
-          pEnd += 6; // incluir '</w:p>'
-          const paragraphToReplace = documentXmlContent.substring(pStart, pEnd);
-          console.log('📝 Párrafo a reemplazar (longitud):', paragraphToReplace.length);
-          documentXmlContent = documentXmlContent.substring(0, pStart) + dynamicTableXml + documentXmlContent.substring(pEnd);
-        }
-      }
-      
-      // Actualizar el archivo en el zip
-      docZip.file(documentXmlPath, documentXmlContent);
-      
-      console.log('📊 Tabla de firmas dinámica generada:');
-      console.log(`   Evaluadores: ${signatureTableData.evaluators.length}`);
-      console.log(`   Directores: ${signatureTableData.directors.length}`);
-      console.log(`   Dir Programa: ${signatureTableData.programDirectors.length}`);
-
-      // Insertar las imágenes de firma en el documento
-      const signaturesToInsert = [...allSignatories.filter(Boolean)];
-      if (programDirectorSig) {
-        signaturesToInsert.push(programDirectorSig);
-      }
-      
-      console.log(`\n🔍 Firmas a insertar: ${signaturesToInsert.length}`);
-      signaturesToInsert.forEach((sig, i) => {
-        console.log(`  ${i+1}. ${sig.signer_name} (${sig.signer_role}) - URL: ${sig.file_url}`);
-      });
-      
-      let modifiedZip = doc.getZip();
-
-      // Siempre corregir mc:Ignorable (artefacto de python-docx con prefijos ns1, ns2...)
-      let docXml = modifiedZip.file('word/document.xml').asText();
-      docXml = fixMcIgnorable(docXml);
-      modifiedZip.file('word/document.xml', docXml);
-
-      if (signaturesToInsert.length > 0) {
-        modifiedZip = insertSignatureImages(modifiedZip, signaturesToInsert);
-      }
-
-      const buf = modifiedZip.generate({
-        type: 'nodebuffer',
-        compression: 'DEFLATE',
-      });
-
-      // Nombre base: 01-2026-I-CarlosHidalgo-JuanPerez
-      const studentFileNames = students.map(s => {
-        const parts = (s.name || '').trim().split(/\s+/);
-        if (parts.length >= 3) {
-          return parts[0] + parts[Math.ceil(parts.length / 2)];
-        }
-        return parts.join('');
-      }).join('-');
-      const baseFileName = `${thesisNumber}-${defenseYear}-${defensePeriod}-${studentFileNames}`;
-
-      if (format === 'pdf') {
-        // Convertir DOCX a PDF usando LibreOffice headless
-        const { execSync } = require('child_process');
-        const tmpDocx = path.join('/tmp', `acta_${thesisId}_${Date.now()}.docx`);
-        const tmpDir = '/tmp';
-        fs.writeFileSync(tmpDocx, buf);
-        try {
-          // Usar PDF/A-1b para compatibilidad con firmas digitales
-          execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir ${tmpDir} "${tmpDocx}"`, {
-            timeout: 30000,
-            stdio: 'pipe',
-          });
-          const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
-          if (!fs.existsSync(tmpPdf)) {
-            throw new Error('LibreOffice no generó el PDF');
-          }
-          const pdfBuf = fs.readFileSync(tmpPdf);
-          // Limpiar archivos temporales
-          try { fs.unlinkSync(tmpDocx); } catch {};
-          try { fs.unlinkSync(tmpPdf); } catch {};
-          
-          const pdfFileName = `${baseFileName}.pdf`;
-          res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', `attachment; filename="${pdfFileName}"`);
-          return res.send(pdfBuf);
-        } catch (convErr) {
-          console.error('Error convirtiendo a PDF:', convErr.message);
-          try { fs.unlinkSync(tmpDocx); } catch {};
-          return res.status(500).json({ error: 'Error al convertir a PDF' });
-        }
-      }
-
-      // Formato Word
-      const actaFileName = `${baseFileName}.docx`;
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      res.setHeader('Content-Disposition', `attachment; filename="${actaFileName}"`);
-      return res.send(buf);
-    } catch (error) {
-      console.error('Error generando acta con template, usando fallback:', error);
-      console.error('Stack:', error.stack);
-      console.error('Properties:', error.properties);
     }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseFileName}.docx"`);
+    return res.send(buf);
+  } catch (error) {
+    console.error('Error generando acta:', error);
+    return res.status(500).json({ error: 'Error generando acta' });
   }
-
-  // Fallback: generación HTML para Word (método anterior)
-  const signHtml = signatures.map(s => `<div style="margin-top:10px"><strong>${s.signer_role === 'evaluator' ? 'Jurado' : 'Director Proyecto de Grado'}: ${s.signer_name}</strong><br/><img src="http://localhost:${PORT}${s.file_url}" style="height:70px"/></div>`).join('');
-
-  const bodyHtml = `
-    <html><body style="font-family:Arial; font-size:12px; line-height:1.5">
-      <h2 style="text-align:center">ACTA DE SUSTENTACIÓN</h2>
-      <p>En ${thesis.defense_location || 'Auditorio por definir'}, a las ${toDateTime(thesis.defense_date)}, se dio inicio a la sustentación pública del proyecto de grado titulado <strong>${thesis.title}</strong>, realizado por ${studentNames} (código(s): ${studentCodes || 'N/A'}, cédula(s): ${studentIds || 'N/A'}). Durante las fases del trabajo se adelantó bajo la dirección de ${directorNames || 'Director por definir'}, mientras que la fase de evaluación contó con el apoyo de los profesores ${evalNames || 'Evaluadores por definir'}.</p>
-      <p><strong>OBSERVACIONES:</strong> ${thesis.defense_info || 'Sin observaciones registradas.'}</p>
-      <h3>CALIFICACIÓN DE PROYECTO DE GRADO</h3>
-      <p>APROBADA LAUREADA ( )</p>
-      <p>APROBADA MERITORIA (${mark('APROBADA MERITORIA')})</p>
-      <p>APROBADA (${mark('APROBADA')})</p>
-      <p>APROBADA CON MODIFICACIONES ( )</p>
-      <p>NO APROBADA (${mark('NO APROBADA')})</p>
-      <p><strong>EVALUACIÓN EN LETRAS:</strong> ${scoreToSpanishText(weighted.finalScore)} (${Number(weighted.finalScore || 0).toFixed(2)})</p>
-      <hr/>
-      <h3>Firmas</h3>
-      ${signHtml || '<p>Aún no hay firmas cargadas.</p>'}
-    </body></html>
-  `;
-
-  if (format === 'pdf') {
-    const lines = [
-      'ACTA DE SUSTENTACIÓN',
-      `Proyecto: ${thesis.title}`,
-      `Fecha sustentación: ${toDateTime(thesis.defense_date)}`,
-      `Lugar: ${thesis.defense_location || 'N/A'}`,
-      `Estudiantes: ${studentNames || 'N/A'}`,
-      `Códigos: ${studentCodes || 'N/A'}`,
-      `Cédulas: ${studentIds || 'N/A'}`,
-      `Directores: ${directorNames || 'N/A'}`,
-      `Evaluadores: ${evalNames || 'N/A'}`,
-      `Clasificación: ${classification}`,
-      `Nota final: ${Number(weighted.finalScore || 0).toFixed(2)} (${scoreToSpanishText(weighted.finalScore)})`,
-      '--- FIRMAS ---',
-      ...signatures.map(s => `${s.signer_role === 'evaluator' ? 'Jurado' : 'Director'}: ${s.signer_name}`),
-    ];
-    const pdfBuffer = buildSimplePdf(lines);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="acta-${thesisId}.pdf"`);
-    return res.end(pdfBuffer);
-  }
-
-  res.setHeader('Content-Type', 'application/msword');
-  res.setHeader('Content-Disposition', `attachment; filename="acta-${thesisId}.doc"`);
-  res.send(bodyHtml);
 });
 
 // File uploads for evaluations
@@ -3604,6 +3150,272 @@ function escapeXmlChar(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+function generateActaDocx({
+  thesisNumber, year, period, lugar, hora, dia_numero, dia_texto, mes_nombre, year_text,
+  titulo, estudiantes, codigos, director, evaluadores, observaciones,
+  classification, nota, calificacion_letras,
+  evaluators, directors, programDirectors, signatures, programName,
+}) {
+  try {
+    const templatePath = path.join(__dirname, 'templates', 'acta_template.docx');
+
+    if (!fs.existsSync(templatePath)) {
+      console.warn('Template not found, using XML generation');
+      return generateActaDocxLegacy({
+        thesisNumber, year, period, lugar, hora, dia_numero, dia_texto, mes_nombre, year_text,
+        titulo, estudiantes, codigos, director, evaluadores, observaciones,
+        classification, nota, calificacion_letras,
+        evaluators, directors, programDirectors, signatures, programName,
+      });
+    }
+
+    // Leer template original
+    const templateContent = fs.readFileSync(templatePath, 'binary');
+    const zip = new PizZip(templateContent);
+    let docXml = zip.file('word/document.xml').asText();
+
+    // Reemplazar placeholders simples en los tags w:t
+    // Usar reemplazos directos dentro de los tags para preservar estructura
+    const replacements = [
+      ['<w:t>01</w:t>', `<w:t>${escapeXmlChar(thesisNumber)}</w:t>`],
+      ['<w:t>8:30</w:t>', `<w:t>${escapeXmlChar(hora)}</w:t>`],
+      ['<w:t>junio</w:t>', `<w:t>${escapeXmlChar(mes_nombre.trim())}</w:t>`],
+      ['<w:t>2025,</w:t>', `<w:t>${year},</w:t>`],
+      ['<w:t>APROBADA CON MODIFICACIONES</w:t>', `<w:t>${escapeXmlChar(classification)}</w:t>`],
+      ['<w:t>_CINCO PUNTO CERO</w:t>', `<w:t>${escapeXmlChar(nota)}</w:t>`],
+      // Reemplazos para el día (buscar alrededor del tag de 'de' junio)
+      ['<w:t>5</w:t><w:r><w:rPr><w:spacing w:val="-6"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>de</w:t></w:r><w:r><w:rPr><w:spacing w:val="-6"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>junio</w:t></w:r>',
+       `<w:t>${dia_numero}</w:t><w:r><w:rPr><w:spacing w:val="-6"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>de</w:t></w:r><w:r><w:rPr><w:spacing w:val="-6"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>${escapeXmlChar(mes_nombre.trim())}</w:t></w:r>`],
+    ];
+
+    replacements.forEach(([old, replacement]) => {
+      if (docXml.includes(old)) {
+        docXml = docXml.replace(old, replacement);
+        console.log(`✓ Reemplazado en template: ${old.substring(0, 40)}...`);
+      }
+    });
+
+    // Actualizar document.xml en el ZIP
+    zip.file('word/document.xml', docXml);
+
+    return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+
+  } catch (err) {
+    console.warn('Error procesando template, fallback a generación XML:', err.message);
+    return generateActaDocxLegacy({
+      thesisNumber, year, period, lugar, hora, dia_numero, dia_texto, mes_nombre, year_text,
+      titulo, estudiantes, codigos, director, evaluadores, observaciones,
+      classification, nota, calificacion_letras,
+      evaluators, directors, programDirectors, signatures, programName,
+    });
+  }
+}
+
+function generateActaDocxLegacy({
+  thesisNumber, year, period, lugar, hora, dia_numero, dia_texto, mes_nombre, year_text,
+  titulo, estudiantes, codigos, director, evaluadores, observaciones,
+  classification, nota, calificacion_letras,
+  evaluators, directors, programDirectors, signatures, programName,
+}) {
+  function e(str) { return escapeXmlChar(str); }
+
+  const defaultRPr = `<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>`;
+  const boldRPr = `<w:rPr><w:b/><w:bCs/><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>`;
+
+  function run(text, rPr) { return `<w:r>${rPr || defaultRPr}<w:t xml:space="preserve">${e(text)}</w:t></w:r>`; }
+  function bold(text) { return run(text, boldRPr); }
+
+  function para(runs, align) {
+    const jc = align ? `<w:jc w:val="${align}"/>` : '<w:jc w:val="both"/>';
+    return `<w:p><w:pPr>${jc}<w:spacing w:line="276" w:lineRule="auto" w:before="0" w:after="160"/></w:pPr>${runs}</w:p>`;
+  }
+  function centerPara(runs) { return para(runs, 'center'); }
+  function emptyPara() { return `<w:p><w:pPr><w:spacing w:line="276" w:lineRule="auto" w:before="0" w:after="0"/></w:pPr></w:p>`; }
+
+  // Tabla de firmas: orden específico - evaluadores, luego directores, luego directores de programa
+  // Máximo 2 columnas por fila para mejor legibilidad
+  const allSigners = [];
+
+  // 1. Jurados evaluadores
+  evaluators.forEach(ev => {
+    const sig = signatures.find(s => s.signer_role === 'evaluator' && String(s.signer_user_id) === String(ev.id));
+    allSigners.push({ name: ev.name, role: 'Jurado Evaluador', sig });
+  });
+
+  // 2. Directores de proyecto
+  directors.forEach((d, i) => {
+    const sig = signatures.find(s => s.signer_role === 'director' && s.signer_name.toLowerCase() === d.toLowerCase());
+    allSigners.push({ name: d, role: 'Director de Proyecto de Grado', sig });
+  });
+
+  // 3. Directores de programa
+  programDirectors.forEach((pd, i) => {
+    const sig = signatures.find(s => s.signer_role === 'program_director' &&
+      (String(s.signer_user_id) === String(pd.id) || s.signer_name.toLowerCase() === pd.name.toLowerCase()));
+    allSigners.push({ name: pd.name, role: `Director del Programa de ${pd.program || programName || 'Programa Académico'}`, sig });
+  });
+
+  // Dividir signers en filas de máximo 2 columnas
+  const colPerRow = 2;
+  const signerRows = [];
+  for (let i = 0; i < allSigners.length; i += colPerRow) {
+    signerRows.push(allSigners.slice(i, i + colPerRow));
+  }
+
+  const colW = Math.floor(9360 / colPerRow);
+
+  function sigCell(signer) {
+    const sigLine = signer.sig ? e(`[Firma digital: ${signer.sig.signer_name}]`) : '________________';
+    return `<w:tc>
+<w:tcPr><w:tcW w:type="dxa" w:w="${colW}"/>
+  <w:tcBorders><w:top w:val="none" w:sz="0" w:space="0"/><w:left w:val="none" w:sz="0" w:space="0"/><w:bottom w:val="none" w:sz="0" w:space="0"/><w:right w:val="none" w:sz="0" w:space="0"/></w:tcBorders>
+</w:tcPr>
+<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run(sigLine)}</w:p>
+<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${bold(signer.name)}</w:p>
+<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run(signer.role)}</w:p>
+</w:tc>`;
+  }
+
+  const sigTableRows = signerRows.map(row => {
+    const cells = row.map(sigCell).join('');
+    const emptyCell = row.length < colPerRow ? `<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="${colW}"/></w:tcPr></w:tc>` : '';
+    return `<w:tr>${cells}${emptyCell}</w:tr>`;
+  }).join('\n');
+
+  const sigTableXml = `<w:tbl>
+<w:tblPr>
+  <w:tblW w:type="dxa" w:w="9360"/>
+  <w:jc w:val="center"/>
+  <w:tblBorders><w:insideH w:val="none"/><w:insideV w:val="none"/></w:tblBorders>
+  <w:tblLook w:val="0000"/>
+</w:tblPr>
+<w:tblGrid>${Array(colPerRow).fill(0).map(() => `<w:gridCol w:w="${colW}"/>`).join('')}</w:tblGrid>
+${sigTableRows}
+</w:tbl>`;
+
+  const marca = (label) => classification === label ? 'X' : ' ';
+
+  const bodyXml = [
+    centerPara(bold(`ACTA DE SUSTENTACIÓN DE PROYECTO DE GRADO No. ${e(thesisNumber)} / ${year}-${period}`)),
+    emptyPara(),
+    para(
+      run('En ') + bold(e(lugar)) + run(', del Campus de la Universidad de San Buenaventura Cali, a las ') +
+      bold(e(hora)) + run(' del día ') + bold(`${dia_numero}`) + run(` de `) + bold(e(mes_nombre.trim())) +
+      run(` de `) + bold(e(year_text)) + run(', se dio inicio a la sustentación pública del proyecto de grado titulado ') +
+      bold(e(titulo)) + run(`, realizado por el/los estudiante(s) `) + bold(e(estudiantes)) +
+      run(`, con código(s) ${e(codigos)}. El trabajo se adelantó bajo la dirección y orientación de `) +
+      bold(e(director)) + run(', mientras que la fase de evaluación contó con el apoyo de los profesores ') +
+      bold(e(evaluadores)) + run('.')
+    ),
+    emptyPara(),
+    para(bold('OBSERVACIONES: ') + run('Posterior a la revisión del documento y a la sustentación del proyecto, se realizan las siguientes observaciones, por parte del jurado evaluador:')),
+    para(run(e(observaciones || 'Sin observaciones registradas.'))),
+    emptyPara(),
+    centerPara(bold('CALIFICACIÓN DE PROYECTO DE GRADO')),
+    centerPara(run('Marque con una "X" el ítem correspondiente a la calificación asignada.')),
+    emptyPara(),
+    centerPara(run(`APROBADA LAUREADA ( ${marca('APROBADA LAUREADA')} )`)),
+    centerPara(run(`APROBADA MERITORIA ( ${marca('APROBADA MERITORIA')} )`)),
+    centerPara(run(`APROBADA ( ${marca('APROBADA')} )`)),
+    centerPara(run(`APROBADA CON MODIFICACIONES ( ${marca('APROBADA CON MODIFICACIONES')} )`)),
+    centerPara(run(`NO APROBADA ( ${marca('NO APROBADA')} )`)),
+    emptyPara(),
+    para(bold('EVALUACIÓN EN LETRAS: ') + run(`${e(calificacion_letras)} (${nota})`)),
+    emptyPara(),
+    para(run(`Para constancia se firma en Cali, a los `) + bold(`${dia_texto} (${dia_numero})`) + run(` días del mes de `) + bold(e(mes_nombre.trim())) + run(` del año `) + bold(e(year_text)) + run('.')),
+    emptyPara(),
+    sigTableXml,
+  ].join('\n');
+
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+<w:body>
+${bodyXml}
+<w:sectPr>
+  <w:pgSz w:w="12240" w:h="15840"/>
+  <w:pgMar w:top="2040" w:right="1440" w:bottom="1960" w:left="1440" w:header="730" w:footer="1777" w:gutter="0"/>
+</w:sectPr>
+</w:body>
+</w:document>`;
+
+  const relsDoc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`;
+
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr>
+      <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>
+      <w:sz w:val="24"/><w:szCs w:val="24"/>
+    </w:rPr></w:rPrDefault>
+  </w:docDefaults>
+</w:styles>`;
+
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>`;
+
+  const appRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`;
+
+  const zip = new PizZip();
+  zip.file('[Content_Types].xml', contentTypes);
+  zip.file('_rels/.rels', appRels);
+  zip.file('word/_rels/document.xml.rels', relsDoc);
+  zip.file('word/document.xml', documentXml);
+  zip.file('word/styles.xml', stylesXml);
+
+  // Copiar header/footer del template de acta para mantener el membrete universitario
+  try {
+    const actaTemplatePath = path.join(__dirname, 'templates', 'acta_template.docx');
+    if (fs.existsSync(actaTemplatePath)) {
+      const actaZip = new PizZip(fs.readFileSync(actaTemplatePath, 'binary'));
+      const header1 = actaZip.file('word/header1.xml');
+      const footer1 = actaZip.file('word/footer1.xml');
+      const headerRels = actaZip.file('word/_rels/header1.xml.rels');
+      const footerRels = actaZip.file('word/_rels/footer1.xml.rels');
+      if (header1) zip.file('word/header1.xml', header1.asText());
+      if (footer1) zip.file('word/footer1.xml', footer1.asText());
+      if (headerRels) zip.file('word/_rels/header1.xml.rels', headerRels.asText());
+      if (footerRels) zip.file('word/_rels/footer1.xml.rels', footerRels.asText());
+      actaZip.file(/^word\/media\//).forEach(f => {
+        try { zip.file(f.name, f.asBinary(), { binary: true }); } catch (_) {}
+      });
+      if (header1 || footer1) {
+        const ct = zip.file('[Content_Types].xml').asText();
+        const extras = [];
+        if (header1) extras.push('<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>');
+        if (footer1) extras.push('<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>');
+        zip.file('[Content_Types].xml', ct.replace('</Types>', extras.join('') + '</Types>'));
+        const updatedDoc = zip.file('word/document.xml').asText();
+        const headerRef = header1 ? '<w:headerReference w:type="default" r:id="rId_header1"/>' : '';
+        const footerRef = footer1 ? '<w:footerReference w:type="default" r:id="rId_footer1"/>' : '';
+        const updatedDocWithRefs = updatedDoc.replace('<w:sectPr>', `<w:sectPr>${headerRef}${footerRef}`);
+        zip.file('word/document.xml', updatedDocWithRefs);
+        const docRels = zip.file('word/_rels/document.xml.rels').asText();
+        const relEntries = [];
+        if (header1) relEntries.push('<Relationship Id="rId_header1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>');
+        if (footer1) relEntries.push('<Relationship Id="rId_footer1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>');
+        zip.file('word/_rels/document.xml.rels', docRels.replace('</Relationships>', relEntries.join('') + '</Relationships>'));
+      }
+    }
+  } catch (err) {
+    console.warn('generateActaDocx: no se pudo copiar header/footer del template:', err.message);
+  }
+
+  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
 function generateMeritoriaDocx({ title, students, directors, date, signatures }) {
@@ -4003,8 +3815,8 @@ app.post('/theses/:id/generate-signing-token', authMiddleware, (req, res) => {
   db.prepare(`INSERT INTO signing_tokens (id, thesis_id, token, signer_name, signer_role, created_at, used_at)
     VALUES (?, ?, ?, ?, ?, ?, NULL)`).run(tokenId, thesisId, token, signerName, signerRole, now);
 
-  // Generar URL apuntando al frontend (puerto 5173)
-  const signUrl = `http://localhost:5173/sign/token/${token}`;
+  const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const signUrl = `${frontendBase}/sign/token/${token}`;
   res.json({ token, signUrl });
 });
 
@@ -4088,8 +3900,8 @@ app.post('/theses/:id/meritoria/generate-signing-token', authMiddleware, (req, r
   db.prepare(`INSERT INTO signing_tokens (id, thesis_id, token, signer_name, signer_role, created_at, used_at)
     VALUES (?, ?, ?, ?, ?, ?, NULL)`).run(tokenId, thesisId, token, signerName, 'meritoria_' + signerRole, now);
 
-  // Generar URL apuntando al frontend (puerto 5173)
-  const signUrl = `http://localhost:5173/sign/meritoria/token/${token}`;
+  const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const signUrl = `${frontendBase}/sign/meritoria/token/${token}`;
   res.json({ token, signUrl });
 });
 
