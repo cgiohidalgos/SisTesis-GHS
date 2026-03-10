@@ -9,7 +9,6 @@ export default function SignWithToken() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [signFile, setSignFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -50,16 +49,14 @@ export default function SignWithToken() {
     }
   };
 
-  const handleUploadPdf = async () => {
+  const handleUpload = async () => {
     if (!signFile) {
-      alert('Selecciona un archivo PDF');
+      alert('Selecciona el PDF firmado');
       return;
     }
-
     setUploading(true);
     const formData = new FormData();
     formData.append('signed_pdf', signFile);
-
     try {
       const res = await fetch(`${getApiBase()}/sign/token/${token}/upload-signed`, {
         method: 'POST',
@@ -67,8 +64,6 @@ export default function SignWithToken() {
       });
       if (!res.ok) throw new Error('Error subiendo PDF');
       alert('PDF firmado subido exitosamente');
-      setSignFile(null);
-      // Opcional: redirigir a página de éxito
       navigate('/sign-success');
     } catch (err: any) {
       alert('Error: ' + err.message);
@@ -83,34 +78,40 @@ export default function SignWithToken() {
 
   return (
     <div className="max-w-2xl mx-auto p-4 sm:p-6 bg-card rounded-lg shadow">
-      <h1 className="text-3xl font-bold mb-2">🔐 Firma Digital con Certificado</h1>
-      <p className="text-muted-foreground mb-6">
-        Descargue el PDF, fírmelo con Adobe Acrobat usando su certificado digital y súbalo de vuelta.
-      </p>
+      <h1 className="text-2xl font-bold mb-2">✍️ Firma del Acta de Sustentación</h1>
 
       <div className="mb-6 p-4 bg-blue-50 dark:bg-slate-800 rounded">
-        <h2 className="font-bold mb-2">Información del Trabajo:</h2>
         <p className="text-sm mb-1"><strong>Título:</strong> {data.thesis.title}</p>
         <p className="text-sm mb-1"><strong>Estudiantes:</strong> {data.students.map((s: any) => s.name).join(', ')}</p>
-        <p className="text-sm mb-1"><strong>Firmando como:</strong> {data.signerName} ({data.signerRole})</p>
+        <p className="text-sm mb-1"><strong>Firmando como:</strong> {data.signerName}</p>
       </div>
 
-      <div className="mb-6">
-        <h3 className="font-bold mb-3">Estado de firmas:</h3>
-        <p className="text-sm text-muted-foreground mb-4">No hay firmas digitales registradas aún.</p>
+      <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-5 text-sm">
+        <p className="font-semibold mb-1">⚠️ Instrucciones importantes:</p>
+        <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+          <li>Descargue el acta haciendo clic en el botón de abajo.</li>
+          <li>Ábrala en <strong>Adobe Acrobat Reader</strong>.</li>
+          <li>Use la opción <strong>"Firmar digitalmente"</strong> y agregue su firma.</li>
+          <li>Guarde el PDF firmado en su computador.</li>
+          <li>Suba el PDF firmado usando el botón de abajo.</li>
+        </ol>
+        <p className="mt-2 text-xs text-orange-700 font-medium">
+          Si otro firmante ya subió su versión, el acta que descargue ya tendrá esa firma. Esto es correcto.
+        </p>
       </div>
 
       <div className="space-y-4">
         <button
           onClick={handleDownloadPdf}
           disabled={loadingPdf}
-          className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400 transition"
+          className="w-full bg-blue-600 text-white py-3 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400 transition font-medium"
         >
-          {loadingPdf ? '⏳ Descargando...' : '📥 Descargar PDF para firmar'}
+          {loadingPdf ? '⏳ Descargando...' : '📥 1. Descargar acta (versión actual)'}
         </button>
 
         <div className="border-t pt-4">
-          <h3 className="font-bold mb-3">Subir PDF firmado:</h3>
+          <p className="font-semibold mb-1">📤 2. Subir PDF firmado:</p>
+          <p className="text-xs text-muted-foreground mb-3">Seleccione el PDF que guardó después de firmarlo en Adobe.</p>
           <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="file"
@@ -119,11 +120,11 @@ export default function SignWithToken() {
               className="flex-1"
             />
             <button
-              onClick={handleUploadPdf}
+              onClick={handleUpload}
               disabled={!signFile || uploading}
-              className="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 disabled:bg-gray-400 transition w-full sm:w-auto"
+              className="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 disabled:bg-gray-400 transition w-full sm:w-auto font-medium"
             >
-              {uploading ? '⏳ Subiendo...' : '📤 Subir PDF firmado'}
+              {uploading ? '⏳ Subiendo...' : '✅ Subir PDF firmado'}
             </button>
           </div>
         </div>

@@ -13,15 +13,15 @@ RUN apt-get update && \
 		rm -rf /var/lib/apt/lists/*
 
 
-# install server deps
+# Copiar server package.json y package-lock.json
 COPY server/package.json server/package-lock.json* ./
 RUN npm install
 
+# Copiar el código del servidor
+COPY server/ ./
+
 # Instalar sqlite3 CLI para depuración y LibreOffice Writer para conversión DOCX→PDF
 RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 libreoffice-writer && rm -rf /var/lib/apt/lists/*
-
-# copy server code
-COPY server/ ./
 
 
 # Crear carpeta de datos y dar permisos antes de copiar el código
@@ -37,4 +37,4 @@ EXPOSE 4000
 # Ejecutar como root para evitar problemas de permisos con volúmenes
 USER root
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["npm", "run", "dev"]
+CMD ["npm", "start"]

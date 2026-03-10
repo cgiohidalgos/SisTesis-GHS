@@ -21,12 +21,6 @@ if [ ! -d /app/uploads ]; then
 fi
 
 
-# Inicializa el esquema de la base de datos antes del seed
-echo "Inicializando esquema de la base de datos..."
-node db-init.js
-
-# Ejecuta el seed para crear el usuario admin si no existe
-echo "Ejecutando seed para crear usuario admin si no existe..."
-npm run seed || true
+# El esquema se crea automáticamente al importar db.js en index.js
 
 exec "$@"

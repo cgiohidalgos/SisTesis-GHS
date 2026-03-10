@@ -11,6 +11,7 @@ const Docxtemplater = require('docxtemplater');
 const PizZip = require('pizzip');
 const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+const { notifyEvent } = require('./notifications');
 
 const app = express();
 // Logging de todas las peticiones para depuración de CORS y preflight
@@ -2646,6 +2647,18 @@ app.post('/theses/:id/acta/sign-program-director', authMiddleware, requireRole('
 // FIRMA DIGITAL CON CERTIFICADO - ENDPOINTS
 // ============================================================================
 
+// Eliminar una firma digital (admin)
+app.post('/theses/:id/acta/delete-signature', authMiddleware, requireRole('admin'), (req, res) => {
+  const thesisId = req.params.id;
+  const { signer_name, signer_role } = req.body;
+  if (!signer_name) return res.status(400).json({ error: 'signer_name requerido' });
+  db.prepare('DELETE FROM digital_signatures WHERE thesis_id = ? AND signer_name = ? AND signer_role = ?')
+    .run(thesisId, signer_name, signer_role);
+  db.prepare('UPDATE signing_tokens SET used_at = NULL WHERE thesis_id = ? AND signer_name = ?')
+    .run(thesisId, signer_name);
+  res.json({ ok: true });
+});
+
 // Obtener estado de firma digital del acta
 app.get('/theses/:id/acta/digital-signature-status', authMiddleware, (req, res) => {
   const thesisId = req.params.id;
@@ -2682,16 +2695,23 @@ app.get('/theses/:id/acta/digital-signature-status', authMiddleware, (req, res) 
   // Determinar quiénes faltan
   const pendingSigners = requiredSigners.filter(r => {
     if (r.role === 'evaluator') {
-      const found = digitalSigs.some(ds => String(ds.signer_user_id) === String(r.user_id) && ds.signer_role === 'evaluator');
-      console.log(`  Checking evaluator ${r.name} (${r.user_id}) - found: ${found}`);
+      const found = digitalSigs.some(ds =>
+        (ds.signer_role === 'evaluator' || ds.signer_role === 'evaluador' || ds.signer_role === null) &&
+        ((ds.signer_user_id && String(ds.signer_user_id) === String(r.user_id)) ||
+         ds.signer_name.toLowerCase() === r.name.toLowerCase())
+      );
       return !found;
     } else if (r.role === 'director') {
-      const found = digitalSigs.some(ds => ds.signer_name.toLowerCase() === r.name.toLowerCase() && ds.signer_role === 'director');
-      console.log(`  Checking director ${r.name} - found: ${found}`);
+      const found = digitalSigs.some(ds =>
+        ds.signer_name.toLowerCase() === r.name.toLowerCase() &&
+        (ds.signer_role === 'director' || ds.signer_role === null)
+      );
       return !found;
     } else {
-      const found = digitalSigs.some(ds => ds.signer_role === 'program_director');
-      console.log(`  Checking program_director - found: ${found}`);
+      const found = digitalSigs.some(ds =>
+        ds.signer_role === 'program_director' ||
+        (ds.signer_role === null && ds.signer_name.toLowerCase() === 'director del programa')
+      );
       return !found;
     }
   });
@@ -2932,33 +2952,104 @@ app.post('/theses/:id/acta/upload-signed', authMiddleware, upload.single('signed
 });
 
 // Descargar el PDF final con todas las firmas
-app.get('/theses/:id/acta/download-final-signed', authMiddleware, (req, res) => {
+app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, res) => {
   const thesisId = req.params.id;
-  
-  // Verificar permisos: admin siempre, evaluador/director solo si todas las firmas están
+
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
   const isAdmin = roles.includes('admin') || roles.includes('superadmin');
   const isEvaluator = !!db.prepare('SELECT 1 FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesisId, req.user.id);
   const isDirector = !!db.prepare('SELECT 1 FROM thesis_directors WHERE thesis_id = ? AND name = (SELECT full_name FROM users WHERE id = ?)').get(thesisId, req.user.id);
-  
+
   if (!isAdmin && !isEvaluator && !isDirector) {
     return res.status(403).json({ error: 'No tiene permisos para descargar' });
   }
-  
-  const signedActa = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? AND status = ? ORDER BY version DESC LIMIT 1').get(thesisId, 'completed');
-  
-  if (!signedActa) {
-    return res.status(404).json({ error: 'No hay acta completamente firmada' });
+
+  // Servir el último PDF subido por cualquier firmante (cadena de firmas)
+  const signedActa = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? ORDER BY updated_at DESC LIMIT 1').get(thesisId);
+  if (signedActa && signedActa.current_pdf_url) {
+    const pdfPath = path.join(uploadDir, path.basename(signedActa.current_pdf_url));
+    if (fs.existsSync(pdfPath)) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="acta-final-firmada-${thesisId}.pdf"`);
+      return res.sendFile(pdfPath);
+    }
   }
 
-  const pdfPath = path.join(uploadDir, path.basename(signedActa.current_pdf_url));
-  if (!fs.existsSync(pdfPath)) {
-    return res.status(404).json({ error: 'Archivo no encontrado' });
-  }
+  // Si no hay signed_acta completado, generar el acta como PDF dinámicamente
+  try {
+    const ctx = getActaContext(thesisId);
+    if (!ctx) return res.status(404).json({ error: 'Tesis no encontrada' });
 
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="acta-final-firmada-${thesisId}.pdf"`);
-  res.sendFile(pdfPath);
+    const { thesis, students, evaluators, directors, weighted, programName, programDirectors } = ctx;
+    // Usar digital_signatures (token-based) como fuente de firmas para el PDF final
+    const digitalSigs = db.prepare('SELECT * FROM digital_signatures WHERE thesis_id = ?').all(thesisId);
+    const signatures = digitalSigs.length > 0 ? digitalSigs : ctx.signatures;
+    const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date)) : new Date();
+    const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    const timeText = defenseDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+    const defenseYear = defenseDate.getFullYear();
+    const defenseMonth = defenseDate.getMonth() + 1;
+    const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
+    const periodStart = defensePeriod === 'I' ? new Date(defenseYear,0,1).getTime() : new Date(defenseYear,6,1).getTime();
+    const periodEnd   = defensePeriod === 'I' ? new Date(defenseYear,6,1).getTime() : new Date(defenseYear+1,0,1).getTime();
+    const thesesInPeriod = db.prepare(`SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`).all(periodStart, periodEnd);
+    let thesisPos = 1;
+    for (let i = 0; i < thesesInPeriod.length; i++) { if (thesesInPeriod[i].id === thesis.id) { thesisPos = i+1; break; } }
+    const thesisNumber = String(thesisPos).padStart(2, '0');
+    function numToText(n) {
+      const units = ['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve'];
+      const teens = ['diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];
+      const tens2 = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
+      if (n < 10) return units[n]; if (n < 20) return teens[n-10];
+      const t = Math.floor(n/10), u = n%10;
+      if (u === 0) return tens2[t]; if (t === 2) return 'veinti'+units[u];
+      return tens2[t]+' y '+units[u];
+    }
+    function numToTextYear(n) {
+      if (n < 1000) return numToText(n);
+      const th = Math.floor(n/1000), rest = n%1000;
+      const thW = th === 1 ? 'mil' : numToText(th)+' mil';
+      return rest === 0 ? thW : thW+' '+numToText(rest);
+    }
+
+    const docxBuf = generateActaDocx({
+      thesisNumber, year: defenseYear, period: defensePeriod,
+      lugar: thesis.defense_location || 'Auditorio por definir',
+      hora: timeText,
+      dia_numero: defenseDate.getDate(),
+      dia_texto: numToText(defenseDate.getDate()),
+      mes_nombre: months[defenseDate.getMonth()],
+      year_text: `${defenseYear} (${numToTextYear(defenseYear)})`,
+      titulo: thesis.title || '',
+      estudiantes: students.map(s => s.name).join(', '),
+      codigos: students.map(s => s.student_code || '').filter(Boolean).join(', ') || 'N/A',
+      director: directors.join(', '),
+      evaluadores: evaluators.map(e => e.name).join(', '),
+      observaciones: thesis.defense_info || 'Sin observaciones registradas',
+      classification: scoreClassification(weighted.finalScore),
+      nota: Number(weighted.finalScore || 0).toFixed(2),
+      calificacion_letras: scoreToSpanishText(weighted.finalScore),
+      evaluators, directors, programDirectors, signatures, programName,
+    });
+
+    const { execSync } = require('child_process');
+    const tmpDocx = path.join('/tmp', `acta_final_${thesisId}_${Date.now()}.docx`);
+    fs.writeFileSync(tmpDocx, docxBuf);
+    execSync(`libreoffice --headless --convert-to pdf --outdir /tmp "${tmpDocx}"`, { timeout: 30000, stdio: 'pipe' });
+    const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
+    const pdfBuffer = fs.readFileSync(tmpPdf);
+    try { fs.unlinkSync(tmpDocx); } catch {}
+    try { fs.unlinkSync(tmpPdf); } catch {}
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="acta-final-firmada-${thesisId}.pdf"`);
+    return res.send(pdfBuffer);
+  } catch (e) {
+    console.error('Error generando PDF final:', e);
+    return res.status(500).json({ error: 'Error generando PDF' });
+  }
 });
 
 // ============================================================================
@@ -3188,7 +3279,10 @@ function generateActaDocxLegacy({
 
   // 1. Jurados evaluadores
   evaluators.forEach(ev => {
-    const sig = signatures.find(s => s.signer_role === 'evaluator' && String(s.signer_user_id) === String(ev.id));
+    const sig = signatures.find(s => s.signer_role === 'evaluator' && (
+      (s.signer_user_id && String(s.signer_user_id) === String(ev.id)) ||
+      (s.signer_name && s.signer_name.toLowerCase() === ev.name.toLowerCase())
+    ));
     allSigners.push({ name: ev.name, role: 'Jurado Evaluador', sig });
   });
 
@@ -3199,9 +3293,10 @@ function generateActaDocxLegacy({
   });
 
   // 3. Directores de programa
+  // Obtener todas las firmas de program_director (puede haber solo una)
+  const progDirSigs = signatures.filter(s => s.signer_role === 'program_director');
   programDirectors.forEach((pd, i) => {
-    const sig = signatures.find(s => s.signer_role === 'program_director' &&
-      (String(s.signer_user_id) === String(pd.id) || s.signer_name.toLowerCase() === pd.name.toLowerCase()));
+    const sig = progDirSigs[i] || progDirSigs[0] || null;
     allSigners.push({ name: pd.name, role: `Director del Programa de ${pd.program || programName || 'Programa Académico'}`, sig });
   });
 
@@ -3214,16 +3309,50 @@ function generateActaDocxLegacy({
 
   const colW = Math.floor(9360 / colPerRow);
 
+  // Pre-cargar imágenes de firmas y asignar relIds
+  const sigImgData = []; // { signer, relId, buffer, ext }
+  let imgRelIdCounter = 100;
+  allSigners.forEach((signer) => {
+    if (signer.sig && signer.sig.pdf_url) {
+      const imgPath = path.join(uploadDir, path.basename(signer.sig.pdf_url));
+      if (fs.existsSync(imgPath)) {
+        try {
+          const buffer = fs.readFileSync(imgPath);
+          const ext = path.extname(imgPath).toLowerCase().replace('.', '') || 'png';
+          const relId = `rIdSig${imgRelIdCounter++}`;
+          sigImgData.push({ signer, relId, buffer, ext });
+          signer._imgRelId = relId;
+          signer._imgExt = ext;
+          signer._imgBuffer = buffer;
+        } catch (_) {}
+      }
+    }
+  });
+
+  function makeImgDrawing(relId, widthEmu, heightEmu, imgIdx) {
+    return `<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="${widthEmu}" cy="${heightEmu}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${imgIdx}" name="sig${imgIdx}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${imgIdx}" name="sig${imgIdx}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${relId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${widthEmu}" cy="${heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`;
+  }
+
+  let imgDrawingCounter = 200;
+
   function sigCell(signer) {
-    const sigLine = signer.sig ? e(`[Firma digital: ${signer.sig.signer_name}]`) : '________________';
     const emptyLine = `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="0"/></w:pPr></w:p>`;
-    const emptyLines = emptyLine.repeat(4);
+    let sigContent;
+    if (signer._imgRelId) {
+      // Imagen de firma: 5cm x 2.5cm en EMU (1cm = 360000 EMU)
+      const wEmu = 1800000;
+      const hEmu = 900000;
+      const drawingXml = makeImgDrawing(signer._imgRelId, wEmu, hEmu, imgDrawingCounter++);
+      sigContent = `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr><w:r>${drawingXml}</w:r></w:p>`;
+    } else {
+      const sigLine = signer.sig ? e(`[Firma digital: ${signer.sig.signer_name}]`) : '________________';
+      sigContent = `${emptyLine.repeat(4)}<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run(sigLine)}</w:p>`;
+    }
     return `<w:tc>
 <w:tcPr><w:tcW w:type="dxa" w:w="${colW}"/>
   <w:tcBorders><w:top w:val="none" w:sz="0" w:space="0"/><w:left w:val="none" w:sz="0" w:space="0"/><w:bottom w:val="none" w:sz="0" w:space="0"/><w:right w:val="none" w:sz="0" w:space="0"/></w:tcBorders>
 </w:tcPr>
-${emptyLines}
-<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run(sigLine)}</w:p>
+${sigContent}
 <w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${bold(signer.name)}</w:p>
 <w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run(signer.role)}</w:p>
 </w:tc>`;
@@ -3306,8 +3435,14 @@ ${bodyXml}
 </w:body>
 </w:document>`;
 
+  const imgRelsXml = sigImgData.map(({ relId, ext, buffer }) => {
+    const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg' };
+    return `<Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${relId}.${ext}"/>`;
+  }).join('\n');
+
   const relsDoc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${imgRelsXml}
 </Relationships>`;
 
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -3324,6 +3459,9 @@ ${bodyXml}
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="jpg" ContentType="image/jpeg"/>
+  <Default Extension="jpeg" ContentType="image/jpeg"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>`;
@@ -3339,6 +3477,11 @@ ${bodyXml}
   zip.file('word/_rels/document.xml.rels', relsDoc);
   zip.file('word/document.xml', documentXml);
   zip.file('word/styles.xml', stylesXml);
+
+  // Agregar imágenes de firmas al zip
+  sigImgData.forEach(({ relId, ext, buffer }) => {
+    zip.file(`word/media/${relId}.${ext}`, buffer, { binary: true });
+  });
 
   // Copiar header/footer del template de acta para mantener el membrete universitario
   try {
@@ -3816,6 +3959,19 @@ app.get('/sign/token/:token/download-pdf', async (req, res) => {
   if (!tokenRow) return res.status(404).json({ error: 'Token inválido o ya utilizado' });
 
   const thesisId = tokenRow.thesis_id;
+
+  // Servir el último PDF firmado subido si existe (para cadena de firmas)
+  const lastSigned = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? ORDER BY updated_at DESC LIMIT 1').get(thesisId);
+  if (lastSigned && lastSigned.current_pdf_url) {
+    const pdfPath = path.join(uploadDir, path.basename(lastSigned.current_pdf_url));
+    if (fs.existsSync(pdfPath)) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="acta-${thesisId}-para-firmar.pdf"`);
+      return res.sendFile(pdfPath);
+    }
+  }
+
   const ctx = getActaContext(thesisId);
   if (!ctx) return res.status(404).json({ error: 'Tesis no encontrada' });
 
@@ -3915,24 +4071,39 @@ app.post('/sign/token/:token/upload-signed', upload.single('signed_pdf'), (req, 
   // Guardar PDF
   const fileName = `${Date.now()}-${signerName.replace(/\s+/g,'-')}.pdf`;
   const filePath = path.join(__dirname, 'uploads', fileName);
-  fs.writeFileSync(filePath, req.file.buffer);
+  fs.renameSync(req.file.path, filePath);
   const pdf_url = `/uploads/${fileName}`;
 
-  // Determinar tabla según rol
+  // Normalizar rol al valor canónico esperado por el endpoint de estado
+  const canonicalRole = (signerRole === 'evaluador' || signerRole === 'evaluator') ? 'evaluator'
+    : signerRole === 'director' ? 'director'
+    : 'program_director';
+
+  // Intentar obtener signer_user_id por nombre (para evaluadores)
+  let signerUserId = null;
+  if (canonicalRole === 'evaluator') {
+    const u = db.prepare('SELECT id FROM users WHERE full_name = ?').get(signerName);
+    if (u) signerUserId = u.id;
+  }
+
   const now = Math.floor(Date.now() / 1000);
-  if (signerRole === 'evaluador' || signerRole === 'evaluator') {
-    const sigId = crypto.randomUUID();
-    db.prepare(`INSERT INTO digital_signatures (id, thesis_id, signer_name, signed_at, pdf_url)
-      VALUES (?, ?, ?, ?, ?)`).run(sigId, thesisId, signerName, now, pdf_url);
-  } else if (signerRole === 'director' || signerRole === 'program_director') {
-    const sigId = crypto.randomUUID();
-    db.prepare(`INSERT INTO digital_signatures (id, thesis_id, signer_name, signed_at, pdf_url)
-      VALUES (?, ?, ?, ?, ?)`).run(sigId, thesisId, signerName, now, pdf_url);
+  const sigId = crypto.randomUUID();
+  db.prepare(`INSERT INTO digital_signatures (id, thesis_id, signer_user_id, signer_name, signer_role, signed_at, pdf_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(sigId, thesisId, signerUserId, signerName, canonicalRole, now, pdf_url);
+
+  // Actualizar signed_actas con el nuevo PDF (cadena de firmas: siempre el último PDF)
+  const existingActa = db.prepare('SELECT id FROM signed_actas WHERE thesis_id = ? ORDER BY updated_at DESC LIMIT 1').get(thesisId);
+  const nowMs = Date.now();
+  if (existingActa) {
+    db.prepare('UPDATE signed_actas SET current_pdf_url = ?, updated_at = ? WHERE id = ?')
+      .run(fileName, nowMs, existingActa.id);
+  } else {
+    db.prepare('INSERT INTO signed_actas (id, thesis_id, current_pdf_url, version, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(crypto.randomUUID(), thesisId, fileName, 1, 'pending', nowMs, nowMs);
   }
 
   // Marcar token como usado
-  const usedAt = Math.floor(Date.now() / 1000);
-  db.prepare('UPDATE signing_tokens SET used_at = ? WHERE token = ?').run(usedAt, token);
+  db.prepare('UPDATE signing_tokens SET used_at = ? WHERE token = ?').run(now, token);
 
   res.json({ success: true, pdf_url });
 });
@@ -4047,7 +4218,7 @@ app.post('/sign/meritoria/token/:token/upload-signed', upload.single('signed_pdf
   // Guardar PDF
   const fileName = `${Date.now()}-meritoria-${signerName.replace(/\s+/g,'-')}.pdf`;
   const filePath = path.join(__dirname, 'uploads', fileName);
-  fs.writeFileSync(filePath, req.file.buffer);
+  fs.renameSync(req.file.path, filePath);
   const pdf_url = `/uploads/${fileName}`;
 
   // Guardar en meritoria_signatures
@@ -4267,6 +4438,83 @@ app.post('/admin/program-rubrics/:programId/initialize', authMiddleware, (req, r
     console.error('Error loading default rubrics:', e);
     res.status(500).json({ error: 'Error al cargar rúbricas por defecto' });
   }
+});
+
+// ============================================================================
+// CONFIGURACIÓN SMTP Y NOTIFICACIONES
+// ============================================================================
+
+// GET /admin/smtp-config - obtener configuración SMTP
+app.get('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) => {
+  const config = db.prepare('SELECT * FROM smtp_config WHERE user_id = ? OR is_default = 1 LIMIT 1').get(req.user.id);
+  res.json(config || {});
+});
+
+// POST /admin/smtp-config - guardar configuración SMTP
+app.post('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) => {
+  const { host, port, username, password, encryption } = req.body;
+  if (!host || !port || !username || !password) {
+    return res.status(400).json({ error: 'Faltan campos requeridos' });
+  }
+
+  const id = uuidv4();
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    // Eliminar config anterior del usuario
+    db.prepare('DELETE FROM smtp_config WHERE user_id = ?').run(req.user.id);
+    // Crear nueva config
+    db.prepare(`
+      INSERT INTO smtp_config (id, user_id, host, port, username, password, encryption, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, req.user.id, host, port, username, password, encryption || 'TLS', now, now);
+    res.json({ ok: true, id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /admin/smtp-config/test - probar configuración SMTP
+app.post('/admin/smtp-config/test', authMiddleware, requireRole('admin'), async (req, res) => {
+  const { host, port, username, password, encryption } = req.body;
+  try {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host, port,
+      secure: encryption === 'SSL',
+      auth: { user: username, pass: password },
+    });
+    await transporter.verify();
+    res.json({ ok: true, message: 'Conexión exitosa' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /admin/notifications - obtener historial de notificaciones
+app.get('/admin/notifications', authMiddleware, requireRole('admin'), (req, res) => {
+  const limit = parseInt(req.query.limit) || 50;
+  const notifications = db.prepare(`
+    SELECT n.*, u.full_name, u.email FROM notifications n
+    LEFT JOIN users u ON u.id = n.user_id
+    ORDER BY n.created_at DESC LIMIT ?
+  `).all(limit);
+  res.json(notifications);
+});
+
+// GET /notifications - obtener mis notificaciones
+app.get('/notifications', authMiddleware, (req, res) => {
+  const notifications = db.prepare(`
+    SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
+  `).all(req.user.id);
+  res.json(notifications);
+});
+
+// POST /notifications/:id/read - marcar como leída
+app.post('/notifications/:id/read', authMiddleware, (req, res) => {
+  const notifId = req.params.id;
+  db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?')
+    .run(notifId, req.user.id);
+  res.json({ ok: true });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

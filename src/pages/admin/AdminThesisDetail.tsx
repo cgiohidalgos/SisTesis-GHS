@@ -676,26 +676,44 @@ export default function AdminThesisDetail() {
             {/* Estado de firmas */}
             <div className="mb-3 space-y-1">
               <p className="text-xs font-medium">Estado de firmas:</p>
-              {actaStatus?.digitalSignatures?.length > 0 ? (
-                actaStatus.digitalSignatures.map((sig: any, idx: number) => (
-                  <div key={idx} className="text-xs text-green-600">
-                    ✓ {sig.signer_role === 'evaluator' ? 'Evaluador' : sig.signer_role === 'director' ? 'Director' : 'Dir. Programa'}: {sig.signer_name}
-                    {sig.certificate_cn && <span className="text-muted-foreground"> ({sig.certificate_cn})</span>}
+              {digitalSignStatus?.digitalSignatures?.length > 0 ? (
+                digitalSignStatus.digitalSignatures.map((sig: any, idx: number) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <span className="text-xs text-green-600 flex-1">
+                      ✓ {(sig.signer_role === 'evaluator' || sig.signer_role === 'evaluador') ? 'Evaluador' : sig.signer_role === 'director' ? 'Director' : sig.signer_role === 'program_director' ? 'Dir. Programa' : sig.signer_role}: {sig.signer_name}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-500 hover:text-red-700 h-5 px-1 text-xs"
+                      onClick={async () => {
+                        if (!confirm(`¿Eliminar firma de ${sig.signer_name}?`)) return;
+                        const token = localStorage.getItem('token');
+                        await fetch(`${API_BASE}/theses/${thesis.id}/acta/delete-signature`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+                          body: JSON.stringify({ signer_name: sig.signer_name, signer_role: sig.signer_role }),
+                        });
+                        loadData();
+                      }}
+                    >
+                      🗑
+                    </Button>
                   </div>
                 ))
               ) : (
                 <p className="text-xs text-muted-foreground">No hay firmas digitales registradas aún.</p>
               )}
-              {actaStatus?.digitalPendingSigners?.length > 0 && (
+              {!digitalSignStatus?.allSigned && digitalSignStatus?.pendingSigners?.length > 0 && (
                 <div>
                   <p className="text-xs text-orange-600 mt-1 mb-3">
-                    Pendientes: {actaStatus.digitalPendingSigners.map((p: any) => p.name).join(', ')}
+                    Pendientes: {digitalSignStatus.pendingSigners.map((p: any) => p.name).join(', ')}
                   </p>
-                  
+
                   {/* Sección de enlaces compartibles */}
                   <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
                     <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
-                    {actaStatus.digitalPendingSigners.map((pending: any) => (
+                    {digitalSignStatus.pendingSigners.map((pending: any) => (
                       <div key={pending.name} className="flex items-center gap-2">
                         <div className="flex-1 min-w-0 text-xs">
                           <p className="font-medium">{pending.name}</p>
@@ -728,7 +746,7 @@ export default function AdminThesisDetail() {
             </div>
 
             {/* Si todas las firmas están completas */}
-            {actaStatus?.allSigned && (
+            {digitalSignStatus?.allSigned && (
               <div className="bg-green-50 border border-green-200 rounded p-3 mb-3">
                 <p className="text-sm font-medium text-green-700 mb-2">✅ Todas las firmas han sido registradas</p>
                 <div className="flex gap-2 flex-wrap">
@@ -776,7 +794,7 @@ export default function AdminThesisDetail() {
               </div>
             )}
 
-            {!actaStatus?.allSigned && <div>
+            {!digitalSignStatus?.allSigned && <div>
               <p className="text-xs text-muted-foreground mb-3">
                 Descargue el PDF, fírmelo con Adobe Acrobat usando su certificado digital y súbalo de vuelta.
               </p>

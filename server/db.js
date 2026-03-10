@@ -417,4 +417,38 @@ db.prepare(`CREATE TABLE IF NOT EXISTS program_rubrics (
   UNIQUE(program_id, evaluation_type)
 )`).run();
 
+// Tabla de configuración SMTP
+db.prepare(`CREATE TABLE IF NOT EXISTS smtp_config (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  username TEXT NOT NULL,
+  password TEXT NOT NULL,
+  encryption TEXT NOT NULL DEFAULT 'TLS',
+  is_default BOOLEAN DEFAULT 0,
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  updated_at INTEGER DEFAULT (strftime('%s','now')),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+)`).run();
+
+// Tabla de notificaciones
+db.prepare(`CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  related_thesis_id TEXT,
+  is_read BOOLEAN DEFAULT 0,
+  sent_at INTEGER,
+  error TEXT,
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(related_thesis_id) REFERENCES theses(id)
+)`).run();
+
+db.prepare(`CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)`).run();
+db.prepare(`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)`).run();
+
 module.exports = db;
