@@ -111,7 +111,7 @@ export default function StudentTimeline() {
 
   return (
     <AppLayout role="student">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-2xl mx-auto px-4 sm:px-0">
         {loading ? (
           <div className="text-center py-8">Cargando...</div>
         ) : !thesis ? (
@@ -122,7 +122,7 @@ export default function StudentTimeline() {
         ) : (
           <>
             <div className="mb-8">
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-2">
                 <h2 className="font-heading text-2xl font-bold text-foreground">
                   Seguimiento de mi Tesis
                 </h2>
@@ -188,7 +188,7 @@ export default function StudentTimeline() {
 
             {/* revision submission form for students when applicable */}
             {(thesis.status === 'revision_minima' || thesis.status === 'revision_cuidados') && (
-              <div className="mt-8 p-6 border rounded-lg bg-white dark:bg-slate-950 space-y-4">
+              <div className="mt-8 p-4 sm:p-6 border rounded-lg bg-white dark:bg-slate-950 space-y-4">
                 <h3 className="text-lg font-bold">Enviar Revisión / Respuesta</h3>
                 <p className="text-sm text-muted-foreground">
                   Si has recibido comentarios o archivos del evaluador, puedes responder aquí subiendo tus archivos y escribiendo tus observaciones.
@@ -297,11 +297,11 @@ export default function StudentTimeline() {
                       </div>
                       <div className="text-sm text-center font-semibold text-muted-foreground mb-2">Nota Final Ponderada</div>
                       {hasDefense && presAvg != null ? (
-                        <p className="text-sm text-center text-muted-foreground">
+                        <p className="text-sm text-center text-muted-foreground break-words">
                           Cálculo: ({docAvg.toFixed(2)} × {w.doc}%) + ({presAvg.toFixed(2)} × {w.presentation}%) = {Number(finalScore).toFixed(2)}
                         </p>
                       ) : (
-                        <p className="text-sm text-center text-muted-foreground">
+                        <p className="text-sm text-center text-muted-foreground break-words">
                           Cálculo: promedio documento = {docAvg.toFixed(2)}
                         </p>
                       )}

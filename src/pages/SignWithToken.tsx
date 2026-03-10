@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { getApiBase } from '@/lib/utils';
 
 export default function SignWithToken() {
   const { token } = useParams<{ token: string }>();
@@ -16,7 +17,7 @@ export default function SignWithToken() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const res = await fetch(`http://localhost:4000/sign/token/${token}`);
+        const res = await fetch(`${getApiBase()}/sign/token/${token}`);
         if (!res.ok) throw new Error('Token inválido o expirado');
         const json = await res.json();
         setData(json);
@@ -33,7 +34,7 @@ export default function SignWithToken() {
     if (!data) return;
     setLoadingPdf(true);
     try {
-      const res = await fetch(`http://localhost:4000/theses/${data.thesisId}/acta/download-for-signing?format=pdf`);
+      const res = await fetch(`${getApiBase()}/theses/${data.thesisId}/acta/download-for-signing?format=pdf`);
       if (!res.ok) throw new Error('Error descargando PDF');
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
@@ -60,7 +61,7 @@ export default function SignWithToken() {
     formData.append('signed_pdf', signFile);
 
     try {
-      const res = await fetch(`http://localhost:4000/sign/token/${token}/upload-signed`, {
+      const res = await fetch(`${getApiBase()}/sign/token/${token}/upload-signed`, {
         method: 'POST',
         body: formData,
       });
@@ -81,13 +82,13 @@ export default function SignWithToken() {
   if (!data) return <div className="p-6 text-center">No se encontraron datos</div>;
 
   return (
-    <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow">
+    <div className="max-w-2xl mx-auto p-4 sm:p-6 bg-card rounded-lg shadow">
       <h1 className="text-3xl font-bold mb-2">🔐 Firma Digital con Certificado</h1>
-      <p className="text-gray-600 mb-6">
+      <p className="text-muted-foreground mb-6">
         Descargue el PDF, fírmelo con Adobe Acrobat usando su certificado digital y súbalo de vuelta.
       </p>
 
-      <div className="mb-6 p-4 bg-blue-50 rounded">
+      <div className="mb-6 p-4 bg-blue-50 dark:bg-slate-800 rounded">
         <h2 className="font-bold mb-2">Información del Trabajo:</h2>
         <p className="text-sm mb-1"><strong>Título:</strong> {data.thesis.title}</p>
         <p className="text-sm mb-1"><strong>Estudiantes:</strong> {data.students.map((s: any) => s.name).join(', ')}</p>
@@ -96,7 +97,7 @@ export default function SignWithToken() {
 
       <div className="mb-6">
         <h3 className="font-bold mb-3">Estado de firmas:</h3>
-        <p className="text-sm text-gray-600 mb-4">No hay firmas digitales registradas aún.</p>
+        <p className="text-sm text-muted-foreground mb-4">No hay firmas digitales registradas aún.</p>
       </div>
 
       <div className="space-y-4">
@@ -110,7 +111,7 @@ export default function SignWithToken() {
 
         <div className="border-t pt-4">
           <h3 className="font-bold mb-3">Subir PDF firmado:</h3>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="file"
               accept=".pdf"
@@ -120,7 +121,7 @@ export default function SignWithToken() {
             <button
               onClick={handleUploadPdf}
               disabled={!signFile || uploading}
-              className="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 disabled:bg-gray-400 transition"
+              className="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 disabled:bg-gray-400 transition w-full sm:w-auto"
             >
               {uploading ? '⏳ Subiendo...' : '📤 Subir PDF firmado'}
             </button>

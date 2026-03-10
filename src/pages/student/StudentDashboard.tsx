@@ -36,7 +36,7 @@ export default function StudentDashboard() {
 
   return (
     <AppLayout role="student">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-3xl mx-auto px-4 sm:px-0">
         <h2 className="font-heading text-2xl font-bold text-foreground mb-1">
           Mi Tesis
         </h2>
@@ -55,7 +55,7 @@ export default function StudentDashboard() {
           <>
             <ThesisCard thesis={theses[0]} linkTo="/student/timeline" />
             {theses[0].status === "draft" && (
-              <div className="flex gap-3 mt-4">
+              <div className="flex flex-wrap gap-3 mt-4">
                 <Button
                   variant="default"
                   className="bg-green-600 hover:bg-green-700 text-white font-semibold"

@@ -349,9 +349,9 @@ export default function AdminThesisDetail() {
 
   return (
     <AppLayout role="admin">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto px-4 sm:px-0">
         <div className="mb-6 bg-card p-6 rounded-lg shadow-card">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
             <h2 className="font-heading text-2xl font-bold">Detalle de Tesis</h2>
             <Button variant="destructive" size="sm" onClick={handleDelete}>Eliminar tesis</Button>
           </div>
@@ -697,7 +697,7 @@ export default function AdminThesisDetail() {
                     <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
                     {actaStatus.digitalPendingSigners.map((pending: any) => (
                       <div key={pending.name} className="flex items-center gap-2">
-                        <div className="flex-1 text-xs">
+                        <div className="flex-1 min-w-0 text-xs">
                           <p className="font-medium">{pending.name}</p>
                           <p className="text-muted-foreground">{pending.role === 'evaluator' ? 'Evaluador' : pending.role === 'director' ? 'Director' : 'Director del Programa'}</p>
                         </div>
@@ -786,7 +786,7 @@ export default function AdminThesisDetail() {
                 <label className="text-xs font-medium block">Director del Programa (para incluir en el acta):</label>
                 <input
                   type="text"
-                  className="border rounded px-2 py-1 text-sm w-full max-w-xs"
+                  className="border rounded px-2 py-1 text-sm w-full"
                   placeholder="Nombre del Director del Programa"
                   value={digitalProgDirectorName}
                   onChange={(e) => setDigitalProgDirectorName(e.target.value)}
@@ -934,7 +934,7 @@ export default function AdminThesisDetail() {
                 <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
                 {meritoriaStatus.pendingDirectors.map((pending: string) => (
                   <div key={pending} className="flex items-center gap-2">
-                    <div className="flex-1 text-xs">
+                    <div className="flex-1 min-w-0 text-xs">
                       <p className="font-medium">{pending}</p>
                       <p className="text-muted-foreground">Director</p>
                     </div>

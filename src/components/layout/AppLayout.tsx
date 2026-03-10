@@ -71,7 +71,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
   };
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-dvh flex">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -83,7 +83,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed lg:sticky top-0 left-0 z-50 h-screen w-64 gradient-hero flex flex-col transition-transform duration-300",
+          "fixed lg:sticky top-0 left-0 z-50 h-dvh w-64 gradient-hero flex flex-col transition-transform duration-300",
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
@@ -93,7 +93,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
           </div>
           <div>
             <h1 className="font-heading text-lg font-bold text-primary-foreground">
-              EvalTesis
+              SisTesis
             </h1>
             <p className="text-xs text-sidebar-foreground/70">
               {roleLabels[role]}
@@ -146,8 +146,8 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
       </aside>
 
       {/* Main */}
-      <div className="flex-1 flex flex-col min-h-screen">
-        <header className="sticky top-0 z-30 bg-card/80 backdrop-blur-md border-b border-border px-6 py-4 flex items-center gap-4">
+      <div className="flex-1 flex flex-col min-h-dvh">
+        <header className="sticky top-0 z-30 bg-card/80 backdrop-blur-md border-b border-border px-3 sm:px-6 py-3 sm:py-4 flex items-center gap-4">
           <button
             className="lg:hidden text-foreground"
             onClick={() => setSidebarOpen(true)}
@@ -156,7 +156,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
           </button>
           <div className="flex-1" />
         </header>
-        <main className="flex-1 p-6">{children}</main>
+        <main className="flex-1 p-3 sm:p-6">{children}</main>
       </div>
     </div>
   );

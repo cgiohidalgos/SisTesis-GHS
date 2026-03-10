@@ -1,0 +1,40 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_BASE: /sistesis/
+        VITE_API_BASE: https://lidis.usbcali.edu.co/sistesis/api
+    container_name: sistesis_frontend
+    networks:
+      - sistesis_default
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: sistesis_backend
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-change_me_in_production}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@admin.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - NODE_ENV=production
+      - FRONTEND_URL=https://lidis.usbcali.edu.co/sistesis
+    volumes:
+      - sistesis_data:/app/data
+      - sistesis_uploads:/app/uploads
+    networks:
+      - sistesis_default
+    restart: unless-stopped
+
+volumes:
+  sistesis_data:
+  sistesis_uploads:
+
+networks:
+  sistesis_default:
+    driver: bridge

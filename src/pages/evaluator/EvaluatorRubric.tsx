@@ -203,7 +203,7 @@ export default function EvaluatorRubric() {
 
   return (
     <AppLayout role="evaluator">
-      <div className="p-6 max-w-4xl mx-auto space-y-8">
+      <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-8">
         <div className="space-y-4">
           <h2 className="text-3xl font-bold text-primary tracking-tight leading-none">
             {thesis.title}
@@ -274,7 +274,7 @@ export default function EvaluatorRubric() {
                 <p className="text-4xl font-black text-primary">{finalWeightedScore.toFixed(2)}<span className="text-lg text-muted-foreground font-medium ml-1">/ 5.00</span></p>
                 <p className="text-sm font-medium text-success mt-1">Nota Final Ponderada</p>
               </div>
-              <div className="text-xs text-muted-foreground bg-slate-100 dark:bg-slate-800 p-3 rounded-lg font-mono">
+              <div className="text-xs text-muted-foreground bg-slate-100 dark:bg-slate-800 p-3 rounded-lg font-mono break-words">
                 Cálculo: ({docScore.toFixed(2)} x {weights.doc}%) {wantPresentation ? "+ (" + presScore.toFixed(2) + " x " + weights.presentation + "%)" : ""}
               {/* show debug info when no eval present */}
               {docEval || presEval ? null : (
@@ -289,20 +289,20 @@ export default function EvaluatorRubric() {
           <Accordion type="single" collapsible className="w-full border rounded-xl overflow-hidden bg-white dark:bg-slate-950">
             <AccordionItem value="doc" className="border-b px-2">
               <AccordionTrigger className="hover:no-underline py-4">
-                  Rúbrica de Documento
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-left w-full">
+                  <span>Rúbrica de Documento</span>
                   {currentRound > 0 && (
-                    <span className="ml-2 text-xs text-muted-foreground">(Ronda actual: {currentRound})</span>
+                    <span className="text-xs text-muted-foreground">Ronda {currentRound}</span>
                   )}
                   {myEvaluator?.due_date && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      (límite: {new Date(myEvaluator.due_date).toLocaleDateString()})
-                    </span>
+                    <span className="text-xs text-muted-foreground">Vence: {new Date(myEvaluator.due_date).toLocaleDateString('es-CO')}</span>
                   )}
                   {docEval ? (
-                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
+                    <span className="inline-flex items-center gap-1 text-xs bg-success/10 text-success px-2 py-1 rounded">✓ Enviada</span>
                   ) : (
-                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-100 text-red-600 border border-red-200">Pendiente</span>
+                    <span className="inline-flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-1 rounded">⏳ Pendiente</span>
                   )}
+                </div>
                 </AccordionTrigger>
               <AccordionContent className="pb-6">
                 {previousDocEval && (
@@ -334,19 +334,20 @@ export default function EvaluatorRubric() {
             </AccordionItem>
             <AccordionItem value="pres" className="border-none px-2">
               <AccordionTrigger className="hover:no-underline py-4">
-                  Rúbrica de Sustentación
-                  {thesis.defense_date && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      (sustentación: {new Date(thesis.defense_date).toLocaleDateString()})
-                    </span>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-left w-full">
+                  <span>Rúbrica de Sustentación</span>
+                  {currentRound > 0 && (
+                    <span className="text-xs text-muted-foreground">Ronda {currentRound}</span>
+                  )}
+                  {myEvaluator?.due_date && (
+                    <span className="text-xs text-muted-foreground">Vence: {new Date(myEvaluator.due_date).toLocaleDateString('es-CO')}</span>
                   )}
                   {presEval ? (
-                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
+                    <span className="inline-flex items-center gap-1 text-xs bg-success/10 text-success px-2 py-1 rounded">✓ Enviada</span>
                   ) : (
-                    wantPresentation && (
-                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-100 text-red-600 border border-red-200">Pendiente</span>
-                    )
+                    <span className="inline-flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-1 rounded">⏳ Pendiente</span>
                   )}
+                </div>
                 </AccordionTrigger>
               <AccordionContent className="pb-6">
                 <RubricEvaluation

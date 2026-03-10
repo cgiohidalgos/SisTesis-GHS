@@ -106,7 +106,7 @@ export default function EvaluatorDashboard() {
 
   return (
     <AppLayout role="evaluator">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-3xl mx-auto px-4 sm:px-0">
         <h2 className="font-heading text-2xl font-bold text-foreground mb-1">
           Tesis Asignadas
         </h2>

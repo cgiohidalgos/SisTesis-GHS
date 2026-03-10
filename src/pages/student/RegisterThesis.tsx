@@ -189,14 +189,14 @@ export default function RegisterThesis() {
   };
 
   return (
-    <div className="max-w-xl mx-auto py-8">
+    <div className="max-w-xl mx-auto py-8 px-4 sm:px-6">
       <h1 className="font-heading text-2xl font-bold mb-4">
         {existing ? (isEditable ? 'Modificar Tesis' : 'Detalle de Tesis') : 'Registrar Nueva Tesis'}
       </h1>
       {existing && !isEditable && (
         <p className="text-sm text-red-500 mb-4">La tesis ya fue enviada y no puede modificarse.</p>
       )}
-      <form onSubmit={handleSubmit} className="space-y-4 bg-card border rounded-xl shadow-card p-6">
+      <form onSubmit={handleSubmit} className="space-y-4 bg-card border rounded-xl shadow-card p-4 sm:p-6">
         <div>
           <Label>Nombre del Proyecto</Label>
           <Input value={projectName} onChange={(e) => setProjectName(e.target.value)} required disabled={!isEditable} />
@@ -296,10 +296,10 @@ export default function RegisterThesis() {
         <div>
           <Label>Directores</Label>
           {directors.map((d, i) => (
-            <div key={i} className="flex gap-2 mb-2">
+            <div key={i} className="flex flex-col sm:flex-row gap-2 mb-2">
               <Input value={d} onChange={(e) => handleDirectorChange(i, e.target.value)} placeholder={`Director ${i + 1}`} required disabled={!isEditable} />
               {directors.length > 1 && (
-                <Button type="button" variant="destructive" size="sm" onClick={() => removeDirector(i)} disabled={!isEditable}>-</Button>
+                <Button type="button" variant="destructive" size="sm" className="sm:w-auto w-full" onClick={() => removeDirector(i)} disabled={!isEditable}>-</Button>
               )}
             </div>
           ))}

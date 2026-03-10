@@ -80,7 +80,7 @@ export default function AdminDashboard() {
 
   return (
     <AppLayout role="admin">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto px-0">
         <h2 className="font-heading text-2xl font-bold text-foreground mb-1">
           Panel de Administración
         </h2>
@@ -110,7 +110,7 @@ export default function AdminDashboard() {
         </div>
 
         {/* Overview chart */}
-        <div className="mb-8 h-64 bg-card rounded-lg p-4 shadow-card">
+        <div className="mb-8 h-48 sm:h-64 bg-card rounded-lg p-4 shadow-card">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -141,10 +141,10 @@ export default function AdminDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted">
-                    <th className="p-2 text-left">Programa</th>
-                    <th className="p-2">En evaluación</th>
-                    <th className="p-2">Finalizadas</th>
-                    <th className="p-2">Otras</th>
+                    <th className="p-2 text-left min-w-[120px]">Programa</th>
+                    <th className="p-2 min-w-[80px]">En evaluación</th>
+                    <th className="p-2 min-w-[80px]">Finalizadas</th>
+                    <th className="p-2 min-w-[80px]">Otras</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -170,7 +170,7 @@ export default function AdminDashboard() {
               </table>
             </div>
             {/* chart per program */}
-            <div className="mb-8 h-64 bg-card rounded-lg p-4 shadow-card">
+            <div className="mb-8 h-48 sm:h-64 bg-card rounded-lg p-4 shadow-card">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={byProgram.map(p => {
                   const counts = p.counts || {};
@@ -186,7 +186,7 @@ export default function AdminDashboard() {
                     other,
                   };
                 })}>
-                  <XAxis dataKey="name" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" interval={0} height={48} tickFormatter={(v: string) => v.length > 12 ? v.slice(0, 12) + '…' : v} />
                   <YAxis />
                   <Tooltip />
                   <Legend />

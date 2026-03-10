@@ -56,7 +56,7 @@ export default function AdminTheses() {
 
   return (
     <AppLayout role="admin">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto px-4 sm:px-0">
         <h2 className="font-heading text-2xl font-bold text-foreground mb-1">
           Gestión de Tesis
         </h2>
@@ -66,7 +66,7 @@ export default function AdminTheses() {
 
         <div className="space-y-4">
           {theses.map((thesis) => (
-            <div key={thesis.id} className="relative">
+            <div key={thesis.id} className="relative overflow-hidden">
               <ThesisCard
                 thesis={thesis}
                 linkTo={`/admin/theses/${thesis.id}`}

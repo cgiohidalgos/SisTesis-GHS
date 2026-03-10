@@ -65,7 +65,7 @@ export default function StaffLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-4">
+    <div className="min-h-dvh bg-background flex items-start sm:items-center justify-center px-4 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl gradient-hero mb-4">
@@ -79,7 +79,7 @@ export default function StaffLogin() {
           </p>
         </div>
 
-        <form onSubmit={handleLogin} className="bg-card border rounded-xl shadow-card p-6 space-y-4">
+        <form onSubmit={handleLogin} className="bg-card border rounded-xl shadow-card p-4 sm:p-6 space-y-4">
           <div>
             <Label htmlFor="email">Correo Institucional</Label>
             <Input
