@@ -2725,19 +2725,8 @@ app.get('/theses/:id/acta/download-for-signing', authMiddleware, async (req, res
   const ctx = getActaContext(thesisId);
   if (!ctx) return res.status(404).json({ error: 'not found' });
 
-  // Si se proporciona un nombre de director de programa, siempre regenerar el PDF
-  // De lo contrario, verificar si ya existe un PDF en proceso de firma
-  let signedActa = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? ORDER BY version DESC LIMIT 1').get(thesisId);
-
-  // Solo usar cache si NO se proporciona prog_director_name
-  if (!progDirectorNameParam && signedActa && signedActa.current_pdf_url && fs.existsSync(path.join(uploadDir, path.basename(signedActa.current_pdf_url)))) {
-    // Devolver el PDF actual (puede tener firmas previas)
-    const pdfPath = path.join(uploadDir, path.basename(signedActa.current_pdf_url));
-    const pdfBuffer = fs.readFileSync(pdfPath);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="acta-${thesisId}-para-firmar.pdf"`);
-    return res.send(pdfBuffer);
-  }
+  // Siempre regenerar el PDF para asegurar que tenga los datos más recientes
+  // No usar cache para garantizar que cada descarga sea la versión actual
 
   // Generar nuevo PDF base desde el template DOCX
   const { thesis, students, evaluators, directors, weighted, programName, signatures, programDirectors } = ctx;
