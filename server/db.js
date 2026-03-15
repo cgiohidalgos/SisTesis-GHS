@@ -47,9 +47,18 @@ db.prepare(`CREATE TABLE IF NOT EXISTS profiles (
   student_code TEXT,
   cedula TEXT,
   institutional_email TEXT,
+  specialty TEXT,
   created_at INTEGER DEFAULT (strftime('%s','now')),
   updated_at INTEGER DEFAULT (strftime('%s','now'))
 )`).run();
+
+// add specialty column to existing deployments if missing
+try {
+  db.prepare('ALTER TABLE profiles ADD COLUMN specialty TEXT').run();
+  console.log('migration: added specialty column to profiles');
+} catch (e) {
+  // ignore if already exists
+}
 
 db.prepare(`CREATE TABLE IF NOT EXISTS user_roles (
   id TEXT PRIMARY KEY,
@@ -149,6 +158,13 @@ db.prepare(`CREATE TABLE IF NOT EXISTS thesis_files (
   uploaded_by TEXT,
   FOREIGN KEY(thesis_id) REFERENCES theses(id)
 )`).run();
+// ensure legacy DBs also get the file_name column
+try {
+  db.prepare('ALTER TABLE thesis_files ADD COLUMN file_name TEXT').run();
+  console.log('migration: added file_name column to thesis_files');
+} catch (e) {
+  // ignore if already exists
+}
 try {
   db.prepare('ALTER TABLE thesis_files ADD COLUMN timeline_event_id TEXT').run();
   console.log('migration: added timeline_event_id column to thesis_files');
@@ -159,9 +175,18 @@ try {
 db.prepare(`CREATE TABLE IF NOT EXISTS thesis_directors (
   id TEXT PRIMARY KEY,
   thesis_id TEXT,
+  user_id TEXT,
   name TEXT,
-  FOREIGN KEY(thesis_id) REFERENCES theses(id)
+  FOREIGN KEY(thesis_id) REFERENCES theses(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
 )`).run();
+// add user_id column for director reference if missing (older deployments)
+try {
+  db.prepare('ALTER TABLE thesis_directors ADD COLUMN user_id TEXT').run();
+  console.log('migration: added user_id column to thesis_directors');
+} catch (e) {
+  // ignore if already exists
+}
 
 db.prepare(`CREATE TABLE IF NOT EXISTS thesis_timeline (
   id TEXT PRIMARY KEY,
@@ -180,6 +205,7 @@ db.prepare(`CREATE TABLE IF NOT EXISTS thesis_timeline (
   admin_user_id TEXT,
   reception_start INTEGER,
   reception_end INTEGER,
+  max_evaluators INTEGER DEFAULT 2,
   FOREIGN KEY(admin_user_id) REFERENCES users(id)
 )`).run();
 // add column to existing deployments if needed
@@ -198,6 +224,12 @@ try {
 try {
   db.prepare('ALTER TABLE programs ADD COLUMN reception_end INTEGER').run();
   console.log('migration: added reception_end column to programs');
+} catch (e) {
+  // ignore if already exists
+}
+try {
+  db.prepare('ALTER TABLE programs ADD COLUMN max_evaluators INTEGER DEFAULT 2').run();
+  console.log('migration: added max_evaluators column to programs');
 } catch (e) {
   // ignore if already exists
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Dialog,
   DialogContent,
@@ -15,13 +16,17 @@ import { getApiBase } from "@/lib/utils";
 
 const API_BASE = getApiBase();
 
+import { useAuth } from "@/hooks/useAuth";
+
 export default function AdminPrograms() {
-  const [programs, setPrograms] = useState<{ id: string; name: string; admin_user_ids?: string[]; reception_start?: string; reception_end?: string }[]>([]);
+  const { user, isSuper } = useAuth();
+  const [programs, setPrograms] = useState<{ id: string; name: string; admin_user_ids?: string[]; reception_start?: string; reception_end?: string; max_evaluators?: number }[]>([]);
   const [admins, setAdmins] = useState<{id:string;full_name:string;institutional_email:string}[]>([]);
   const [name, setName] = useState("");
   const [adminIds, setAdminIds] = useState<string[]>([]);
   const [receptionStart, setReceptionStart] = useState<string | null>(null);
   const [receptionEnd, setReceptionEnd] = useState<string | null>(null);
+  const [maxEvaluators, setMaxEvaluators] = useState<number>(2);
   const [showSelect, setShowSelect] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,7 +50,14 @@ export default function AdminPrograms() {
       if (resp2.ok) setAdmins(await resp2.json());
       if (!resp.ok) throw new Error("Error cargando programas");
       const data = await resp.json();
-      setPrograms(data);
+
+      // if user is not superadmin, show only programs where they are assigned
+      if (user && !isSuper) {
+        const userId = user.id;
+        setPrograms(data.filter((p: any) => Array.isArray(p.admin_user_ids) && p.admin_user_ids.includes(userId)));
+      } else {
+        setPrograms(data);
+      }
     } catch (err: any) {
       toast.error(err.message || "Error al cargar programas");
     }
@@ -53,7 +65,7 @@ export default function AdminPrograms() {
 
   useEffect(() => {
     fetchPrograms();
-  }, []);
+  }, [user, isSuper]);
 
   const handleAddOrUpdate = async () => {
     if (!name.trim()) return;
@@ -61,7 +73,7 @@ export default function AdminPrograms() {
     try {
       const token = localStorage.getItem("token");
       let resp;
-      const payload: any = { name: name.trim(), reception_start: receptionStart, reception_end: receptionEnd };
+      const payload: any = { name: name.trim(), reception_start: receptionStart, reception_end: receptionEnd, max_evaluators: maxEvaluators };
       if (adminIds.length) payload.admin_user_ids = adminIds;
       if (editingId) {
         resp = await fetch(`${API_BASE}/programs/${editingId}`, {
@@ -98,6 +110,7 @@ export default function AdminPrograms() {
       }
       setName("");
       setEditingId(null);
+      setMaxEvaluators(2);
     } catch (err: any) {
       toast.error(err.message || "Error al guardar programa");
     } finally {
@@ -105,12 +118,13 @@ export default function AdminPrograms() {
     }
   };
 
-  const handleEdit = (p: {id:string;name:string;admin_user_ids?:string[]; reception_start?: string; reception_end?: string}) => {
+  const handleEdit = (p: {id:string;name:string;admin_user_ids?:string[]; reception_start?: string; reception_end?: string; max_evaluators?: number}) => {
     setEditingId(p.id);
     setName(p.name);
     setAdminIds(p.admin_user_ids || []);
     setReceptionStart(p.reception_start || null);
     setReceptionEnd(p.reception_end || null);
+    setMaxEvaluators(p.max_evaluators || 2);
   };
 
   const handleDelete = async (id: string) => {
@@ -138,34 +152,45 @@ export default function AdminPrograms() {
       <div className="max-w-lg mx-auto">
         <h2 className="font-heading text-2xl font-bold mb-4">Categorías / Programas</h2>
         <p className="text-sm text-muted-foreground mb-6">
-          Define los programas disponibles para seleccionar al registrar tesis.
+          Define los programas disponibles para seleccionar al registrar un proyecto de grado.
         </p>
         <div className="space-y-3 mb-6">
-          {programs.map((p) => (
-            <div key={p.id} className="bg-card p-3 rounded flex justify-between items-center">
-              <div>
-                <span>{p.name}</span>
-                {p.reception_start && p.reception_end && (
-                  <p className="text-xs text-muted-foreground">
-                    Recepción: {p.reception_start} → {p.reception_end}
-                  </p>
-                )}
-                {p.admin_user_ids && p.admin_user_ids.length > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    admins: {p.admin_user_ids.map(id => admins.find(a=>a.id===id)?.institutional_email || id).join(', ')}
-                  </p>
-                )}
-              </div>
-              <div className="space-x-2">
-                <Button size="sm" variant="ghost" onClick={() => handleEdit(p)}>
-                  Edit
-                </Button>
-                <Button size="sm" variant="destructive" onClick={() => handleDelete(p.id)}>
-                  Delete
-                </Button>
-              </div>
+          {programs.length === 0 ? (
+            <div className="bg-card p-4 rounded">
+              <p className="text-sm text-muted-foreground">
+                {isSuper
+                  ? "No hay programas creados aún."
+                  : "No estás asignado a ningún programa. Pide a un superadmin que te asigne."}
+              </p>
             </div>
-          ))}
+          ) : (
+            programs.map((p) => (
+              <div key={p.id} className="bg-card p-3 rounded flex justify-between items-center">
+                <div>
+                  <span>{p.name}</span>
+                  {p.reception_start && p.reception_end && (
+                    <p className="text-xs text-muted-foreground">
+                      Recepción: {p.reception_start} → {p.reception_end}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">Evaluadores: {p.max_evaluators ?? 2}</p>
+                  {p.admin_user_ids && p.admin_user_ids.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      admins: {p.admin_user_ids.map(id => admins.find(a=>a.id===id)?.institutional_email || id).join(', ')}
+                    </p>
+                  )}
+                </div>
+                <div className="space-x-2">
+                  <Button size="sm" variant="ghost" onClick={() => handleEdit(p)}>
+                    Edit
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => handleDelete(p.id)}>
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
         <div className="flex gap-2 items-start">
           {/* button opens a dialog to pick admins */}
@@ -218,19 +243,31 @@ export default function AdminPrograms() {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                type="date"
-                value={receptionStart || ''}
-                onChange={(e) => setReceptionStart(e.target.value || null)}
-                placeholder="Inicio recepción"
-              />
-              <Input
-                type="date"
-                value={receptionEnd || ''}
-                onChange={(e) => setReceptionEnd(e.target.value || null)}
-                placeholder="Fin recepción"
-              />
+            <div className="grid gap-2">
+              <div className="grid grid-cols-2 gap-2">
+                <DatePicker
+                  value={receptionStart || null}
+                  onChange={(val) => setReceptionStart(val)}
+                  placeholder="Inicio recepción"
+                />
+                <DatePicker
+                  value={receptionEnd || null}
+                  onChange={(val) => setReceptionEnd(val)}
+                  placeholder="Fin recepción"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mr-2">Cantidad de evaluadores</label>
+                <select
+                  className="ml-2 rounded border px-2 py-1"
+                  value={String(maxEvaluators)}
+                  onChange={(e) => setMaxEvaluators(Number(e.target.value))}
+                >
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                </select>
+              </div>
             </div>
           </div>
           <Button onClick={handleAddOrUpdate} disabled={loading || !name.trim()}>
@@ -243,6 +280,7 @@ export default function AdminPrograms() {
                 setEditingId(null);
                 setName('');
                 setAdminIds([]);
+                setMaxEvaluators(2);
               }}
             >
               Cancelar

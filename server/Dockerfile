@@ -21,7 +21,15 @@ RUN npm install
 COPY server/ ./
 
 # Instalar sqlite3 CLI para depuración y LibreOffice Writer para conversión DOCX→PDF
-RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 libreoffice-writer && rm -rf /var/lib/apt/lists/*
+# LibreOffice necesita una JRE, xvfb (X virtual framebuffer) y xauth para la conversión en headless mode.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sqlite3 \
+    libreoffice-writer \
+    libreoffice-java-common \
+    default-jre \
+    xvfb \
+    xauth \
+    && rm -rf /var/lib/apt/lists/*
 
 
 # Crear carpeta de datos y dar permisos antes de copiar el código

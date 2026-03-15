@@ -51,7 +51,7 @@ export default function AdminEvaluations() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted">
-                <th className="p-2">Tesis</th>
+                <th className="p-2">Proyecto</th>
                 <th className="p-2">Evaluador</th>
                 <th className="p-2">Fecha límite</th>
               </tr>

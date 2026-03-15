@@ -53,6 +53,89 @@ async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
   }
 }
 
+async function sendWelcomeEmail(db, toEmail, fullName, username, password, smtpOwnerId) {
+  const subject = '[SisTesis] Bienvenido al sistema';
+  const body = `
+    <div style="font-family:sans-serif;max-width:600px">
+      <h2 style="color:#1a1a2e">Bienvenido${fullName ? `, ${fullName}` : ''}</h2>
+      <p>Tu cuenta ha sido creada en el sistema <strong>SisTesis</strong>.</p>
+      <h3 style="margin-top:20px;color:#1a1a2e;">Datos de acceso</h3>
+      <ul style="padding-left:18px;">
+        <li><strong>URL:</strong> <a href="https://lidis.usbcali.edu.co/sistesis/">https://lidis.usbcali.edu.co/sistesis/</a></li>
+        <li><strong>Usuario:</strong> ${username}</li>
+        <li><strong>Contraseña:</strong> ${password}</li>
+      </ul>
+      <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
+      <p style="color:#888;font-size:12px">Si no solicitaste esta cuenta, ignora este correo.</p>
+    </div>
+  `;
+  return await sendEmail(db, toEmail, subject, body, smtpOwnerId);
+}
+
+async function notifyEvaluatorRemoved(db, thesisId, evaluatorId, triggeredBy) {
+  const evaluator = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(evaluatorId);
+  if (!evaluator || !evaluator.institutional_email) return;
+
+  const thesis = db.prepare('SELECT title FROM theses WHERE id = ?').get(thesisId);
+  if (!thesis) return;
+
+  const students = db.prepare(
+    `SELECT u.full_name FROM users u
+     JOIN thesis_students ts ON u.id = ts.student_id
+     WHERE ts.thesis_id = ?`
+  ).all(thesisId);
+
+  const studentList = students.map(s => `• ${s.full_name || 'Estudiante'}`).join('<br />');
+
+  const subject = `[SisTesis] Ya no eres evaluador de la tesis: ${thesis.title}`;
+  const body = `
+    <div style="font-family:sans-serif;max-width:600px">
+      <h2 style="color:#1a1a2e">Cambio de asignación de evaluador</h2>
+      <p>Hola <strong>${evaluator.full_name || 'Evaluador'}</strong>,</p>
+      <p>Ya no estás asignado como evaluador para la siguiente tesis:</p>
+      <p><strong>Tesis:</strong> ${thesis.title}</p>
+      <p><strong>Estudiantes:</strong><br />${studentList}</p>
+      <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
+      <p style="color:#888;font-size:12px">Si crees que esto es un error, contacta al administrador del sistema.</p>
+    </div>
+  `;
+
+  const success = await sendEmail(db, evaluator.institutional_email, subject, body, triggeredBy);
+  logNotification(db, evaluator.id, 'evaluator_removed', subject, body, thesisId, success ? null : 'failed');
+}
+
+async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy) {
+  const evaluator = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(evaluatorId);
+  if (!evaluator || !evaluator.institutional_email) return;
+
+  const thesis = db.prepare('SELECT title FROM theses WHERE id = ?').get(thesisId);
+  if (!thesis) return;
+
+  const students = db.prepare(
+    `SELECT u.full_name, u.institutional_email FROM users u
+     JOIN thesis_students ts ON u.id = ts.student_id
+     WHERE ts.thesis_id = ?`
+  ).all(thesisId);
+
+  const studentList = students.map(s => `• ${s.full_name || 'Estudiante'} (${s.institutional_email || 'sin correo'})`).join('<br />');
+
+  const subject = `[SisTesis] Has sido asignado como evaluador de la tesis: ${thesis.title}`;
+  const body = `
+    <div style="font-family:sans-serif;max-width:600px">
+      <h2 style="color:#1a1a2e">Nueva asignación de evaluación</h2>
+      <p>Hola <strong>${evaluator.full_name || 'Evaluador'}</strong>,</p>
+      <p>Has sido asignado como evaluador para la siguiente tesis:</p>
+      <p><strong>Tesis:</strong> ${thesis.title}</p>
+      <p><strong>Estudiantes:</strong><br />${studentList}</p>
+      <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
+      <p style="color:#888;font-size:12px">Si necesitas más información, contacta al administrador del sistema.</p>
+    </div>
+  `;
+
+  const success = await sendEmail(db, evaluator.institutional_email, subject, body, triggeredBy);
+  logNotification(db, evaluator.id, 'evaluator_assigned', subject, body, thesisId, success ? null : 'failed');
+}
+
 function logNotification(db, userId, eventType, subject, body, relatedThesisId, error) {
   db.prepare(`
     INSERT INTO notifications (id, user_id, event_type, subject, body, related_thesis_id, sent_at, error, created_at)
@@ -95,59 +178,59 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
     let recipientIds = [];
 
     switch (eventType) {
-      // Tesis enviada a revisión: notificar a admins
-      case 'submitted':
-        recipientIds = [...adminIds];
-        break;
+// Tesis enviada a revisión: notificar a admins y evaluadores
+    case 'submitted':
+      recipientIds = [...adminIds, ...evaluatorIds];
+      break;
 
-      // Feedback del admin: notificar a estudiantes y evaluadores
-      case 'admin_feedback':
-        recipientIds = [...studentIds, ...evaluatorIds];
-        break;
+    // Feedback del admin: notificar únicamente a estudiantes
+    case 'admin_feedback':
+      recipientIds = [...studentIds];
+      break;
 
-      // Decisión del admin (aprobar para sustentación o rechazar): notificar a estudiantes y evaluadores
-      case 'admin_decision':
-        recipientIds = [...studentIds, ...evaluatorIds];
-        break;
+    // Decisión del admin (aprobar para sustentación o rechazar): notificar únicamente a estudiantes
+    case 'admin_decision':
+      recipientIds = [...studentIds];
+      break;
 
-      // Evaluadores asignados: notificar a los evaluadores asignados y a los estudiantes
-      case 'evaluators_assigned':
-        recipientIds = [...evaluatorIds, ...studentIds];
-        break;
+    // Evaluadores asignados: notificar únicamente a estudiantes (no enviar a evaluadores)
+    case 'evaluators_assigned':
+      recipientIds = [...studentIds];
+      break;
 
-      // Revisión aprobada: notificar a estudiantes
-      case 'review_ok':
-        recipientIds = [...studentIds];
-        break;
+    // Revisión aprobada: notificar a estudiantes
+    case 'review_ok':
+      recipientIds = [...studentIds];
+      break;
 
-      // Revisión con observaciones: notificar a estudiantes
-      case 'review_fail':
-        recipientIds = [...studentIds];
-        break;
+    // Revisión con observaciones: notificar a estudiantes
+    case 'review_fail':
+      recipientIds = [...studentIds];
+      break;
 
-      // Estudiante envió revisión: notificar a admins y evaluadores
-      case 'revision_submitted':
-        recipientIds = [...adminIds, ...evaluatorIds];
-        break;
+    // Estudiante envió revisión: notificar únicamente a admins
+    case 'revision_submitted':
+      recipientIds = [...adminIds];
+      break;
 
-      // Evaluación enviada por evaluador: notificar solo a admins (NO estudiantes)
-      case 'evaluation_submitted':
-        recipientIds = [...adminIds];
-        break;
+    // Evaluación enviada por evaluador: notificar solo a admins (NO estudiantes)
+    case 'evaluation_submitted':
+      recipientIds = [...adminIds];
+      break;
 
-      // Sustentación programada: notificar a todos
-      case 'defense_scheduled':
-        recipientIds = [...studentIds, ...evaluatorIds, ...adminIds];
-        break;
+    // Sustentación programada: notificar a estudiantes y admins (no evaluadores)
+    case 'defense_scheduled':
+      recipientIds = [...studentIds, ...adminIds];
+      break;
 
-      // Firma de acta: solo admins y evaluadores, NUNCA a estudiantes
-      case 'act_signature':
-        recipientIds = [...adminIds, ...evaluatorIds];
-        break;
+    // Firma de acta: notificar solo a admins (no evaluadores)
+    case 'act_signature':
+      recipientIds = [...adminIds];
+      break;
 
-      // Cambio automático de estado: notificar a estudiantes, evaluadores y admins
-      case 'status_changed':
-        recipientIds = [...studentIds, ...evaluatorIds, ...adminIds];
+    // Cambio automático de estado: notificar a estudiantes y admins (no evaluadores)
+    case 'status_changed':
+      recipientIds = [...studentIds, ...adminIds];
         break;
 
       // Evento manual genérico (creado por admin/evaluador):
@@ -251,4 +334,15 @@ function startReminderCron(db) {
   console.log('[cron] Recordatorios automáticos activados (8:00 AM hora Bogotá)');
 }
 
-module.exports = { sendEmail, logNotification, notifyEvent: notifyTimeline, notifyTimeline, getSMTPConfig, createTransport, startReminderCron };
+module.exports = {
+  sendEmail,
+  sendWelcomeEmail,
+  logNotification,
+  notifyEvent: notifyTimeline,
+  notifyTimeline,
+  notifyEvaluatorRemoved,
+  notifyEvaluatorAssigned,
+  getSMTPConfig,
+  createTransport,
+  startReminderCron,
+};

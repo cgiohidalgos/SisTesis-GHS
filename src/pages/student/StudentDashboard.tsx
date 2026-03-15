@@ -22,11 +22,11 @@ export default function StudentDashboard() {
         const resp = await fetch(`${API_BASE}/theses`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!resp.ok) throw new Error("Error consultando tesis");
+        if (!resp.ok) throw new Error("Error consultando proyectos de grado");
         const data = await resp.json();
         setTheses(data);
       } catch (err: any) {
-        toast.error(err.message || "Error consultando tesis");
+        toast.error(err.message || "Error consultando proyectos de grado");
       } finally {
         setLoading(false);
       }
@@ -38,7 +38,7 @@ export default function StudentDashboard() {
     <AppLayout role="student">
       <div className="max-w-3xl mx-auto px-4 sm:px-0">
         <h2 className="font-heading text-2xl font-bold text-foreground mb-1">
-          Mi Tesis
+          Mi proyecto de grado
         </h2>
         <p className="text-sm text-muted-foreground mb-6">
           Consulta el estado y seguimiento de tu trabajo de grado.
@@ -48,8 +48,8 @@ export default function StudentDashboard() {
           <div className="text-center py-8">Cargando...</div>
         ) : theses.length === 0 ? (
           <div className="text-center py-8">
-            <p className="mb-4">Aún no has registrado ninguna tesis.</p>
-            <Button onClick={() => navigate("/student/register-thesis")}>Registrar Nueva Tesis</Button>
+            <p className="mb-4">Aún no has registrado ningún proyecto de grado.</p>
+            <Button onClick={() => navigate("/student/register-thesis")}>Registrar nuevo proyecto de grado</Button>
           </div>
         ) : (
           <>
@@ -66,8 +66,8 @@ export default function StudentDashboard() {
                         method: "PUT",
                         headers: { Authorization: `Bearer ${token}` },
                       });
-                      if (!resp.ok) throw new Error("Error enviando tesis");
-                      toast.success("Tesis enviada a evaluación");
+                      if (!resp.ok) throw new Error("Error enviando proyecto de grado");
+                      toast.success("Proyecto de grado enviado a evaluación");
                       // recargar
                       setLoading(true);
                       const r2 = await fetch(`${API_BASE}/theses`, {
@@ -88,21 +88,21 @@ export default function StudentDashboard() {
                 <Button
                   variant="destructive"
                   onClick={async () => {
-                    if (!confirm("¿Eliminar tesis? Esta acción no se puede deshacer.")) return;
+                    if (!confirm("¿Eliminar proyecto de grado? Esta acción no se puede deshacer.")) return;
                     try {
                       const token = localStorage.getItem("token");
                       const resp = await fetch(`${API_BASE}/theses/${theses[0].id}`, {
                         method: "DELETE",
                         headers: { Authorization: `Bearer ${token}` },
                       });
-                      if (!resp.ok) throw new Error("Error eliminando tesis");
-                      toast.success("Tesis eliminada");
+                      if (!resp.ok) throw new Error("Error eliminando proyecto de grado");
+                      toast.success("Proyecto de grado eliminado");
                       setTheses([]);
                     } catch (e:any) {
                       toast.error(e.message);
                     }
                   }}
-                >Eliminar tesis</Button>
+                >Eliminar proyecto de grado</Button>
               </div>
             )}
             {/* Quick info (puedes adaptar según datos reales) */}

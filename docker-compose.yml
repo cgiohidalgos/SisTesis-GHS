@@ -10,6 +10,7 @@ services:
       - JWT_SECRET=change_me
       - ADMIN_EMAIL=admin@admin.com
       - ADMIN_PASSWORD=admin
+      - ADMIN_PASSWORD_RESET=1
     volumes:
       - ./server/data:/app/data
       - ./server/uploads:/app/uploads
@@ -17,7 +18,7 @@ services:
       - ./server:/app
       # protect container-installed node_modules from being overwritten
       - /app/node_modules
-    command: ["npm", "run", "dev"]
+    command: ["node", "index.js"]
 
   frontend:
     build:

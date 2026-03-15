@@ -89,7 +89,7 @@ export interface Thesis {
 }
 
 export const statusLabels: Record<ThesisStatus, string> = {
-  submitted: "Tesis Enviada",
+  submitted: "Proyecto de grado enviado",
   admin_review: "Revisión Administrativa",
   evaluators_assigned: "Evaluadores Asignados",
   academic_evaluation: "En Evaluación Académica",
@@ -222,7 +222,7 @@ export const mockTimeline: TimelineEvent[] = [
   {
     id: "1",
     status: "submitted",
-    label: "Tesis Enviada",
+    label: "Proyecto de grado enviado",
     date: "2025-01-15 09:30",
     actor: "Sistema",
     actorRole: "system",

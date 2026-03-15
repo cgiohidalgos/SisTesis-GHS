@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import AppLayout from '@/components/layout/AppLayout';
 
 const EVENT_LABELS: Record<string, string> = {
-  submitted:            'Tesis enviada',
+  submitted:            'Proyecto de grado enviado',
   admin_feedback:       'Feedback del admin',
   admin_decision:       'Decisión del admin',
   evaluators_assigned:  'Evaluadores asignados',

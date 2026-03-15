@@ -10,7 +10,7 @@ const loginOptions = [
   {
     key: "student",
     label: "Estudiante",
-    description: "Ingresa con tu código estudiantil para enviar y dar seguimiento a tu tesis.",
+    description: "Ingresa con tu código estudiantil para enviar y dar seguimiento a tu proyecto de grado.",
     icon: BookOpen,
     href: "/login/student",
     accent: "group-hover:bg-info/10 group-hover:text-info",
@@ -18,7 +18,7 @@ const loginOptions = [
   {
     key: "staff",
     label: "Evaluador / Administrador",
-    description: "Accede con tu correo institucional para evaluar tesis o gestionar el sistema.",
+    description: "Accede con tu correo institucional para evaluar proyectos de grado o gestionar el sistema.",
     icon: Shield,
     href: "/login/staff",
     accent: "group-hover:bg-accent/10 group-hover:text-accent-foreground",
@@ -80,49 +80,13 @@ export default function Index() {
             SisTesis
           </h1>
           <p className="text-lg text-primary-foreground/70 max-w-2xl mx-auto leading-relaxed">
-            Sistema integrado de Tesis de la Facultad de Ingeniería - USB Cali
+            Sistema integrado de proyectos de grado de la Facultad de Ingeniería - USB Cali
           </p>
         </div>
       </div>
 
-      {/* Reception Calendar */}
-      <div className="flex-1 px-4 sm:px-6 -mt-10 sm:-mt-12">
-        <div className="max-w-4xl mx-auto mb-6">
-          <div className="bg-card border rounded-xl shadow-card p-6">
-            <h2 className="font-heading text-xl font-bold mb-2">Calendario de recepción de tesis</h2>
-            <p className="text-sm text-muted-foreground mb-4">
-              Estas fechas indican los periodos en los cuales los estudiantes pueden registrar tesis por programa.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {programs.map((p) => (
-                <div key={p.id} className="border rounded-lg p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold">{p.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatDate(p.reception_start)} → {formatDate(p.reception_end)}
-                      </p>
-                    </div>
-                    <span
-                      className={cn(
-                        "text-xs font-semibold px-2 py-1 rounded-full",
-                        isOpen(p)
-                          ? "bg-green-100 text-green-800"
-                          : "bg-red-100 text-red-800"
-                      )}
-                    >
-                      {isOpen(p) ? "Abierto" : "Cerrado"}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Login Options */}
-      <div className="flex-1 flex items-start justify-center px-4 sm:px-6 -mt-6 sm:-mt-8">
+      <div className="flex-1 flex items-start justify-center px-4 sm:px-6 mt-8">
         <div className="max-w-3xl w-full grid grid-cols-1 md:grid-cols-2 gap-4">
           {loginOptions.map((opt, i) => (
             <Link
@@ -152,8 +116,44 @@ export default function Index() {
         </div>
       </div>
 
+      {/* Reception Calendar */}
+      <div className="flex-1 px-4 sm:px-6 mt-10">
+        <div className="max-w-4xl mx-auto mb-6">
+          <div className="bg-card border rounded-xl shadow-card p-6">
+            <h2 className="font-heading text-xl font-bold mb-2">Calendario de recepción de proyectos de grado</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Estas fechas indican los periodos en los cuales los estudiantes pueden registrar proyectos de grado por programa.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {programs.map((p) => (
+                <div key={p.id} className="border rounded-lg p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold">{p.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDate(p.reception_start)} → {formatDate(p.reception_end)}
+                      </p>
+                    </div>
+                    <span
+                      className={cn(
+                        "text-xs font-semibold px-2 py-1 rounded-full",
+                        isOpen(p)
+                          ? "bg-green-100 text-green-800"
+                          : "bg-red-100 text-red-800"
+                      )}
+                    >
+                      {isOpen(p) ? "Abierto" : "Cerrado"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <footer className="py-6 text-center text-xs text-muted-foreground">
-        SisTesis © 2025 — Sistema integrado de Tesis de la Facultad de Ingeniería - USB Cali
+        SisTesis © 2025 — Sistema integrado de proyectos de grado de la Facultad de Ingeniería - USB Cali
       </footer>
     </div>
   );

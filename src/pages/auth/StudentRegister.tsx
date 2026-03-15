@@ -18,7 +18,6 @@ export default function StudentRegister() {
     studentCode: "",
     cedula: "",
     institutionalEmail: "",
-    password: "",
   });
     const [errors, setErrors] = useState<{ studentCode?: string; cedula?: string; institutionalEmail?: string }>({});
     const debounceTimer = useRef<NodeJS.Timeout | null>(null);
@@ -64,7 +63,7 @@ export default function StudentRegister() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.fullName || !form.studentCode || !form.cedula || !form.password || !form.institutionalEmail) {
+    if (!form.fullName || !form.studentCode || !form.cedula || !form.institutionalEmail) {
       toast.error("Todos los campos son obligatorios, incluido el correo institucional");
       return;
     }
@@ -109,7 +108,7 @@ export default function StudentRegister() {
             Registro Estudiante
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Crea tu cuenta para enviar y hacer seguimiento de tu tesis
+            Crea tu cuenta para enviar y hacer seguimiento de tu proyecto de grado
           </p>
         </div>
 
@@ -171,16 +170,9 @@ export default function StudentRegister() {
               }}
               placeholder="nombre@universidad.edu"
             />
-          </div>
-          <div>
-            <Label htmlFor="password">Contraseña</Label>
-            <Input
-              id="password"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              placeholder="Mínimo 6 caracteres"
-            />
+            <p className="text-xs text-muted-foreground mt-2">
+              La contraseña se enviará automáticamente a tu correo institucional.
+            </p>
           </div>
           <Button
             type="submit"

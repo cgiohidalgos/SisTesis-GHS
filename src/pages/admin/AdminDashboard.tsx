@@ -44,7 +44,7 @@ export default function AdminDashboard() {
         const sjson = await sresp.json();
         console.log('stats response', sjson);
         const baseStats = [
-          { label: 'Total Tesis', value: sjson.totalTheses, icon: FileText, color: 'text-info' },
+          { label: 'Total proyectos de grado', value: sjson.totalTheses, icon: FileText, color: 'text-info' },
           { label: 'En Evaluación', value: sjson.inEvaluation, icon: Clock, color: 'text-warning' },
           { label: 'Finalizadas', value: sjson.finalized, icon: CheckCircle2, color: 'text-success' },
           { label: 'Evaluadores', value: sjson.evaluators, icon: Users, color: 'text-accent' },
@@ -85,7 +85,7 @@ export default function AdminDashboard() {
           Panel de Administración
         </h2>
         <p className="text-sm text-muted-foreground mb-6">
-          Gestión integral del proceso de evaluación de tesis.
+          Gestión integral del proceso de evaluación de proyectos de grado.
         </p>
 
         {/* Stats */}
@@ -207,7 +207,7 @@ export default function AdminDashboard() {
                     <thead>
                       <tr className="bg-muted">
                         <th className="p-2 text-left">Evaluador</th>
-                        <th className="p-2">Tesis asignadas</th>
+                        <th className="p-2">Proyectos asignados</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -227,7 +227,7 @@ export default function AdminDashboard() {
 
         {/* Recent Theses */}
         <h3 className="font-heading text-lg font-semibold text-foreground mb-4">
-          Tesis Recientes
+          Proyectos recientes
         </h3>
         <div className="space-y-4">
           {theses.map((thesis) => (

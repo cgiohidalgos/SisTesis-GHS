@@ -94,7 +94,7 @@ export default function SuperReviewItems() {
       <div className="max-w-md mx-auto">
         <h2 className="font-heading text-2xl font-bold mb-4">Checklist de Revisión</h2>
         <p className="text-sm text-muted-foreground mb-6">
-          Elementos que aparecen en la sección "Revisión" de la vista de tesis. Los administradores verán estas casillas.
+          Elementos que aparecen en la sección "Revisión" de la vista de proyectos de grado. Los administradores verán estas casillas.
         </p>
         <div className="space-y-3 mb-6">
           {items.map((it) => (

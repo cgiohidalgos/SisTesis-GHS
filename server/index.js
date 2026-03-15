@@ -7,13 +7,26 @@ const multer = require('multer');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
+const util = require('util');
 const Docxtemplater = require('docxtemplater');
 const PizZip = require('pizzip');
 const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 const { notifyTimeline, startReminderCron, sendEmail } = require('./notifications');
 
+const execPromise = util.promisify(exec);
+
 const app = express();
+
+// Log uncaught errors to help diagnose crashes
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION', reason);
+});
+
 // Logging de todas las peticiones para depuración de CORS y preflight
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
@@ -2861,7 +2874,7 @@ app.get('/theses/:id/acta/digital-signature-status', authMiddleware, (req, res) 
     requiredSigners,
     pendingSigners,
     allSigned,
-    currentPdfUrl: signedActa ? `/uploads/${path.basename(signedActa.current_pdf_url)}` : null
+    currentPdfUrl: (signedActa && signedActa.current_pdf_url) ? `/uploads/${path.basename(signedActa.current_pdf_url)}` : null
   });
 });
 
@@ -2974,12 +2987,29 @@ app.get('/theses/:id/acta/download-for-signing', authMiddleware, async (req, res
       const { execSync } = require('child_process');
       const tmpDocx = path.join('/tmp', `acta_sign_${thesisId}_${Date.now()}.docx`);
       fs.writeFileSync(tmpDocx, docxBuf);
+      console.log('Wrote temporary DOCX for signing:', tmpDocx, 'size=', fs.statSync(tmpDocx).size);
 
-      execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, {
-        timeout: 30000, stdio: 'pipe',
-      });
+      let conversionOutput = '';
+      try {
+        conversionOutput = execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, {
+          timeout: 300000,
+          encoding: 'utf8',
+          stdio: 'pipe',
+        });
+      } catch (err) {
+        console.error('LibreOffice conversion failed:', err);
+        if (err.stdout) console.error('LibreOffice stdout:', err.stdout.toString());
+        if (err.stderr) console.error('LibreOffice stderr:', err.stderr.toString());
+        throw err;
+      }
 
       const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
+      console.log('Expecting PDF at', tmpPdf);
+      if (!fs.existsSync(tmpPdf)) {
+        console.error('LibreOffice conversion output was empty, conversionOutput:', conversionOutput);
+        try { console.log('Tmp dir listing:', fs.readdirSync('/tmp').filter(f => f.startsWith('acta_sign_')).slice(0,10)); } catch (e) {}
+        throw new Error('LibreOffice no generó el PDF');
+      }
       pdfBuffer = fs.readFileSync(tmpPdf);
       try { fs.unlinkSync(tmpDocx); } catch {}
       try { fs.unlinkSync(tmpPdf); } catch {}
@@ -3189,7 +3219,7 @@ app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, re
 
 // ============================================================================
 
-app.get('/theses/:id/acta/export', authMiddleware, (req, res) => {
+app.get('/theses/:id/acta/export', authMiddleware, async (req, res) => {
   const thesisId = req.params.id;
   const format = (req.query.format || 'word').toString().toLowerCase();
 
@@ -3203,6 +3233,7 @@ app.get('/theses/:id/acta/export', authMiddleware, (req, res) => {
   }
 
   const ctx = getActaContext(thesisId);
+  console.log('EXPORT ACTA ENDPOINT:', { thesisId, format });
   if (!ctx) return res.status(404).json({ error: 'not found' });
 
   // Si es evaluador (no admin), solo puede descargar PDF y solo cuando todas las firmas están
@@ -3313,17 +3344,23 @@ app.get('/theses/:id/acta/export', authMiddleware, (req, res) => {
       const tmpDocx = path.join('/tmp', `acta_${thesisId}_${Date.now()}.docx`);
       fs.writeFileSync(tmpDocx, buf);
       try {
-        execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, { timeout: 30000, stdio: 'pipe' });
+        const conversion = execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, { timeout: 30000, stdio: 'pipe' });
         const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
         if (!fs.existsSync(tmpPdf)) throw new Error('LibreOffice no generó el PDF');
         const pdfBuf = fs.readFileSync(tmpPdf);
         try { fs.unlinkSync(tmpDocx); } catch {}
         try { fs.unlinkSync(tmpPdf); } catch {}
+
+        const stamped = await overlayHeaderFooterOnPdf(pdfBuf);
+
         res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Length', stamped.length);
         res.setHeader('Content-Disposition', `attachment; filename="${baseFileName}.pdf"`);
-        return res.send(pdfBuf);
+        return res.send(stamped);
       } catch (convErr) {
         console.error('Error convirtiendo a PDF:', convErr.message);
+        if (convErr.stdout) console.error('stdout:', convErr.stdout.toString());
+        if (convErr.stderr) console.error('stderr:', convErr.stderr.toString());
         try { fs.unlinkSync(tmpDocx); } catch {}
         return res.status(500).json({ error: 'Error al convertir a PDF' });
       }
@@ -3370,6 +3407,99 @@ function escapeXmlChar(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+// Función auxiliar para convertir DOCX a PDF
+// Simplemente empaqueta el DOCX como un PDF usando pdf-lib
+async function convertDocxToPdf(docxBuffer, filePrefix = 'docx') {
+  const tmpDir = '/tmp';
+  const tmpDocx = path.join(tmpDir, `${filePrefix}-${Date.now()}.docx`);
+  const baseName = path.basename(tmpDocx, '.docx');
+  const tmpPdf = path.join(tmpDir, `${baseName}.pdf`);
+
+  try {
+    // Guardar el DOCX temporalmente
+    fs.writeFileSync(tmpDocx, docxBuffer);
+
+    // Convertir a PDF usando LibreOffice
+    console.log(`Convirtiendo ${tmpDocx} a PDF...`);
+    const { execSync } = require('child_process');
+    execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, {
+      timeout: 30000,
+      stdio: 'pipe'
+    });
+
+    if (!fs.existsSync(tmpPdf)) {
+      throw new Error('LibreOffice no generó el PDF');
+    }
+
+    const pdfBuffer = fs.readFileSync(tmpPdf);
+
+    // Limpiar archivos temporales
+    try {
+      fs.unlinkSync(tmpDocx);
+      fs.unlinkSync(tmpPdf);
+    } catch (cleanupErr) {
+      console.warn('Error limpiando archivos temporales:', cleanupErr.message);
+    }
+
+    console.log(`✅ PDF generado exitosamente: ${pdfBuffer.length} bytes`);
+    return pdfBuffer;
+  } catch (err) {
+    console.error(`❌ Error en convertDocxToPdf: ${err.message}`);
+    console.error(`Stack: ${err.stack}`);
+
+    // Limpiar archivos temporales en caso de error
+    try {
+      if (fs.existsSync(tmpDocx)) fs.unlinkSync(tmpDocx);
+      if (fs.existsSync(tmpPdf)) fs.unlinkSync(tmpPdf);
+    } catch (cleanupErr) {
+      console.warn('Error limpiando archivos temporales en error:', cleanupErr.message);
+    }
+
+    throw err;
+  }
+}
+
+async function overlayHeaderFooterOnPdf(pdfBuffer) {
+  try {
+    const pdfDoc = await PDFDocument.load(pdfBuffer);
+    const headerPath = path.join(__dirname, 'Formatos', 'header.png');
+    const footerPath = path.join(__dirname, 'Formatos', 'footer.png');
+
+    if (!fs.existsSync(headerPath) || !fs.existsSync(footerPath)) {
+      return pdfBuffer;
+    }
+
+    const headerImg = await pdfDoc.embedPng(fs.readFileSync(headerPath));
+    const footerImg = await pdfDoc.embedPng(fs.readFileSync(footerPath));
+
+    const pages = pdfDoc.getPages();
+    pages.forEach((page) => {
+      const { width, height } = page.getSize();
+      // Scale header and footer to fill page width (with minimal margin)
+      const headerScale = Math.min((width * 0.98) / headerImg.width, 1);
+      const footerScale = Math.min((width * 0.98) / footerImg.width, 1);
+
+      const headerWidth = headerImg.width * headerScale;
+      const headerHeight = headerImg.height * headerScale;
+      const footerWidth = footerImg.width * footerScale;
+      const footerHeight = footerImg.height * footerScale;
+
+      // Skip drawing the header image to avoid embedding fixed text from the template.
+      // The header image (header.png) currently contains "DEPARTAMENTO DE CIENCIAS Y TECNOLOGÍAS DE LA INFORMACIÓN".
+      // We still draw the footer but omit the header overlay.
+      const footerX = (width - footerWidth) / 2;
+      const footerY = 10; // Footer at bottom
+
+      page.drawImage(footerImg, { x: footerX, y: footerY, width: footerWidth, height: footerHeight });
+    });
+
+    return Buffer.from(await pdfDoc.save());
+  } catch (err) {
+    console.warn('overlayHeaderFooterOnPdf failed:', err);
+    return pdfBuffer;
+  }
 }
 
 function generateActaDocx({
@@ -3570,14 +3700,62 @@ ${bodyXml}
 </w:body>
 </w:document>`;
 
-  const imgRelsXml = sigImgData.map(({ relId, ext, buffer }) => {
-    const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg' };
-    return `<Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${relId}.${ext}"/>`;
-  }).join('\n');
+  // Setup temporal variables for header/footer relationships (se llenan más abajo)
+  let headerRelId = null;
+  let footerRelId = null;
+
+  let updatedDocumentXml = documentXml;
+
+  const headerXml = headerRelId ? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p>
+    <w:r>
+      ${makeImgDrawing(headerRelId, 6480000, 1080000, 1)}
+    </w:r>
+  </w:p>
+</w:hdr>` : null;
+
+  const footerXml = footerRelId ? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p>
+    <w:r>
+      ${makeImgDrawing(footerRelId, 6480000, 1080000, 2)}
+    </w:r>
+  </w:p>
+</w:ftr>` : null;
+
+  // Relationships for images (firmas + header/footer)
+  const relEntries = [];
+  const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg' };
+
+  sigImgData.forEach(({ relId, ext }) => {
+    relEntries.push(`<Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${relId}.${ext}"/>`);
+  });
+
+  // Header/footer images (from /Formatos)
+  const headerPath = path.join(__dirname, 'Formatos', 'header.png');
+  const footerPath = path.join(__dirname, 'Formatos', 'footer.png');
+  if (fs.existsSync(headerPath)) {
+    headerRelId = 'rIdHeaderImg';
+    relEntries.push(`<Relationship Id="${headerRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/header.png"/>`);
+    relEntries.push(`<Relationship Id="rId_header1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`);
+  }
+  if (fs.existsSync(footerPath)) {
+    footerRelId = 'rIdFooterImg';
+    relEntries.push(`<Relationship Id="${footerRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/footer.png"/>`);
+    relEntries.push(`<Relationship Id="rId_footer1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>`);
+  }
+
+  // Agregar referencias a header/footer si existen
+  const headerRef = headerRelId ? `<w:headerReference w:type="default" r:id="rId_header1"/>` : '';
+  const footerRef = footerRelId ? `<w:footerReference w:type="default" r:id="rId_footer1"/>` : '';
+  if (headerRef || footerRef) {
+    updatedDocumentXml = documentXml.replace('<w:sectPr>', `<w:sectPr>${headerRef}${footerRef}`);
+  }
 
   const relsDoc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-${imgRelsXml}
+${relEntries.join('\n')}
 </Relationships>`;
 
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -3599,6 +3777,8 @@ ${imgRelsXml}
   <Default Extension="jpeg" ContentType="image/jpeg"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
+  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
 </Types>`;
 
   const appRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -3610,7 +3790,7 @@ ${imgRelsXml}
   zip.file('[Content_Types].xml', contentTypes);
   zip.file('_rels/.rels', appRels);
   zip.file('word/_rels/document.xml.rels', relsDoc);
-  zip.file('word/document.xml', documentXml);
+  zip.file('word/document.xml', updatedDocumentXml);
   zip.file('word/styles.xml', stylesXml);
 
   // Agregar imágenes de firmas al zip
@@ -3620,7 +3800,7 @@ ${imgRelsXml}
 
   // Copiar header/footer del template de acta para mantener el membrete universitario
   try {
-    const actaTemplatePath = path.join(__dirname, 'templates', 'acta_template.docx');
+    const actaTemplatePath = path.join(__dirname, 'Formatos', 'Acta de sustentación.docx');
     if (fs.existsSync(actaTemplatePath)) {
       const actaZip = new PizZip(fs.readFileSync(actaTemplatePath, 'binary'));
       const header1 = actaZip.file('word/header1.xml');
@@ -3640,6 +3820,7 @@ ${imgRelsXml}
         if (header1) extras.push('<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>');
         if (footer1) extras.push('<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>');
         zip.file('[Content_Types].xml', ct.replace('</Types>', extras.join('') + '</Types>'));
+
         const updatedDoc = zip.file('word/document.xml').asText();
         const headerRef = header1 ? '<w:headerReference w:type="default" r:id="rId_header1"/>' : '';
         const footerRef = footer1 ? '<w:footerReference w:type="default" r:id="rId_footer1"/>' : '';
@@ -3851,7 +4032,7 @@ function generateMeritoriaDocx({ title, students, directors, date, signatures })
 
   // Copy header, footer and their images from acta_template.docx
   try {
-    const actaTemplatePath = path.join(__dirname, 'templates', 'acta_template.docx');
+    const actaTemplatePath = path.join(__dirname, 'Formatos', 'Acta de sustentación.docx');
     const actaZip = new PizZip(fs.readFileSync(actaTemplatePath, 'binary'));
 
     const header1 = actaZip.file('word/header1.xml');
@@ -4095,18 +4276,8 @@ app.get('/sign/token/:token/download-pdf', async (req, res) => {
 
   const thesisId = tokenRow.thesis_id;
 
-  // Servir el último PDF firmado subido si existe (para cadena de firmas)
-  const lastSigned = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? ORDER BY updated_at DESC LIMIT 1').get(thesisId);
-  if (lastSigned && lastSigned.current_pdf_url) {
-    const pdfPath = path.join(uploadDir, path.basename(lastSigned.current_pdf_url));
-    if (fs.existsSync(pdfPath)) {
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="acta-${thesisId}-para-firmar.pdf"`);
-      return res.sendFile(pdfPath);
-    }
-  }
-
+  // Siempre regenerar el PDF base al descargar para firmar, para asegurar que no se use
+  // una versión antigua almacenada que contenga texto obsoleto.
   const ctx = getActaContext(thesisId);
   if (!ctx) return res.status(404).json({ error: 'Tesis no encontrada' });
 
@@ -4171,19 +4342,15 @@ app.get('/sign/token/:token/download-pdf', async (req, res) => {
       programName,
     });
 
-    const { execSync } = require('child_process');
-    const tmpDocx = path.join('/tmp', `acta_token_${thesisId}_${Date.now()}.docx`);
-    fs.writeFileSync(tmpDocx, docxBuf);
-    execSync(`libreoffice --headless --convert-to 'pdf:writer_pdf_Export:{"SelectPdfVersion":{"type":"long","value":"1"}}' --outdir /tmp "${tmpDocx}"`, { timeout: 30000, stdio: 'pipe' });
-    const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
-    const pdfBuffer = fs.readFileSync(tmpPdf);
-    try { fs.unlinkSync(tmpDocx); } catch {}
-    try { fs.unlinkSync(tmpPdf); } catch {}
+    // Convertir DOCX a PDF usando función auxiliar
+    const pdfBuffer = await convertDocxToPdf(docxBuf, `acta_token_${thesisId}`);
+    const stamped = await overlayHeaderFooterOnPdf(pdfBuffer);
 
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', stamped.length);
     res.setHeader('Content-Disposition', `attachment; filename="acta-${thesisId}-para-firmar.pdf"`);
-    return res.send(pdfBuffer);
+    return res.send(stamped);
   } catch (e) {
     console.error('Error generando PDF por token:', e);
     return res.status(500).json({ error: 'Error generando PDF' });
@@ -4296,7 +4463,7 @@ app.get('/sign/meritoria/token/:token', (req, res) => {
 });
 
 // GET /sign/meritoria/token/:token/download-pdf — descarga PDF de carta meritoria sin autenticación
-app.get('/sign/meritoria/token/:token/download-pdf', (req, res) => {
+app.get('/sign/meritoria/token/:token/download-pdf', async (req, res) => {
   const token = req.params.token;
   const tokenRow = db.prepare('SELECT * FROM signing_tokens WHERE token = ? AND used_at IS NULL').get(token);
   if (!tokenRow) return res.status(404).json({ error: 'Token inválido o ya utilizado' });
@@ -4320,19 +4487,14 @@ app.get('/sign/meritoria/token/:token/download-pdf', (req, res) => {
   });
 
   try {
-    const { execSync } = require('child_process');
-    const tmpDocx = path.join('/tmp', `meritoria_token_${thesisId}_${Date.now()}.docx`);
-    fs.writeFileSync(tmpDocx, buf);
-    execSync(`libreoffice --headless --convert-to pdf --outdir /tmp "${tmpDocx}"`, { timeout: 30000, stdio: 'pipe' });
-    const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
-    const pdfBuf = fs.readFileSync(tmpPdf);
-    try { fs.unlinkSync(tmpDocx); } catch {}
-    try { fs.unlinkSync(tmpPdf); } catch {}
+    // Convertir DOCX a PDF usando función auxiliar
+    const pdfBuf = await convertDocxToPdf(buf, `meritoria_token_${thesisId}`);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="carta-meritoria-${thesisId}-para-firmar.pdf"`);
     return res.send(pdfBuf);
   } catch (e) {
+    console.error('Error generando PDF meritoria por token:', e);
     return res.status(500).json({ error: 'Error al convertir a PDF' });
   }
 });

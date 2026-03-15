@@ -31,7 +31,7 @@ export default function EvaluatorDashboard() {
       const resp = await fetch(`${API_BASE}/theses`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (!resp.ok) throw new Error('No se pudieron cargar las tesis');
+      if (!resp.ok) throw new Error('No se pudieron cargar los proyectos de grado');
       let data = await resp.json();
       if (user) {
         data = data.map((t:any) => {
@@ -108,7 +108,7 @@ export default function EvaluatorDashboard() {
     <AppLayout role="evaluator">
       <div className="max-w-3xl mx-auto px-4 sm:px-0">
         <h2 className="font-heading text-2xl font-bold text-foreground mb-1">
-          Tesis Asignadas
+          Proyectos asignados
         </h2>
         <p className="text-sm text-muted-foreground mb-6">
           Trabajos pendientes de evaluación académica.
@@ -128,7 +128,7 @@ export default function EvaluatorDashboard() {
             ))}
           </div>
         ) : (
-          <p className="text-center text-muted-foreground">No tienes tesis asignadas por el momento.</p>
+          <p className="text-center text-muted-foreground">No tienes proyectos asignados por el momento.</p>
         )}
       </div>
     </AppLayout>

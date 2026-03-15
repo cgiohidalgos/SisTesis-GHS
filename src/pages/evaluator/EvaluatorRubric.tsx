@@ -18,11 +18,6 @@ export default function EvaluatorRubric() {
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
   const [actaStatus, setActaStatus] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
-  
-  // Estado para firma digital con certificado
-  const [digitalSignStatus, setDigitalSignStatus] = useState<any>(null);
-  const [digitalSignFile, setDigitalSignFile] = useState<File | null>(null);
-  const [loadingDigitalSign, setLoadingDigitalSign] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -32,7 +27,7 @@ export default function EvaluatorRubric() {
         const resp = await fetch(`${API_BASE}/theses/${id}`, {
           headers: { Authorization: token ? "Bearer " + token : "" },
         });
-        if (!resp.ok) throw new Error("No se pudo cargar la tesis");
+        if (!resp.ok) throw new Error("No se pudo cargar el proyecto de grado");
         const data = await resp.json();
         setThesis(data);
 
@@ -43,13 +38,6 @@ export default function EvaluatorRubric() {
           setActaStatus(await actaResp.json());
         }
 
-        // Cargar estado de firma digital
-        const digitalResp = await fetch(`${API_BASE}/theses/${id}/acta/digital-signature-status`, {
-          headers: { Authorization: token ? "Bearer " + token : "" },
-        });
-        if (digitalResp.ok) {
-          setDigitalSignStatus(await digitalResp.json());
-        }
       } catch (e: any) {
         toast.error(e.message);
       }
@@ -72,7 +60,7 @@ export default function EvaluatorRubric() {
 
   if (!thesis) return (
     <AppLayout role="evaluator">
-      <div className="p-6 text-center">Cargando información de la tesis...</div>
+      <div className="p-6 text-center">Cargando información del proyecto de grado...</div>
     </AppLayout>
   );
 
@@ -332,46 +320,48 @@ export default function EvaluatorRubric() {
                 />
               </AccordionContent>
             </AccordionItem>
-            <AccordionItem value="pres" className="border-none px-2">
-              <AccordionTrigger className="hover:no-underline py-4">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-left w-full">
-                  <span>Rúbrica de Sustentación</span>
-                  {currentRound > 0 && (
-                    <span className="text-xs text-muted-foreground">Ronda {currentRound}</span>
-                  )}
-                  {myEvaluator?.due_date && (
-                    <span className="text-xs text-muted-foreground">Vence: {new Date(myEvaluator.due_date).toLocaleDateString('es-CO')}</span>
-                  )}
-                  {presEval ? (
-                    <span className="inline-flex items-center gap-1 text-xs bg-success/10 text-success px-2 py-1 rounded">✓ Enviada</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-1 rounded">⏳ Pendiente</span>
-                  )}
-                </div>
+            {thesis.defense_date && (
+              <AccordionItem value="pres" className="border-none px-2">
+                <AccordionTrigger className="hover:no-underline py-4">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-left w-full">
+                    <span>Rúbrica de Sustentación</span>
+                    {currentRound > 0 && (
+                      <span className="text-xs text-muted-foreground">Ronda {currentRound}</span>
+                    )}
+                    {myEvaluator?.due_date && (
+                      <span className="text-xs text-muted-foreground">Vence: {new Date(myEvaluator.due_date).toLocaleDateString('es-CO')}</span>
+                    )}
+                    {presEval ? (
+                      <span className="inline-flex items-center gap-1 text-xs bg-success/10 text-success px-2 py-1 rounded">✓ Enviada</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-1 rounded">⏳ Pendiente</span>
+                    )}
+                  </div>
                 </AccordionTrigger>
-              <AccordionContent className="pb-6">
-                <RubricEvaluation
-                  thesis={thesis}
-                  onSubmit={(data) => submitEvaluation(data, 'presentation')}
-                  onUploadFiles={presEval ? (files) => uploadFilesToEval(presEval.id, files) : undefined}
-                  readOnly={!!presEval}
-                  submitDisabled={!!presEval || submitting}
-                  showConcept={false}
-                  showFiles={true}
-                  initialConcept={presEval?.concept || null}
-                  initialFinalScore={presEval?.final_score}
-                  initialSections={presentationRubric.map((s: any) => ({
-                    ...s,
-                    criteria: s.criteria.map((c: any) => {
-                      const sc = presEval?.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
-                      return { ...c, score: sc?.score ?? undefined, observations: sc?.observations || "" };
-                    })
-                  }))}
-                  initialGeneralObs={presEval?.general_observations || ""}
-                  initialFiles={presEval?.files || []}
-                />
-              </AccordionContent>
-            </AccordionItem>
+                <AccordionContent className="pb-6">
+                  <RubricEvaluation
+                    thesis={thesis}
+                    onSubmit={(data) => submitEvaluation(data, 'presentation')}
+                    onUploadFiles={presEval ? (files) => uploadFilesToEval(presEval.id, files) : undefined}
+                    readOnly={!!presEval}
+                    submitDisabled={!!presEval || submitting}
+                    showConcept={false}
+                    showFiles={true}
+                    initialConcept={presEval?.concept || null}
+                    initialFinalScore={presEval?.final_score}
+                    initialSections={presentationRubric.map((s: any) => ({
+                      ...s,
+                      criteria: s.criteria.map((c: any) => {
+                        const sc = presEval?.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
+                        return { ...c, score: sc?.score ?? undefined, observations: sc?.observations || "" };
+                      })
+                    }))}
+                    initialGeneralObs={presEval?.general_observations || ""}
+                    initialFiles={presEval?.files || []}
+                  />
+                </AccordionContent>
+              </AccordionItem>
+            )}
           </Accordion>
         </div>
 
@@ -415,186 +405,6 @@ export default function EvaluatorRubric() {
           </div>
         )}
 
-        {/* Sección de Firma Digital con Certificado para Evaluadores */}
-        {actaStatus?.canEvaluatorSign && (
-          <div className="border rounded-xl p-4 bg-white dark:bg-slate-950">
-            <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-2">🔐 Firma Digital con Certificado</h3>
-            <p className="text-sm text-muted-foreground mb-3">
-              Descargue el PDF, fírmelo con Adobe Acrobat usando su certificado digital y súbalo de vuelta.
-            </p>
-
-            {/* Estado de firmas digitales */}
-            {digitalSignStatus && (
-              <div className="mb-3 space-y-1">
-                <p className="text-xs font-medium">Estado de firmas:</p>
-                {digitalSignStatus.digitalSignatures?.length > 0 ? (
-                  digitalSignStatus.digitalSignatures.map((sig: any, idx: number) => (
-                    <div key={idx} className="text-xs text-green-600">
-                      ✓ {sig.signer_role === 'evaluator' ? 'Evaluador' : sig.signer_role === 'director' ? 'Director' : 'Dir. Programa'}: {sig.signer_name}
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-muted-foreground">No hay firmas digitales registradas aún.</p>
-                )}
-                {digitalSignStatus.pendingSigners?.length > 0 && (
-                  <p className="text-xs text-orange-600 mt-1">
-                    Pendientes: {digitalSignStatus.pendingSigners.map((p: any) => p.name).join(', ')}
-                  </p>
-                )}
-                
-                {/* Botón para descargar PDF final firmado cuando todas las firmas estén completas */}
-                {digitalSignStatus.allSigned && (
-                  <button
-                    className="mt-2 px-4 py-2 rounded bg-green-600 text-white text-sm font-medium hover:bg-green-700"
-                    onClick={async () => {
-                      try {
-                        const token = localStorage.getItem('token');
-                        const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/download-final-signed`, {
-                          headers: { Authorization: token ? 'Bearer ' + token : '' },
-                        });
-                        if (!resp.ok) {
-                          const err = await resp.json();
-                          throw new Error(err.error || 'No se pudo descargar');
-                        }
-                        const blob = await resp.blob();
-                        const url = window.URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `acta-final-firmada-${thesis.id}.pdf`;
-                        a.click();
-                        window.URL.revokeObjectURL(url);
-                        toast.success('PDF final descargado');
-                      } catch (e: any) {
-                        toast.error(e.message || 'Error al descargar');
-                      }
-                    }}
-                  >
-                    ✅ Descargar PDF final firmado
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Descargar PDF para firmar */}
-            <div className="flex gap-2 flex-wrap mb-3">
-              <button
-                className="px-4 py-2 rounded bg-secondary text-secondary-foreground text-sm"
-                onClick={async () => {
-                  try {
-                    const token = localStorage.getItem('token');
-                    const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/download-for-signing`, {
-                      headers: { Authorization: token ? 'Bearer ' + token : '' },
-                    });
-                    if (!resp.ok) throw new Error('No se pudo descargar');
-                    const blob = await resp.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `acta-${thesis.id}-para-firmar.pdf`;
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                  } catch (e: any) {
-                    toast.error(e.message || 'Error al descargar');
-                  }
-                }}
-              >
-                📥 Descargar PDF para firmar
-              </button>
-            </div>
-
-            {/* Subir PDF firmado */}
-            <div className="space-y-2">
-              <p className="text-xs font-medium">Subir PDF firmado:</p>
-              <input
-                type="file"
-                accept="application/pdf"
-                onChange={(e) => setDigitalSignFile(e.target.files?.[0] || null)}
-                className="text-sm"
-              />
-              <button
-                className="px-4 py-2 rounded bg-primary text-primary-foreground disabled:opacity-50 text-sm"
-                disabled={!digitalSignFile || loadingDigitalSign}
-                onClick={async () => {
-                  if (!digitalSignFile) return;
-                  setLoadingDigitalSign(true);
-                  try {
-                    const token = localStorage.getItem('token');
-                    const form = new FormData();
-                    form.append('signed_pdf', digitalSignFile);
-                    form.append('signer_role', 'evaluator');
-
-                    const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/upload-signed`, {
-                      method: 'POST',
-                      headers: { Authorization: token ? 'Bearer ' + token : '' },
-                      body: form,
-                    });
-                    const data = await resp.json();
-                    if (!resp.ok) throw new Error(data.error || 'No se pudo subir');
-                    
-                    toast.success('Firma digital registrada correctamente');
-                    setDigitalSignFile(null);
-                    
-                    // Refrescar estado
-                    const digitalResp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/digital-signature-status`, {
-                      headers: { Authorization: token ? 'Bearer ' + token : '' },
-                    });
-                    if (digitalResp.ok) setDigitalSignStatus(await digitalResp.json());
-                  } catch (e: any) {
-                    toast.error(e.message || 'Error al subir PDF firmado');
-                  } finally {
-                    setLoadingDigitalSign(false);
-                  }
-                }}
-              >
-                {loadingDigitalSign ? 'Subiendo...' : '📤 Subir PDF firmado'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Sección independiente para descargar PDF final firmado */}
-        {digitalSignStatus?.allSigned && !actaStatus?.canEvaluatorSign && (
-          <div className="border rounded-xl p-4 bg-green-50 dark:bg-green-950">
-            <h3 className="text-sm font-bold text-green-700 dark:text-green-300 uppercase tracking-widest mb-2">✅ Acta Firmada Completamente</h3>
-            <p className="text-sm text-muted-foreground mb-3">
-              Todas las firmas digitales han sido registradas. Puede descargar el acta final firmada.
-            </p>
-            <div className="space-y-1 mb-3">
-              {digitalSignStatus.digitalSignatures?.map((sig: any, idx: number) => (
-                <div key={idx} className="text-xs text-green-600">
-                  ✓ {sig.signer_role === 'evaluator' ? 'Evaluador' : sig.signer_role === 'director' ? 'Director' : 'Dir. Programa'}: {sig.signer_name}
-                </div>
-              ))}
-            </div>
-            <button
-              className="px-4 py-2 rounded bg-green-600 text-white text-sm font-medium hover:bg-green-700"
-              onClick={async () => {
-                try {
-                  const token = localStorage.getItem('token');
-                  const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/download-final-signed`, {
-                    headers: { Authorization: token ? 'Bearer ' + token : '' },
-                  });
-                  if (!resp.ok) {
-                    const err = await resp.json();
-                    throw new Error(err.error || 'No se pudo descargar');
-                  }
-                  const blob = await resp.blob();
-                  const url = window.URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `acta-final-firmada-${thesis.id}.pdf`;
-                  a.click();
-                  window.URL.revokeObjectURL(url);
-                  toast.success('PDF final descargado');
-                } catch (e: any) {
-                  toast.error(e.message || 'Error al descargar');
-                }
-              }}
-            >
-              📄 Descargar PDF final firmado
-            </button>
-          </div>
-        )}
 
         {thesis.timeline && thesis.timeline.length > 0 && (
           <div className="pt-6 border-t border-border">

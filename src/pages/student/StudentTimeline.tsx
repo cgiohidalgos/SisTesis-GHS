@@ -9,6 +9,26 @@ import { toast } from "sonner";
 import { getApiBase } from "@/lib/utils";
 const API_BASE = getApiBase();
 
+const downloadFile = async (url: string, fileName: string) => {
+  try {
+    const backendBase = API_BASE || `${window.location.protocol}//${window.location.hostname}:4000`;
+    const token = localStorage.getItem('token');
+    const resp = await fetch(`${backendBase}${url}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!resp.ok) throw new Error(`Error descargando archivo (${resp.status})`);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err: any) {
+    toast.error(err.message || 'No se pudo descargar el archivo');
+  }
+};
+
 function ScoreCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="border rounded-xl p-4 bg-white dark:bg-slate-950 space-y-3">
@@ -35,7 +55,7 @@ export default function StudentTimeline() {
         const resp = await fetch(`${API_BASE}/theses`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!resp.ok) throw new Error("Error consultando tesis");
+        if (!resp.ok) throw new Error("Error consultando proyectos de grado");
         let data = await resp.json();
         if (data && data[0] && data[0].timeline && Array.isArray(data[0].timeline)) {
           data[0].timeline = data[0].timeline.map((e: any) => ({
@@ -45,7 +65,7 @@ export default function StudentTimeline() {
         }
         setThesis(data[0] || null);
       } catch (err: any) {
-        toast.error(err.message || "Error consultando tesis");
+        toast.error(err.message || "Error consultando proyectos de grado");
       } finally {
         setLoading(false);
       }
@@ -116,15 +136,15 @@ export default function StudentTimeline() {
           <div className="text-center py-8">Cargando...</div>
         ) : !thesis ? (
           <div className="text-center py-8">
-            <p className="mb-4">Aún no has registrado ninguna tesis.</p>
-            <button className="btn" onClick={() => navigate("/student/register-thesis")}>Registrar Nueva Tesis</button>
+            <p className="mb-4">Aún no has registrado ningún proyecto de grado.</p>
+            <button className="btn" onClick={() => navigate("/student/register-thesis")}>Registrar nuevo proyecto de grado</button>
           </div>
         ) : (
           <>
             <div className="mb-8">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-2">
                 <h2 className="font-heading text-2xl font-bold text-foreground">
-                  Seguimiento de mi Tesis
+                  Seguimiento de mi proyecto de grado
                 </h2>
                 {thesis.revision_round > 0 && (
                   <p className="text-sm text-muted-foreground mt-1">Ronda de revisión: {thesis.revision_round}</p>
@@ -141,7 +161,11 @@ export default function StudentTimeline() {
               )}
               {thesis.directors && thesis.directors.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-2">
-                  <strong>Director{thesis.directors.length>1?'es':''}:</strong> {thesis.directors.join(', ')}
+                  <strong>Director{thesis.directors.length>1?'es':''}:</strong>{' '}
+                  {thesis.directors
+                    .map((d: any) => (typeof d === 'string' ? d : d?.name || d?.user_id || ''))
+                    .filter(Boolean)
+                    .join(', ')}
                 </p>
               )}
               {thesis.evaluators && thesis.evaluators.length > 0 && (
@@ -162,7 +186,7 @@ export default function StudentTimeline() {
               )}
               {thesis.status !== 'draft' && (
                 <p className="mt-2 text-sm text-red-600">
-                  ⚠️ La tesis ya fue enviada a evaluación y no puede modificarse.
+                  ⚠️ El proyecto de grado ya fue enviado a evaluación y no puede modificarse.
                 </p>
               )}
             </div>
@@ -172,9 +196,13 @@ export default function StudentTimeline() {
                 <ul className="space-y-1">
                   {thesis.files.map((f:any) => (
                     <li key={f.id}>
-                      <a href={`${API_BASE}${f.file_url}`} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+                      <button
+                        type="button"
+                        className="text-accent hover:underline"
+                        onClick={() => downloadFile(f.file_url, f.file_name)}
+                      >
                         {f.file_name}
-                      </a>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -249,12 +277,26 @@ export default function StudentTimeline() {
 
               const hasDefense = !!thesis.defense_date;
               const finalScore = thesis.weighted?.finalScore;
+              const assignedEvaluatorIds = (thesis.evaluators || []).map((e: any) => e.id).filter(Boolean);
+              const presentationEvaluatorIds = new Set(presEvals.map((e: any) => e.evaluator_id));
+              const allEvaluatedPresentation =
+                assignedEvaluatorIds.length > 0 &&
+                assignedEvaluatorIds.every((id: any) => presentationEvaluatorIds.has(id));
+
+              const shouldShowConsolidated =
+                docAvg != null &&
+                finalScore != null &&
+                // Si hay sustentación programada, mostrar solo cuando TODOS los evaluadores hayan evaluado
+                (!hasDefense || (hasDefense && allEvaluatedPresentation));
 
               return (
                 <div className="space-y-4 mt-6">
                   {/* Document scores */}
                   {docEvals.length > 0 && (
                     <ScoreCard label="Calificaciones del Documento">
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Esta evaluación vale <strong>{weights.doc}%</strong> de la nota final.
+                      </p>
                       {docEvals.map((ev:any, i:number) => (
                         <div key={ev.id || i} className="flex justify-between text-sm">
                           <span className="text-muted-foreground">{isBlind ? `Evaluador ${i+1}` : ev.evaluator_name}</span>
@@ -273,6 +315,9 @@ export default function StudentTimeline() {
                   {/* Presentation scores */}
                   {presEvals.length > 0 && (
                     <ScoreCard label="Calificaciones de la Sustentación">
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Esta evaluación vale <strong>{weights.presentation}%</strong> de la nota final.
+                      </p>
                       {presEvals.map((ev:any, i:number) => (
                         <div key={ev.id || i} className="flex justify-between text-sm">
                           <span className="text-muted-foreground">{isBlind ? `Evaluador ${i+1}` : ev.evaluator_name}</span>
@@ -289,16 +334,16 @@ export default function StudentTimeline() {
                   )}
 
                   {/* Consolidated */}
-                  {docAvg != null && (hasDefense ? presAvg != null : true) && finalScore != null && (
+                  {shouldShowConsolidated && (
                     <ScoreCard label="Calificación Consolidada">
                       <div className="text-center mb-3">
                         <span className="text-3xl font-black text-primary">{Number(finalScore).toFixed(2)}</span>
                         <span className="text-lg text-muted-foreground"> / 5.00</span>
                       </div>
                       <div className="text-sm text-center font-semibold text-muted-foreground mb-2">Nota Final Ponderada</div>
-                      {hasDefense && presAvg != null ? (
+                      {hasDefense && allEvaluatedPresentation ? (
                         <p className="text-sm text-center text-muted-foreground break-words">
-                          Cálculo: ({docAvg.toFixed(2)} × {w.doc}%) + ({presAvg.toFixed(2)} × {w.presentation}%) = {Number(finalScore).toFixed(2)}
+                          Cálculo: ({docAvg.toFixed(2)} × {w.doc}%) + ({presAvg?.toFixed(2)} × {w.presentation}%) = {Number(finalScore).toFixed(2)}
                         </p>
                       ) : (
                         <p className="text-sm text-center text-muted-foreground break-words">

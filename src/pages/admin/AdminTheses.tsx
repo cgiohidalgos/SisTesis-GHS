@@ -17,7 +17,7 @@ export default function AdminTheses() {
       const resp = await fetch(`${API_BASE}/theses`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (!resp.ok) throw new Error('Error cargando tesis');
+      if (!resp.ok) throw new Error('Error cargando proyectos de grado');
       const data = await resp.json();
       setTheses(data);
     } catch (err: any) {
@@ -26,7 +26,7 @@ export default function AdminTheses() {
   };
 
   const handleDeleteThesis = async (id: string) => {
-    if (!confirm('¿Eliminar esta tesis? Esta acción no se puede deshacer.')) return;
+    if (!confirm('¿Eliminar este proyecto de grado? Esta acción no se puede deshacer.')) return;
     // optimista: quitar del listado inmediatamente
     setTheses((prev) => prev.filter((t) => t.id !== id));
     try {
@@ -36,14 +36,14 @@ export default function AdminTheses() {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (resp.ok) {
-        toast.success('Tesis eliminada');
+        toast.success('Proyecto de grado eliminado');
         fetchTheses();
       } else if (resp.status === 404) {
-        toast.error('La tesis ya no existe');
+        toast.error('El proyecto de grado ya no existe');
         fetchTheses();
       } else {
         const text = await resp.text().catch(() => '');
-        throw new Error(text || 'Error eliminando tesis');
+        throw new Error(text || 'Error eliminando proyecto de grado');
       }
     } catch (e: any) {
       toast.error(e.message);
@@ -60,10 +60,10 @@ export default function AdminTheses() {
         <div className="flex items-start justify-between mb-6">
           <div>
             <h2 className="font-heading text-2xl font-bold text-foreground mb-1">
-              Gestión de Tesis
+              Gestión de Proyectos de Grado
             </h2>
             <p className="text-sm text-muted-foreground">
-              Todas las tesis registradas en el sistema.
+              Todos los proyectos de grado registrados en el sistema.
             </p>
           </div>
           <a
@@ -79,7 +79,7 @@ export default function AdminTheses() {
               }).then(r => r.blob()).then(blob => {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = url; a.download = `tesis-${Date.now()}.csv`; a.click();
+                a.href = url; a.download = `proyecto-de-grado-${Date.now()}.csv`; a.click();
                 URL.revokeObjectURL(url);
               }).catch(() => toast.error('Error exportando'));
             }}
@@ -100,7 +100,7 @@ export default function AdminTheses() {
               <button
                 onClick={() => handleDeleteThesis(thesis.id)}
                 className="absolute top-2 right-2 text-red-600 hover:text-red-800 bg-white rounded-full p-1 shadow"
-                title="Eliminar tesis"
+                title="Eliminar proyecto de grado"
               >
                 🗑️
               </button>

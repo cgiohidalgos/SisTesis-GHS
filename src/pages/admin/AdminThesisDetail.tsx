@@ -7,10 +7,38 @@ import ThesisTimeline from "@/components/thesis/ThesisTimeline";
 import { useAuth } from "@/hooks/useAuth";
 import { defaultRubric, presentationRubric } from "@/lib/mock-data";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import RubricEvaluation from "@/components/thesis/RubricEvaluation";
 import { getApiBase } from "@/lib/utils";
 
 const API_BASE = getApiBase();
+
+async function downloadFile(url: string, fileName: string) {
+  try {
+    const backendBase = API_BASE || `${window.location.protocol}//${window.location.hostname}:4000`;
+    const token = localStorage.getItem('token');
+    const resp = await fetch(`${backendBase}${url}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!resp.ok) throw new Error(`Error descargando archivo (${resp.status})`);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err: any) {
+    console.error('downloadFile error', err);
+    alert(err.message || 'No se pudo descargar el archivo');
+  }
+}
 
 export default function AdminThesisDetail() {
   const { id } = useParams();
@@ -38,6 +66,13 @@ export default function AdminThesisDetail() {
   const [meritoriaSignFile, setMeritoriaSignFile] = useState<File | null>(null);
   const [meritoriaSignerName, setMeritoriaSignerName] = useState<string>("");
   const [loadingMeritoria, setLoadingMeritoria] = useState(false);
+  const [showReplaceDialog, setShowReplaceDialog] = useState(false);
+  const [isAddingEvaluator, setIsAddingEvaluator] = useState(false);
+  const [replacingEvaluator, setReplacingEvaluator] = useState<any | null>(null);
+  const [availableEvaluators, setAvailableEvaluators] = useState<any[]>([]);
+  const [selectedReplacementId, setSelectedReplacementId] = useState<string | null>(null);
+  const [loadingAvailableEvaluators, setLoadingAvailableEvaluators] = useState(false);
+  const [replacingEvaluatorLoading, setReplacingEvaluatorLoading] = useState(false);
 
   // Estado para enlaces de firma compartibles
   const [generatedSigningLinks, setGeneratedSigningLinks] = useState<Record<string, {url: string; copied: boolean}>>({});
@@ -66,18 +101,173 @@ export default function AdminThesisDetail() {
     }
     const byEvaluator: Record<string,{doc:number|null;pres:number|null}> = {};
     thesis.evaluations.forEach((ev:any)=>{
-      const name = ev.evaluator_name || 'Evaluador';
-      if (!byEvaluator[name]) byEvaluator[name] = {doc:null,pres:null};
+      const person = ev.evaluator_name || ev;
+      const key = normalizePersonKey(person);
+      const name = normalizePersonName(person) || 'Evaluador';
+      if (!byEvaluator[key]) byEvaluator[key] = {doc:null,pres:null};
       if (ev.evaluation_type === 'presentation') {
-        byEvaluator[name].pres = ev.final_score;
+        byEvaluator[key].pres = ev.final_score;
       } else {
-        byEvaluator[name].doc = ev.final_score;
+        byEvaluator[key].doc = ev.final_score;
+      }
+      // keep a user-friendly name in case key is a stringified object
+      if (!byEvaluator[key].name) {
+        (byEvaluator as any)[key].name = name;
       }
     });
     return {docAvg,presAvg,finalWeighted,byEvaluator};
   })();
 
   const { isSuper } = useAuth();
+
+  function normalizePersonName(person: any) {
+    if (typeof person === 'string' || typeof person === 'number' || typeof person === 'boolean') {
+      return String(person);
+    }
+    if (!person) return '';
+
+    const candidate = person.name ?? person.user_id;
+    if (typeof candidate === 'string' || typeof candidate === 'number' || typeof candidate === 'boolean') {
+      return String(candidate);
+    }
+
+    // In case name is unexpectedly an object (e.g. {name: {name: ..., user_id: ...}})
+    if (typeof candidate === 'object' && candidate !== null) {
+      return String(candidate.name ?? candidate.user_id ?? JSON.stringify(candidate));
+    }
+
+    return '';
+  }
+
+  function normalizePersonKey(person: any) {
+    if (typeof person === 'string') return person;
+    if (!person) return '';
+
+    // Prefer stable ids/names when available
+    if (person.user_id) return String(person.user_id);
+    if (person.id) return String(person.id);
+    if (person.name) return String(person.name);
+
+    // Fallback to a JSON representation (stable key for objects)
+    try {
+      return JSON.stringify(person, Object.keys(person).sort());
+    } catch {
+      return String(person);
+    }
+  }
+
+  const safeRender = (value: any) => {
+    if (value == null) return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+    if (Array.isArray(value)) return value.map(safeRender).join(', ');
+    if (typeof value === 'object') return value.name ?? value.user_id ?? JSON.stringify(value);
+    return String(value);
+  };
+
+  const openReplaceEvaluatorDialog = async (ev: any) => {
+    setReplacingEvaluator(ev);
+    setIsAddingEvaluator(false);
+    setShowReplaceDialog(true);
+    setSelectedReplacementId(null);
+    setLoadingAvailableEvaluators(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/users?role=evaluator`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('No se pudieron cargar evaluadores disponibles');
+      const list = await resp.json();
+      // Exclude currently assigned evaluators except the one we're replacing
+      const assignedIds = new Set((thesis?.evaluators || []).map((x: any) => x.id));
+      assignedIds.delete(ev.id);
+      setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)));
+    } catch (err: any) {
+      console.error('load evaluators for replace', err);
+      toast.error(err.message || 'Error cargando evaluadores disponibles');
+    } finally {
+      setLoadingAvailableEvaluators(false);
+    }
+  };
+
+  const openAddEvaluatorDialog = async () => {
+    setReplacingEvaluator(null);
+    setIsAddingEvaluator(true);
+    setShowReplaceDialog(true);
+    setSelectedReplacementId(null);
+    setLoadingAvailableEvaluators(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/users?role=evaluator`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('No se pudieron cargar evaluadores disponibles');
+      const list = await resp.json();
+      const assignedIds = new Set((thesis?.evaluators || []).map((x: any) => x.id));
+      setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)));
+    } catch (err: any) {
+      console.error('load evaluators for add', err);
+      toast.error(err.message || 'Error cargando evaluadores disponibles');
+    } finally {
+      setLoadingAvailableEvaluators(false);
+    }
+  };
+
+  const performReplaceEvaluator = async () => {
+    if (!id || !replacingEvaluator || !selectedReplacementId) return;
+    setReplacingEvaluatorLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+
+      const body: any = {
+        old_evaluator_id: replacingEvaluator.id,
+        new_evaluator_id: selectedReplacementId,
+      };
+
+      const resp = await fetch(`${API_BASE}/theses/${id}/replace-evaluator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        throw new Error(err?.error || 'Error reemplazando evaluador');
+      }
+
+      toast.success('Evaluador reemplazado');
+      setShowReplaceDialog(false);
+      fetchThesis();
+    } catch (err: any) {
+      toast.error(err.message || 'Error reemplazando evaluador');
+    } finally {
+      setReplacingEvaluatorLoading(false);
+    }
+  };
+
+  const performAddEvaluator = async () => {
+    if (!id || !selectedReplacementId) return;
+    setReplacingEvaluatorLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const body: any = { evaluator_id: selectedReplacementId };
+      const resp = await fetch(`${API_BASE}/theses/${id}/assign-evaluator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        throw new Error(err?.error || 'Error asignando evaluador');
+      }
+      toast.success('Evaluador agregado');
+      setShowReplaceDialog(false);
+      fetchThesis();
+    } catch (err: any) {
+      toast.error(err.message || 'Error agregando evaluador');
+    } finally {
+      setReplacingEvaluatorLoading(false);
+    }
+  };
 
   const saveOverride = async () => {
     if (!id) return;
@@ -174,7 +364,7 @@ export default function AdminThesisDetail() {
     }
   };
 
-  const handleGenerateSigningLink = async (signerName: string, signerRole: string) => {
+  const handleGenerateSigningLink = async (key: string, signerName: string, signerRole: string) => {
     try {
       const token = localStorage.getItem('token');
       const resp = await fetch(`${API_BASE}/theses/${id}/generate-signing-token`, {
@@ -189,7 +379,7 @@ export default function AdminThesisDetail() {
       const { signUrl } = await resp.json();
       setGeneratedSigningLinks(prev => ({
         ...prev,
-        [signerName]: { url: normalizeSignUrl(signUrl), copied: false }
+        [key]: { url: normalizeSignUrl(signUrl), copied: false }
       }));
       toast.success(`Enlace generado para ${signerName}`);
     } catch (e: any) {
@@ -251,9 +441,17 @@ export default function AdminThesisDetail() {
         });
         if (resp.ok) {
           const items = await resp.json();
-          setReviewItems(items);
+          // Deduplicar por etiqueta, ya que algunos ítems pueden venir repetidos con distinto id
+          const seenLabels = new Set<string>();
+          const uniqueItems = items.filter((item: any) => {
+            const label = String(item?.label ?? '').trim().toLowerCase();
+            if (!label || seenLabels.has(label)) return false;
+            seenLabels.add(label);
+            return true;
+          });
+          setReviewItems(uniqueItems);
           const init: Record<string, boolean> = {};
-          items.forEach((it:any) => { init[it.id] = false; });
+          uniqueItems.forEach((it:any) => { init[it.id] = false; });
           setChecklist(init);
         }
       } catch (e) {
@@ -388,6 +586,16 @@ export default function AdminThesisDetail() {
 
   if (!thesis) return null;
 
+  const uniqueReviewItems = (() => {
+    const seen = new Set<string>();
+    return reviewItems.filter((item) => {
+      const label = String(item?.label ?? '').trim().toLowerCase();
+      if (!label || seen.has(label)) return false;
+      seen.add(label);
+      return true;
+    });
+  })();
+
   return (
     <AppLayout role="admin">
       <div className="max-w-4xl mx-auto px-4 sm:px-0">
@@ -397,38 +605,67 @@ export default function AdminThesisDetail() {
             <Button variant="destructive" size="sm" onClick={handleDelete}>Eliminar tesis</Button>
           </div>
           <p className="text-sm text-muted-foreground mb-2">
-            <strong>Estado:</strong> <span className="capitalize">{thesis.status}</span>
+            <strong>Estado:</strong> <span className="capitalize">{safeRender(thesis.status)}</span>
           </p>
           <p className="text-lg font-semibold mb-2">
-            <strong>Título:</strong> {thesis.title}
+            <strong>Título:</strong> {safeRender(thesis.title)}
           </p>
           {thesis.students && thesis.students.length > 0 && (
             <p className="text-sm text-muted-foreground mb-1">
-              <strong>Autor{thesis.students.length>1?'es':''}:</strong> {thesis.students.map((s:any)=>s.name).join(', ')}
+              <strong>Autor{thesis.students.length>1?'es':''}:</strong> {thesis.students.map((s:any)=>normalizePersonName(s)).join(', ')}
             </p>
           )}
           {thesis.directors && thesis.directors.length > 0 && (
             <p className="text-sm text-muted-foreground mb-1">
-              <strong>Director{thesis.directors.length>1?'es':''}:</strong> {thesis.directors.join(', ')}
+              <strong>Director{thesis.directors.length>1?'es':''}:</strong> {thesis.directors.map(normalizePersonName).join(', ')}
             </p>
           )}
           {thesis.programs && thesis.programs.length > 0 && (
             <p className="text-sm text-muted-foreground">
-              <strong>Programas:</strong> {thesis.programs.map((p:any)=>p.name).join(', ')}
+              <strong>Programas:</strong> {thesis.programs.map((p:any)=>normalizePersonName(p)).join(', ')}
             </p>
           )}
         </div>
         {thesis.keywords && (
           <div className="mb-4">
-            <strong>Palabras clave:</strong> {thesis.keywords}
+            <strong>Palabras clave:</strong> {safeRender(thesis.keywords)}
           </div>
         )}
         {thesis.evaluators && thesis.evaluators.length > 0 && (
           <div className="mb-6">
             <strong>Evaluadores asignados:</strong>{' '}
-            {thesis.evaluators.map((e:any) =>
-              e.is_blind ? 'Par ciego' : e.name
-            ).join(', ')}
+
+            {thesis.evaluators.length < 2 && (
+              <div className="mt-2 rounded-lg border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
+                <strong>Atención:</strong> Se requiere al menos dos evaluadores asignados. Agrega otro evaluador antes de intentar reemplazar.
+                <div className="mt-2">
+                  <Button size="sm" onClick={openAddEvaluatorDialog}>
+                    Agregar evaluador
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              {thesis.evaluators.map((e:any) => {
+                const hasSubmitted = thesis.evaluations?.some((x:any) => x.evaluator_id === e.id);
+                return (
+                  <span key={e.id} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm">
+                    <span>{e.is_blind ? 'Par ciego' : normalizePersonName(e)}</span>
+                    {!hasSubmitted && (
+                      <button
+                        className="text-xs text-destructive hover:text-destructive/80"
+                        type="button"
+                        onClick={() => openReplaceEvaluatorDialog(e)}
+                        title="Reemplazar evaluador"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
             {thesis.evaluators.some((e:any) => e.due_date) && (
               <p className="text-sm text-muted-foreground">
                 <strong>Fecha(s) límite:</strong> {thesis.evaluators
@@ -441,7 +678,7 @@ export default function AdminThesisDetail() {
 
             {/* per-evaluator status accordions */}
             <Accordion type="single" collapsible className="mt-4 w-full border rounded-xl overflow-hidden bg-white dark:bg-slate-950">
-              {thesis.evaluators.map((ev:any) => {
+              {thesis.evaluators.map((ev:any, index:number) => {
                 const docSent = thesis.evaluations?.some((x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation');
                 const presSent = thesis.evaluations?.some((x:any) => x.evaluator_id===ev.id && x.evaluation_type==='presentation');
                 // pull the actual evaluation objects to show later
@@ -475,7 +712,17 @@ export default function AdminThesisDetail() {
                   }
                 }
                 return (
-                  <AccordionItem key={ev.id} value={ev.id} className="border-b px-2">
+                  <AccordionItem
+                    key={
+                      `${
+                        typeof ev.id === 'object' && ev.id !== null
+                          ? JSON.stringify(ev.id)
+                          : String(ev.id)
+                      }-${index}`
+                    }
+                    value={String(ev.id)}
+                    className="border-b px-2"
+                  >
                     <AccordionTrigger className="hover:no-underline py-4 flex justify-between items-center">
                       <span>{ev.is_blind ? 'Evaluador (Par ciego)' : ev.name}</span>
                       {dueStatus}
@@ -556,10 +803,14 @@ export default function AdminThesisDetail() {
             <h3 className="font-semibold mb-2">Documentos enviados</h3>
             <ul className="list-disc list-inside space-y-1">
               {thesis.files.map((f:any)=> (
-                <li key={f.id}>
-                  <a href={`${API_BASE}${f.file_url}`} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+                <li key={typeof f.id === 'object' && f.id !== null ? JSON.stringify(f.id) : String(f.id)}>
+                  <button
+                    type="button"
+                    className="text-accent hover:underline p-0"
+                    onClick={() => downloadFile(f.file_url, f.file_name)}
+                  >
                     {f.file_name}
-                  </a>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -580,14 +831,14 @@ export default function AdminThesisDetail() {
               {thesis.defense_location && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Lugar</p>
-                  <p className="text-sm font-medium">{thesis.defense_location}</p>
+                  <p className="text-sm font-medium">{safeRender(thesis.defense_location)}</p>
                 </div>
               )}
             </div>
             {thesis.defense_info && (
               <div className="mt-3">
                 <p className="text-xs text-muted-foreground mb-1">Observaciones generales</p>
-                <p className="text-sm font-medium whitespace-pre-wrap">{thesis.defense_info}</p>
+                <p className="text-sm font-medium whitespace-pre-wrap">{safeRender(thesis.defense_info)}</p>
               </div>
             )}
           </div>
@@ -651,15 +902,16 @@ export default function AdminThesisDetail() {
                   </div>
                 </div>
                 <div className="text-sm">
-                  {Object.entries(consolidated.byEvaluator).map(([name, scores]) => {
+                  {Object.entries(consolidated.byEvaluator).map(([key, scores], idx) => {
                     const docScore = scores.doc != null ? scores.doc : null;
                     const presScore = scores.pres != null ? scores.pres : null;
+                    const displayName = (scores as any).name || normalizePersonName(key);
                     const totalScore = thesis.defense_date
                       ? ((docScore||0)*(weights.doc/100) + (presScore||0)*(weights.presentation/100))
                       : docScore;
                     return (
-                      <div key={name} className="mb-2">
-                        <strong>{name}</strong>: documento {docScore!==null?docScore.toFixed(2):'-'}, sustentación {presScore!==null?presScore.toFixed(2):'-'}, total {totalScore!==null?totalScore.toFixed(2):'-'}
+                      <div key={`${key}-${idx}`} className="mb-2">
+                        <strong>{displayName}</strong>: documento {docScore!==null?docScore.toFixed(2):'-'}, sustentación {presScore!==null?presScore.toFixed(2):'-'}, total {totalScore!==null?totalScore.toFixed(2):'-'}
                         <div className="text-xs text-muted-foreground">
                           ({docScore!==null?`${docScore.toFixed(2)} x ${weights.doc}%`:'0'}{thesis.defense_date?` + ${presScore!==null?`${presScore.toFixed(2)} x ${weights.presentation}%`:'0'}`:''})
                         </div>
@@ -676,8 +928,8 @@ export default function AdminThesisDetail() {
           <div className="mb-4">
             <strong>Revisión</strong>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
-              {reviewItems.map((item) => (
-                <label key={item.id} className="flex items-center gap-2">
+              {uniqueReviewItems.map((item, index) => (
+                <label key={`${item.id}-${index}`} className="flex items-center gap-2">
                   <input
                     type="checkbox"
                     checked={!!checklist[item.id]}
@@ -699,7 +951,7 @@ export default function AdminThesisDetail() {
         {thesis.status === 'submitted' && (
           <>
             <div className="mb-4">
-              {reviewItems.length > 0 && reviewItems.every(it => checklist[it.id]) ? (
+              {uniqueReviewItems.length > 0 && uniqueReviewItems.every(it => checklist[it.id]) ? (
                 <Button
                   onClick={assignEvaluators}
                   disabled={loading}
@@ -748,7 +1000,7 @@ export default function AdminThesisDetail() {
             )}
           </div>
         )}
-        {actaStatus?.allEvaluatorsDone && (
+        {thesis?.status === 'finalized' && actaStatus?.allEvaluatorsDone && (
           <div className="mb-6 border p-4 rounded bg-success/5">
             <h3 className="font-semibold mb-2">🔐 Firma Digital del Acta</h3>
 
@@ -786,39 +1038,44 @@ export default function AdminThesisDetail() {
               {!digitalSignStatus?.allSigned && digitalSignStatus?.pendingSigners?.length > 0 && (
                 <div>
                   <p className="text-xs text-orange-600 mt-1 mb-3">
-                    Pendientes: {digitalSignStatus.pendingSigners.map((p: any) => p.name).join(', ')}
+                    Pendientes: {digitalSignStatus.pendingSigners.map((p: any) => normalizePersonName(p)).join(', ')}
                   </p>
 
                   {/* Sección de enlaces compartibles */}
                   <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
                     <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
-                    {digitalSignStatus.pendingSigners.map((pending: any) => (
-                      <div key={pending.name} className="flex items-center gap-2">
-                        <div className="flex-1 min-w-0 text-xs">
-                          <p className="font-medium">{pending.name}</p>
-                          <p className="text-muted-foreground">{pending.role === 'evaluator' ? 'Evaluador' : pending.role === 'director' ? 'Director' : 'Director del Programa'}</p>
+                    {digitalSignStatus.pendingSigners.map((pending: any, idx: number) => {
+                      const name = normalizePersonName(pending);
+                      const key = normalizePersonKey(pending);
+                      const role = typeof pending === 'string' ? 'director' : (pending?.role || 'director');
+                      return (
+                        <div key={`${key}-${idx}`} className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0 text-xs">
+                            <p className="font-medium">{name}</p>
+                            <p className="text-muted-foreground">{role === 'evaluator' ? 'Evaluador' : role === 'director' ? 'Director' : 'Director del Programa'}</p>
+                          </div>
+                          {generatedSigningLinks[key]?.url ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleCopyLink(key)}
+                              className="whitespace-nowrap"
+                            >
+                              {generatedSigningLinks[key].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleGenerateSigningLink(key, name, role)}
+                              className="whitespace-nowrap"
+                            >
+                              🔗 Generar enlace
+                            </Button>
+                          )}
                         </div>
-                        {generatedSigningLinks[pending.name]?.url ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleCopyLink(pending.name)}
-                            className="whitespace-nowrap"
-                          >
-                            {generatedSigningLinks[pending.name].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleGenerateSigningLink(pending.name, pending.role)}
-                            className="whitespace-nowrap"
-                          >
-                            🔗 Generar enlace
-                          </Button>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -925,7 +1182,7 @@ export default function AdminThesisDetail() {
                   onChange={(e) => {
                     setDigitalSignerRole(e.target.value);
                     if (e.target.value === 'director' && actaStatus?.directors?.length) {
-                      setDigitalSignerName(actaStatus.directors[0]);
+                      setDigitalSignerName(normalizePersonName(actaStatus.directors[0]));
                     } else {
                       setDigitalSignerName("");
                     }
@@ -942,9 +1199,15 @@ export default function AdminThesisDetail() {
                     value={digitalSignerName}
                     onChange={(e) => setDigitalSignerName(e.target.value)}
                   >
-                    {actaStatus.directors.map((d: string) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
+                    {actaStatus.directors.map((d: any, idx: number) => {
+                      const name = normalizePersonName(d);
+                      const key = normalizePersonKey(d);
+                      return (
+                        <option key={`${key}-${idx}`} value={name}>
+                          {name}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
 
@@ -1015,11 +1278,13 @@ export default function AdminThesisDetail() {
             {/* Estado de firmas */}
             <div className="mb-3 space-y-1">
               <p className="text-xs font-medium">Firmas de directores:</p>
-              {meritoriaStatus.directors.map((d: string) => {
-                const signed = meritoriaStatus.signatures.some((s: any) => s.signer_name.toLowerCase() === d.toLowerCase());
+              {meritoriaStatus.directors.map((d: any, idx: number) => {
+                const name = normalizePersonName(d);
+                const key = normalizePersonKey(d);
+                const signed = meritoriaStatus.signatures.some((s: any) => s.signer_name.toLowerCase() === name.toLowerCase());
                 return (
-                  <div key={d} className={`text-xs ${signed ? 'text-green-600' : 'text-orange-500'}`}>
-                    {signed ? '✓' : '○'} {d}
+                  <div key={`${key}-${idx}`} className={`text-xs ${signed ? 'text-green-600' : 'text-orange-500'}`}>
+                    {signed ? '✓' : '○'} {name}
                   </div>
                 );
               })}
@@ -1029,33 +1294,37 @@ export default function AdminThesisDetail() {
             {!meritoriaStatus.allSigned && meritoriaStatus.pendingDirectors?.length > 0 && (
               <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3 space-y-2">
                 <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
-                {meritoriaStatus.pendingDirectors.map((pending: string) => (
-                  <div key={pending} className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0 text-xs">
-                      <p className="font-medium">{pending}</p>
-                      <p className="text-muted-foreground">Director</p>
+                {meritoriaStatus.pendingDirectors.map((pending: any, idx: number) => {
+                  const name = normalizePersonName(pending);
+                  const key = normalizePersonKey(pending);
+                  return (
+                    <div key={`${key}-${idx}`} className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0 text-xs">
+                        <p className="font-medium">{name}</p>
+                        <p className="text-muted-foreground">Director</p>
+                      </div>
+                      {generatedSigningLinks[key]?.url ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCopyLink(key)}
+                          className="whitespace-nowrap"
+                        >
+                          {generatedSigningLinks[key].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleGenerateMeritoriaLink(key)}
+                          className="whitespace-nowrap"
+                        >
+                          🔗 Generar enlace
+                        </Button>
+                      )}
                     </div>
-                    {generatedSigningLinks[pending]?.url ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleCopyLink(pending)}
-                        className="whitespace-nowrap"
-                      >
-                        {generatedSigningLinks[pending].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleGenerateMeritoriaLink(pending)}
-                        className="whitespace-nowrap"
-                      >
-                        🔗 Generar enlace
-                      </Button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -1138,9 +1407,15 @@ export default function AdminThesisDetail() {
                     onChange={(e) => setMeritoriaSignerName(e.target.value)}
                   >
                     <option value="">Seleccione director...</option>
-                    {meritoriaStatus.pendingDirectors.map((d: string) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
+                    {meritoriaStatus.pendingDirectors.map((d: any, idx: number) => {
+                      const name = normalizePersonName(d);
+                      const key = normalizePersonKey(d);
+                      return (
+                        <option key={`${key}-${idx}`} value={name}>
+                          {name}
+                        </option>
+                      );
+                    })}
                   </select>
                   <input
                     type="file"
@@ -1226,6 +1501,58 @@ export default function AdminThesisDetail() {
           </div>
         )}
       </div>
+
+      <Dialog open={showReplaceDialog} onOpenChange={setShowReplaceDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{isAddingEvaluator ? 'Agregar evaluador' : 'Reemplazar evaluador'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p>
+              {isAddingEvaluator
+                ? 'Selecciona un evaluador para agregar a esta tesis.'
+                : (
+                    <>
+                      Selecciona el evaluador que reemplazará a <strong>{normalizePersonName(replacingEvaluator)}</strong>.
+                    </>
+                  )}
+            </p>
+            {loadingAvailableEvaluators ? (
+              <p className="text-sm text-muted-foreground">Cargando evaluadores...</p>
+            ) : (
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {availableEvaluators.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No hay evaluadores disponibles.</p>
+                ) : (
+                  availableEvaluators.map((ev: any) => (
+                    <label key={ev.id} className="flex items-center gap-2 p-2 border rounded cursor-pointer">
+                      <input
+                        type="radio"
+                        name="replacement"
+                        value={ev.id}
+                        checked={selectedReplacementId === ev.id}
+                        onChange={() => setSelectedReplacementId(ev.id)}
+                      />
+                      <span>{ev.full_name || ev.institutional_email}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowReplaceDialog(false)}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={isAddingEvaluator ? performAddEvaluator : performReplaceEvaluator}
+                disabled={!selectedReplacementId || replacingEvaluatorLoading}
+              >
+                {replacingEvaluatorLoading ? (isAddingEvaluator ? 'Agregando...' : 'Reemplazando...') : (isAddingEvaluator ? 'Agregar' : 'Reemplazar')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

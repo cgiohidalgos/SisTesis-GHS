@@ -23,16 +23,16 @@ interface AppLayoutProps {
 
 const navItems = {
   student: [
-    { label: "Mi Tesis", href: "/student", icon: FileText },
+    { label: "Mi proyecto de grado", href: "/student", icon: FileText },
     { label: "Seguimiento", href: "/student/timeline", icon: BookOpen },
   ],
   evaluator: [
-    { label: "Tesis Asignadas", href: "/evaluator", icon: FileText },
+    { label: "Proyectos asignados", href: "/evaluator", icon: FileText },
     // (el enlace Evaluar redirige al dashboard, así que no necesita entrada separada)
   ],
   admin: [
     { label: "Panel", href: "/admin", icon: LayoutDashboard },
-    { label: "Tesis", href: "/admin/theses", icon: FileText },
+    { label: "Proyectos", href: "/admin/theses", icon: FileText },
     { label: "Evaluadores", href: "/admin/evaluators", icon: Users },
     { label: "Programas", href: "/admin/programs", icon: BookOpen },
     { label: "Rúbricas", href: "/admin/rubrics", icon: BookOpen },
@@ -56,10 +56,6 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
   // treat superadmin the same as admin for menu items
   const effectiveRole = role === 'superadmin' ? 'admin' : role;
   let items = navItems[effectiveRole as keyof typeof navItems];
-  // hide programas section unless user is superadmin
-  if (effectiveRole === 'admin' && !isSuper) {
-    items = items.filter(i => i.href !== '/admin/programs');
-  }
   // add users and smtp-config options for superadmin (review-items and weights are already in base admin menu)
   if (effectiveRole === 'admin') {
     items = [

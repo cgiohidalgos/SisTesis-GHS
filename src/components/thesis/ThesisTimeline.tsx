@@ -32,6 +32,16 @@ const actorIcons = {
   system: FileText,
 };
 
+function safeRender(value: any) {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.map(safeRender).join(', ');
+  if (typeof value === 'object') {
+    return value.name ?? value.user_id ?? JSON.stringify(value);
+  }
+  return String(value);
+}
+
 export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecommendations, isBlindReview, isAdmin }: ThesisTimelineProps) {
   return (
     <div className="relative">
@@ -43,7 +53,13 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
 
         return (
           <div
-            key={event.id}
+            key={
+              `${
+                typeof event.id === 'object' && event.id !== null
+                  ? JSON.stringify(event.id)
+                  : String(event.id)
+              }-${index}`
+            }
             className={cn("relative pl-10 pb-8 last:pb-0", "animate-fade-in")}
             style={{ animationDelay: `${index * 80}ms` }}
           >
@@ -95,30 +111,34 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                     event.active ? "text-accent-foreground" : event.completed ? "text-foreground" : "text-muted-foreground"
                   )}
                 >
-                  <span className="whitespace-pre-wrap">{event.label}</span>
-                </h4>
-                {event.date && (
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {new Date(event.date).toLocaleString()}
-                  </span>
+                    <span className="whitespace-pre-wrap">
+                      {safeRender(event.label)}
+                    </span>
+                  </h4>
+                  {event.date && (
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {new Date(event.date).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+
+                {event.actor && !isBlindReview && (
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                    <ActorIcon className="w-3 h-3" />
+                    <span>
+                      {safeRender(event.actor)}
+                    </span>
+                  </div>
                 )}
-              </div>
 
-              {event.actor && !isBlindReview && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  <ActorIcon className="w-3 h-3" />
-                  <span>{event.actor}</span>
-                </div>
-              )}
+                {event.actor && isBlindReview && event.actorRole === "evaluator" && (
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                    <User className="w-3 h-3" />
+                    <span>Evaluador (Par ciego)</span>
+                  </div>
+                )}
 
-              {event.actor && isBlindReview && event.actorRole === "evaluator" && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                  <User className="w-3 h-3" />
-                  <span>Evaluador (Par ciego)</span>
-                </div>
-              )}
-
-              {event.status === 'defense_scheduled' ? (
+                {event.status === 'defense_scheduled' ? (
                 <div className="mt-2 p-3 bg-info/10 rounded">
                   {event.defense_date && (
                     <p className="text-sm">
@@ -129,18 +149,18 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                   {event.defense_location && (
                     <p className="text-sm">
                       <strong>Lugar:</strong>{' '}
-                      <span className="font-medium">{event.defense_location}</span>
+                      <span className="font-medium">{safeRender(event.defense_location)}</span>
                     </p>
                   )}
                   {event.defense_info && (
                     <p className="text-sm">
                       <strong>Info adicional:</strong>{' '}
-                      <span className="font-medium">{event.defense_info}</span>
+                      <span className="font-medium">{safeRender(event.defense_info)}</span>
                     </p>
                   )}
                 </div>
               ) : event.observations && (
-                <p className="text-sm text-muted-foreground leading-relaxed">{event.observations}</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{safeRender(event.observations)}</p>
               )}
 
               {/* Show evaluator recommendations and files */}

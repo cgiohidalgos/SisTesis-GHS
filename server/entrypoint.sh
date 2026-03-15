@@ -1,8 +1,16 @@
 #!/bin/sh
 set -e
 
+#!/bin/sh
+
+#!/bin/sh
+
 # Rebuild native modules for this Node.js version
-npm rebuild --build-from-source 2>/dev/null || true
+echo "Rebuilding better-sqlite3..."
+if ! npm rebuild better-sqlite3 --build-from-source; then
+  echo "Rebuild failed, trying alternative..."
+  npm rebuild better-sqlite3 || echo "Rebuild failed, continuing anyway"
+fi
 
 # Crea la carpeta de datos si no existe
 if [ ! -d /app/data ]; then
@@ -21,7 +29,6 @@ if [ ! -d /app/uploads ]; then
   mkdir -p /app/uploads
   chmod 777 /app/uploads
 fi
-
 
 # El esquema se crea automáticamente al importar db.js en index.js
 
