@@ -116,6 +116,55 @@ servicios tradicionales.
 
 ¡Listo para el despliegue! 🎯
 
+## Seguridad y Logging
+
+### Medidas de Seguridad Implementadas
+
+- **Autenticación JWT**: Tokens seguros con expiración configurable
+- **Rate Limiting**: Límite de 100 peticiones por 15 minutos, 5 intentos de login por hora
+- **Helmet**: Headers de seguridad HTTP (CSP, HSTS, etc.)
+- **Validación de Input**: express-validator para sanitización de datos
+- **Hashing de Contraseñas**: bcrypt con salt rounds
+- **Límites de Archivos**: Máximo 10MB, tipos permitidos (PDF, DOC, DOCX, imágenes)
+- **CORS**: Configurado para desarrollo y producción
+- **Variables de Entorno Seguras**: JWT_SECRET generado criptográficamente
+
+### Configuración de Producción
+
+1. **JWT_SECRET Seguro**:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+   ```
+
+2. **Variables de Entorno**:
+   ```env
+   NODE_ENV=production
+   JWT_SECRET=<tu_jwt_secret_seguro>
+   LOG_LEVEL=info
+   ```
+
+3. **Logging Estructurado**:
+   - Logs rotativos diarios en `server/logs/`
+   - Niveles: error, warn, info, http, debug
+   - Formato JSON para análisis
+
+### Health Check
+
+Endpoint disponible en `/health` para monitoreo de:
+- Estado del servidor
+- Conexión a base de datos
+- Uso de memoria
+- Uptime
+
+### Auditoría de Seguridad
+
+Ejecutar auditoría de dependencias:
+```bash
+cd server
+npm audit
+npm audit fix
+```
+
 ## Project info
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID

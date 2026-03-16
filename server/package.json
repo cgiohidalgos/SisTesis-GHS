@@ -26,7 +26,10 @@
     "open-docxtemplater-image-module": "^1.0.3",
     "pdf-lib": "^1.17.1",
     "pizzip": "^3.2.0",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "express-rate-limit": "^6.10.0",
+    "helmet": "^7.1.0",
+    "express-validator": "^7.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

@@ -20,8 +20,8 @@ fi
 
 # El esquema se crea automáticamente al importar db.js en index.js
 
-exec "$@"
-
-# El esquema se crea automáticamente al importar db.js en index.js
+# Ejecutar seed (creación de admin + evaluadores) en cada arranque
+# (no inserta duplicados porque el seed ignora usuarios ya existentes)
+node /app/seed.js
 
 exec "$@"
