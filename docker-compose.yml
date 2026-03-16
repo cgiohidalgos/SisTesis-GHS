@@ -7,7 +7,7 @@ services:
     ports:
       - "4000:4000"
     environment:
-      - JWT_SECRET=change_me
+      - JWT_SECRET=ebbc1015f164c3b46f50de43732395eed6d9fee8468d36b57bcd9e755911b626830a851fc20e8119d958a964ef918005416f9ef8c8c58068ea94b7d1629c67b4
       - ADMIN_EMAIL=admin@admin.com
       - ADMIN_PASSWORD=admin
       - ADMIN_PASSWORD_RESET=1

@@ -8,31 +8,64 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const { body, validationResult } = require('express-validator');
 const util = require('util');
 const Docxtemplater = require('docxtemplater');
 const PizZip = require('pizzip');
 const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 const { notifyTimeline, startReminderCron, sendEmail } = require('./notifications');
+const logger = require('./logger');
 
 const execPromise = util.promisify(exec);
 
 const app = express();
 
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+    },
+  },
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // limit each IP to 5 login attempts per windowMs
+  message: 'Too many login attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(limiter);
+
 // Log uncaught errors to help diagnose crashes
 process.on('uncaughtException', (err) => {
-  console.error('UNCAUGHT EXCEPTION', err);
+  logger.error('UNCAUGHT EXCEPTION', { error: err.message, stack: err.stack });
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('UNHANDLED REJECTION', reason);
+  logger.error('UNHANDLED REJECTION', { reason: reason });
+  process.exit(1);
 });
 
 // Logging de todas las peticiones para depuración de CORS y preflight
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  console.log('Headers:', req.headers);
-  next();
-});
+app.use(logger.httpLog);
 app.use(cors({
   exposedHeaders: ['Content-Disposition'],
   origin: '*',
@@ -66,7 +99,30 @@ const JWT_EXPIRES_IN = '7d';
 
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-const upload = multer({ dest: uploadDir });
+const upload = multer({ 
+  dest: uploadDir,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB max file size
+    files: 5 // max 5 files per request
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow only specific file types
+    const allowedTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'image/jpeg',
+      'image/png',
+      'image/gif'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PDF, DOC, DOCX, and images are allowed.'), false);
+    }
+  }
+});
 
 const toDateTime = (ts) => ts ? new Date(Number(ts)).toLocaleString('es-CO') : '';
 const toDateOnly = (ts) => ts ? new Date(Number(ts)).toLocaleDateString('es-CO') : '';
@@ -1242,7 +1298,14 @@ app.delete('/theses/:id', authMiddleware, (req, res) => {
 // Listar evaluaciones por tesis
 app.get('/theses/:id/evaluations', authMiddleware, (req, res) => {
   const thesis_id = req.params.id;
-  const rows = db.prepare('SELECT * FROM evaluations WHERE thesis_id = ?').all(thesis_id);
+  const rows = db.prepare(`
+    SELECT e.*, te.evaluator_id, te.thesis_id, u.full_name as evaluator_name
+    FROM evaluations e
+    JOIN thesis_evaluators te ON e.thesis_evaluator_id = te.id
+    LEFT JOIN users u ON te.evaluator_id = u.id
+    WHERE te.thesis_id = ?
+    ORDER BY e.created_at ASC
+  `).all(thesis_id);
   res.json(rows);
 });
 
@@ -1262,25 +1325,74 @@ app.get('/theses/:id/timeline', authMiddleware, (req, res) => {
   res.json(rows);
 });
 // Registrar evaluador o staff (solo admin)
-app.post('/users/register', authMiddleware, requireRole('admin'), async (req, res) => {
-  const { email, password, full_name, role, specialty } = req.body;
-  if (!email || !password || !role) return res.status(400).json({ error: 'email, password y role requeridos' });
+app.post('/users/register', authMiddleware, requireRole('admin'), [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Email inválido'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('La contraseña debe tener al menos 8 caracteres')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('La contraseña debe contener al menos una letra minúscula, una mayúscula y un número'),
+  body('full_name')
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage('El nombre completo debe tener entre 2 y 100 caracteres'),
+  body('role')
+    .isIn(['student', 'evaluator', 'admin'])
+    .withMessage('Rol inválido'),
+  body('student_code')
+    .optional()
+    .isLength({ min: 1, max: 20 })
+    .withMessage('Código de estudiante inválido'),
+  body('cedula')
+    .optional()
+    .isLength({ min: 5, max: 15 })
+    .matches(/^\d+$/)
+    .withMessage('Cédula debe contener solo números'),
+  body('institutional_email')
+    .optional()
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Email institucional inválido')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      error: 'Datos de entrada inválidos', 
+      details: errors.array() 
+    });
+  }
+
+  const { email, password, full_name, role, specialty, student_code, cedula, institutional_email } = req.body;
+  
   try {
     const id = uuidv4();
     const password_hash = await bcrypt.hash(password, 10);
-    db.prepare('INSERT INTO users (id, email, password_hash, full_name) VALUES (?, ?, ?, ?)')
-      .run(id, email, password_hash, full_name || null);
+    
+    db.prepare('INSERT INTO users (id, email, password_hash, full_name, student_code, cedula, institutional_email) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, email, password_hash, full_name, student_code || null, cedula || null, institutional_email || email);
+    
     db.prepare('INSERT INTO user_roles (user_id, role) VALUES (?, ?)').run(id, role);
+    
+    // Crear perfil básico
+    db.prepare('INSERT OR REPLACE INTO profiles (id, full_name, institutional_email, student_code, cedula, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, full_name, institutional_email || email, student_code || null, cedula || null, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+    
     // Si es evaluador, guardar especialidad
     if (role === 'evaluator' && specialty) {
-      db.prepare('INSERT OR REPLACE INTO profiles (id, full_name, institutional_email) VALUES (?, ?, ?)')
-        .run(id, full_name || '', email);
       db.prepare('UPDATE profiles SET specialty = ? WHERE id = ?').run(specialty, id);
     }
-    const user = db.prepare('SELECT id, email, full_name FROM users WHERE id = ?').get(id);
+    
+    const user = db.prepare('SELECT id, email, full_name, institutional_email FROM users WHERE id = ?').get(id);
     res.json({ user });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    console.error('Error en registro de usuario:', err);
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'El email ya está registrado' });
+    }
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
@@ -1484,10 +1596,28 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', authLimiter, [
+  body('identifier')
+    .trim()
+    .notEmpty()
+    .withMessage('Identificador requerido')
+    .isLength({ max: 100 })
+    .withMessage('Identificador demasiado largo'),
+  body('password')
+    .notEmpty()
+    .withMessage('Contraseña requerida')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      error: 'Datos de entrada inválidos', 
+      details: errors.array() 
+    });
+  }
+
   // allow login by institucional email, student_code or cedula
   let { identifier, password } = req.body;
-  if (!identifier || !password) return res.status(400).json({ error: 'identifier and password required' });
+  
   try {
     let user = db.prepare('SELECT id, email, password_hash, full_name, student_code, cedula, institutional_email FROM users WHERE institutional_email = ?').get(identifier);
     if (!user && typeof identifier === 'string' && !identifier.includes('@')) {
@@ -1498,16 +1628,19 @@ app.post('/auth/login', async (req, res) => {
       // try cedula
       user = db.prepare('SELECT id, email, password_hash, full_name, student_code, cedula, institutional_email FROM users WHERE cedula = ?').get(identifier);
     }
-    if (!user) return res.status(401).json({ error: 'invalid credentials' });
+    if (!user) return res.status(401).json({ error: 'Credenciales inválidas' });
+    
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'invalid credentials' });
+    if (!ok) return res.status(401).json({ error: 'Credenciales inválidas' });
+    
     delete user.password_hash;
     // hide generic email field, rely on institutional_email instead
     delete user.email;
     const token = signToken(user);
     res.json({ user, token });
   } catch (err) {
-    res.status(500).json({ error: String(err) });
+    console.error('Error en login:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
@@ -4940,7 +5073,72 @@ app.get('/admin/reports/theses', authMiddleware, requireRole('admin'), (req, res
 
 // ============================================================================
 
+// Middleware de manejo de errores global
+app.use((err, req, res, next) => {
+  logger.errorLog(err, req);
+
+  // Manejo específico de errores de multer (subida de archivos)
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'Archivo demasiado grande. Máximo 10MB permitido.' });
+  }
+  if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({ error: 'Tipo de archivo no permitido.' });
+  }
+
+  // Manejo de errores de validación express-validator
+  if (err.array) {
+    return res.status(400).json({ error: 'Datos de entrada inválidos', details: err.array() });
+  }
+
+  // Error por defecto
+  res.status(500).json({ error: 'Error interno del servidor' });
+});
+
+// Middleware para rutas no encontradas
+app.use((req, res) => {
+  logger.warn(`Ruta no encontrada: ${req.method} ${req.url}`, {
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
+  res.status(404).json({ error: 'Ruta no encontrada' });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  const uptime = process.uptime();
+  const memoryUsage = process.memoryUsage();
+
+  // Verificar conexión a base de datos
+  let dbStatus = 'ok';
+  try {
+    db.prepare('SELECT 1').get();
+  } catch (err) {
+    dbStatus = 'error';
+    console.error('Database health check failed:', err.message);
+  }
+
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: `${Math.floor(uptime)}s`,
+    memory: {
+      rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
+      heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`
+    },
+    database: dbStatus,
+    version: process.version,
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
+  logger.info(`Server running on http://0.0.0.0:${PORT}`, {
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development',
+    healthCheckUrl: `http://localhost:${PORT}/health`
+  });
   startReminderCron(db);
 });
