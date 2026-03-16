@@ -436,6 +436,11 @@ db.prepare(`CREATE TABLE IF NOT EXISTS digital_signatures (
   FOREIGN KEY(signer_user_id) REFERENCES users(id)
 )`).run();
 
+// add pdf_url column to digital_signatures if missing
+try { db.prepare('ALTER TABLE digital_signatures ADD COLUMN pdf_url TEXT').run(); } catch (e) {}
+// add signature_image_url column to digital_signatures if missing
+try { db.prepare('ALTER TABLE digital_signatures ADD COLUMN signature_image_url TEXT').run(); } catch (e) {}
+
 // Carta de recomendación meritoria (para tesis con nota >= 4.8)
 db.prepare(`CREATE TABLE IF NOT EXISTS meritoria_signatures (
   id TEXT PRIMARY KEY,
@@ -504,5 +509,171 @@ db.prepare(`CREATE TABLE IF NOT EXISTS notifications (
 
 db.prepare(`CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)`).run();
 db.prepare(`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)`).run();
+
+// Tabla de reglas de notificación configurables por superadmin
+db.prepare(`CREATE TABLE IF NOT EXISTS notification_rules (
+  event_type TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (event_type, role)
+)`).run();
+
+// Sembrar reglas por defecto si la tabla está vacía
+const rulesCount = db.prepare('SELECT COUNT(*) as n FROM notification_rules').get().n;
+if (rulesCount === 0) {
+  const defaultRules = [
+    // submitted: admins y evaluadores reciben
+    { event_type: 'submitted',            role: 'student',   enabled: 0 },
+    { event_type: 'submitted',            role: 'admin',     enabled: 1 },
+    { event_type: 'submitted',            role: 'evaluator', enabled: 1 },
+    // admin_feedback: solo estudiantes
+    { event_type: 'admin_feedback',       role: 'student',   enabled: 1 },
+    { event_type: 'admin_feedback',       role: 'admin',     enabled: 0 },
+    { event_type: 'admin_feedback',       role: 'evaluator', enabled: 0 },
+    // admin_decision: solo estudiantes
+    { event_type: 'admin_decision',       role: 'student',   enabled: 1 },
+    { event_type: 'admin_decision',       role: 'admin',     enabled: 0 },
+    { event_type: 'admin_decision',       role: 'evaluator', enabled: 0 },
+    // evaluators_assigned: solo estudiantes
+    { event_type: 'evaluators_assigned',  role: 'student',   enabled: 1 },
+    { event_type: 'evaluators_assigned',  role: 'admin',     enabled: 0 },
+    { event_type: 'evaluators_assigned',  role: 'evaluator', enabled: 0 },
+    // review_ok: solo estudiantes
+    { event_type: 'review_ok',            role: 'student',   enabled: 1 },
+    { event_type: 'review_ok',            role: 'admin',     enabled: 0 },
+    { event_type: 'review_ok',            role: 'evaluator', enabled: 0 },
+    // review_fail: solo estudiantes
+    { event_type: 'review_fail',          role: 'student',   enabled: 1 },
+    { event_type: 'review_fail',          role: 'admin',     enabled: 0 },
+    { event_type: 'review_fail',          role: 'evaluator', enabled: 0 },
+    // revision_submitted: solo admins
+    { event_type: 'revision_submitted',   role: 'student',   enabled: 0 },
+    { event_type: 'revision_submitted',   role: 'admin',     enabled: 1 },
+    { event_type: 'revision_submitted',   role: 'evaluator', enabled: 0 },
+    // evaluation_submitted: solo admins
+    { event_type: 'evaluation_submitted', role: 'student',   enabled: 0 },
+    { event_type: 'evaluation_submitted', role: 'admin',     enabled: 1 },
+    { event_type: 'evaluation_submitted', role: 'evaluator', enabled: 0 },
+    // defense_scheduled: estudiantes y admins
+    { event_type: 'defense_scheduled',    role: 'student',   enabled: 1 },
+    { event_type: 'defense_scheduled',    role: 'admin',     enabled: 1 },
+    { event_type: 'defense_scheduled',    role: 'evaluator', enabled: 0 },
+    // act_signature: solo admins
+    { event_type: 'act_signature',        role: 'student',   enabled: 0 },
+    { event_type: 'act_signature',        role: 'admin',     enabled: 1 },
+    { event_type: 'act_signature',        role: 'evaluator', enabled: 0 },
+    // status_changed: estudiantes y admins
+    { event_type: 'status_changed',       role: 'student',   enabled: 1 },
+    { event_type: 'status_changed',       role: 'admin',     enabled: 1 },
+    { event_type: 'status_changed',       role: 'evaluator', enabled: 0 },
+    // evaluator_removed: admins y evaluadores
+    { event_type: 'evaluator_removed',    role: 'student',   enabled: 0 },
+    { event_type: 'evaluator_removed',    role: 'admin',     enabled: 1 },
+    { event_type: 'evaluator_removed',    role: 'evaluator', enabled: 1 },
+    // evaluator_replaced: admins y evaluadores
+    { event_type: 'evaluator_replaced',   role: 'student',   enabled: 0 },
+    { event_type: 'evaluator_replaced',   role: 'admin',     enabled: 1 },
+    { event_type: 'evaluator_replaced',   role: 'evaluator', enabled: 1 },
+  ];
+  const insertRule = db.prepare('INSERT OR IGNORE INTO notification_rules (event_type, role, enabled) VALUES (?, ?, ?)');
+  const insertMany = db.transaction((rules) => {
+    for (const r of rules) insertRule.run(r.event_type, r.role, r.enabled);
+  });
+  insertMany(defaultRules);
+  console.log('migration: seeded default notification_rules');
+}
+
+// Tabla de plantillas de notificación configurables por superadmin
+db.prepare(`CREATE TABLE IF NOT EXISTS notification_templates (
+  event_type   TEXT PRIMARY KEY,
+  subject      TEXT NOT NULL,
+  body_html    TEXT NOT NULL
+)`).run();
+
+// Sembrar plantillas por defecto si la tabla está vacía
+const templatesCount = db.prepare('SELECT COUNT(*) as n FROM notification_templates').get().n;
+if (templatesCount === 0) {
+  const wrap = (content) => `<div style="font-family:sans-serif;max-width:600px">
+  <p>Hola <strong>{{destinatario_nombre}}</strong>,</p>
+  ${content}
+  <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+  <p><strong>Tesis:</strong> {{titulo_tesis}}</p>
+  <p><strong>Estudiante(s):</strong> {{nombres_estudiantes}}</p>
+  <p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p>
+</div>`;
+
+  const defaultTemplates = [
+    {
+      event_type: 'submitted',
+      subject: '[SisTesis] Nueva tesis enviada a revisión: {{titulo_tesis}}',
+      body_html: wrap('<p>Se ha enviado una nueva tesis a revisión.</p><p><strong>Descripción:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'admin_feedback',
+      subject: '[SisTesis] Comentario del administrador sobre tu tesis: {{titulo_tesis}}',
+      body_html: wrap('<p>El administrador ha dejado un comentario sobre tu tesis.</p><p><strong>Comentario:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'admin_decision',
+      subject: '[SisTesis] Decisión sobre tu tesis: {{titulo_tesis}}',
+      body_html: wrap('<p>Se ha tomado una decisión sobre tu tesis.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'evaluators_assigned',
+      subject: '[SisTesis] Evaluadores asignados a tu tesis: {{titulo_tesis}}',
+      body_html: wrap('<p>Se han asignado evaluadores a tu tesis.</p><p><strong>Evaluadores:</strong> {{nombres_evaluadores}}</p>'),
+    },
+    {
+      event_type: 'review_ok',
+      subject: '[SisTesis] Revisión aprobada: {{titulo_tesis}}',
+      body_html: wrap('<p>Tu tesis ha superado la revisión satisfactoriamente.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'review_fail',
+      subject: '[SisTesis] Revisión con observaciones: {{titulo_tesis}}',
+      body_html: wrap('<p>Tu tesis tiene observaciones pendientes de atender.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'revision_submitted',
+      subject: '[SisTesis] Estudiante envió revisión: {{titulo_tesis}}',
+      body_html: wrap('<p>Un estudiante ha enviado una revisión de su tesis.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'evaluation_submitted',
+      subject: '[SisTesis] Evaluación enviada: {{titulo_tesis}}',
+      body_html: wrap('<p>Un evaluador ha enviado su evaluación.</p><p><strong>Evaluadores:</strong> {{nombres_evaluadores}}</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'defense_scheduled',
+      subject: '[SisTesis] Sustentación programada: {{titulo_tesis}}',
+      body_html: wrap('<p>La sustentación de la tesis ha sido programada.</p><p><strong>Fecha:</strong> {{fecha_sustentacion}}</p><p><strong>Lugar:</strong> {{lugar_sustentacion}}</p><p><strong>Info adicional:</strong> {{info_sustentacion}}</p>'),
+    },
+    {
+      event_type: 'act_signature',
+      subject: '[SisTesis] Firma de acta registrada: {{titulo_tesis}}',
+      body_html: wrap('<p>Se ha registrado una firma en el acta de sustentación.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'status_changed',
+      subject: '[SisTesis] Estado actualizado: {{titulo_tesis}}',
+      body_html: wrap('<p>El estado de la tesis ha cambiado.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'evaluator_removed',
+      subject: '[SisTesis] Evaluador removido: {{titulo_tesis}}',
+      body_html: wrap('<p>Un evaluador ha sido removido de la tesis.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+    {
+      event_type: 'evaluator_replaced',
+      subject: '[SisTesis] Evaluador reemplazado: {{titulo_tesis}}',
+      body_html: wrap('<p>Un evaluador ha sido reemplazado en la tesis.</p><p><strong>Detalle:</strong> {{descripcion}}</p>'),
+    },
+  ];
+
+  const insertTpl = db.prepare('INSERT OR IGNORE INTO notification_templates (event_type, subject, body_html) VALUES (?, ?, ?)');
+  const insertTpls = db.transaction((tpls) => { for (const t of tpls) insertTpl.run(t.event_type, t.subject, t.body_html); });
+  insertTpls(defaultTemplates);
+  console.log('migration: seeded default notification_templates');
+}
 
 module.exports = db;

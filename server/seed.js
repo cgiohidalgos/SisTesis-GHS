@@ -219,12 +219,9 @@ async function run() {
   }
 }
 
-run().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
-
-run().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+run()
+  .then(() => require('./seed-evaluadores').run())
+  .catch(err => {
+    console.error(err);
+    process.exit(1);
+  });

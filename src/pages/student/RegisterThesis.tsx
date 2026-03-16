@@ -285,25 +285,46 @@ export default function RegisterThesis() {
         // PUT returns {ok:true}; keep the id for subsequent file upload
         thesis = { ...existing, title: projectName, abstract, keywords };
       } else {
-        // 1. Crear el proyecto de grado (POST /theses)
-        if (selectedPrograms.length) body.program_ids = selectedPrograms;
-        console.log('creating thesis with', body);
+        // Nueva tesis: todo en un solo request (título, archivos, directores)
+        const newForm = new FormData();
+        newForm.append("title", projectName);
+        newForm.append("abstract", abstract);
+        if (keywords.trim()) newForm.append("keywords", keywords.trim());
+        if (selectedPrograms.length) newForm.append("program_ids", JSON.stringify(selectedPrograms));
+        if (selectedDirectorIds.length) {
+          const selectedDirectorNames = selectedDirectorIds
+            .map((did) => evaluators.find((e) => e.id === did)?.full_name)
+            .filter(Boolean);
+          newForm.append("directors", JSON.stringify(selectedDirectorNames));
+        }
+        if (hasCompanion && companion.full_name && companion.student_code && companion.cedula) {
+          newForm.append("companion", JSON.stringify({
+            full_name: companion.full_name,
+            student_code: companion.student_code,
+            cedula: companion.cedula,
+            institutional_email: companion.institutional_email || undefined,
+          }));
+        }
+        if (projectDocument) newForm.append("document", projectDocument);
+        if (endorsement) newForm.append("endorsement", endorsement);
+        if (url) newForm.append("url", url);
+
         const resp = await fetch(`${API_BASE}/theses`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(body),
+          headers: { Authorization: `Bearer ${token}` },
+          body: newForm,
         });
         if (!resp.ok) {
           const errData = await resp.json().catch(() => null);
-          console.error('thesis POST failed', resp.status, errData, body);
           throw new Error(errData?.error || "Error creando proyecto de grado");
         }
-        thesis = await resp.json();
+        // Todo guardado en un solo paso — navegar directamente
+        toast.success("Proyecto de grado registrado correctamente");
+        navigate("/student");
+        return;
       }
-      // 2. Subir archivos y directores (POST /theses/:id/files)
+
+      // Actualizar archivos para tesis existente (edición)
       const form = new FormData();
       form.append("project_name", projectName);
       form.append("abstract", abstract);
@@ -321,19 +342,11 @@ export default function RegisterThesis() {
         body: form,
       });
       if (!uploadResp.ok) {
-        // Si es un proyecto de grado nuevo, eliminarlo para evitar dejarlo incompleto
-        if (!existing) {
-          await fetch(`${API_BASE}/theses/${thesis.id}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          }).catch(() => {});
-        }
         const errData = await uploadResp.json().catch(() => null);
         throw new Error(errData?.error || "Error subiendo archivos. Intenta de nuevo.");
       }
 
       const uploadData = await uploadResp.json().catch(() => null);
-      // Actualizar vista con nuevos archivos cargados sin necesidad de recargar la página
       const savedFiles = Array.isArray(uploadData?.files) ? uploadData.files : [];
       const savedDoc = savedFiles.find((f: any) => f.file_type === 'document');
       const savedEndorse = savedFiles.find((f: any) => f.file_type === 'endorsement');
@@ -346,7 +359,7 @@ export default function RegisterThesis() {
         setEndorsement(null);
       }
 
-      toast.success(existing ? "Proyecto de grado actualizado" : "Proyecto de grado registrado correctamente");
+      toast.success("Proyecto de grado actualizado");
       navigate("/student");
     } catch (err: any) {
       console.error('handleSubmit caught', err);

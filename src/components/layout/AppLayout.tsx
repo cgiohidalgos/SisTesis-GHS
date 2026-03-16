@@ -68,6 +68,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
       ...items,
       { label: 'Usuarios', href: '/admin/users', icon: Users },
       { label: 'Configuración SMTP', href: '/admin/smtp-config', icon: Settings },
+      { label: 'Reglas de notificación', href: '/admin/notification-rules', icon: Bell },
     ];
   }
 

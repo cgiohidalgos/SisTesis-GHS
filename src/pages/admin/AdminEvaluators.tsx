@@ -4,7 +4,7 @@ import { getApiBase } from "@/lib/utils";
 
 const API_BASE = getApiBase();
 import AppLayout from "@/components/layout/AppLayout";
-import { User, Mail, BookOpen, Plus, EyeOff, UserPlus } from "lucide-react";
+import { User, Mail, BookOpen, Plus, EyeOff, UserPlus, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -261,6 +261,29 @@ export default function AdminEvaluators() {
       .some((field) => field?.toLowerCase().includes(q));
   });
 
+  const [sendingCredentials, setSendingCredentials] = useState<string | null>(null);
+
+  const handleSendCredentials = async (ev: Evaluator) => {
+    if (!confirm(`¿Enviar credenciales de acceso a ${ev.name} (${ev.institutionalEmail})?`)) return;
+    setSendingCredentials(ev.id);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/users/${ev.id}/send-credentials`, {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        throw new Error(err?.error || 'Error enviando credenciales');
+      }
+      toast.success(`Credenciales enviadas a ${ev.institutionalEmail}`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSendingCredentials(null);
+    }
+  };
+
   const handleDeleteEvaluator = async (id: string) => {
     if (!confirm("¿Eliminar este evaluador? Esta acción no se puede deshacer.")) return;
     try {
@@ -382,12 +405,17 @@ export default function AdminEvaluators() {
                   <div className="space-y-2 max-h-60 overflow-y-auto">
                     {filteredEvaluators.map((ev) => {
                       const isSelected = selectedEvaluators.includes(ev.id);
+                      const directorNamesUpper = (thesisInfo?.directors || []).map((d: string) => d.toUpperCase());
+                      const isDirector = directorNamesUpper.includes(ev.name.toUpperCase());
                       return (
                         <button
                           key={ev.id}
-                          onClick={() => toggleEvaluatorSelection(ev.id)}
+                          onClick={() => !isDirector && toggleEvaluatorSelection(ev.id)}
+                          disabled={isDirector}
                           className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all text-left ${
-                            isSelected
+                            isDirector
+                              ? "border-red-200 bg-red-50 opacity-60 cursor-not-allowed"
+                              : isSelected
                               ? "border-accent bg-accent/10"
                               : "border-border hover:border-accent/30"
                           }`}
@@ -398,6 +426,9 @@ export default function AdminEvaluators() {
                           <div className="flex-1">
                             <p className="text-sm font-medium text-foreground">{ev.name}</p>
                             <p className="text-xs text-muted-foreground">{ev.specialty || ev.institutionalEmail}</p>
+                            {isDirector && (
+                              <p className="text-xs text-red-500 font-medium mt-0.5">Director(a) de esta tesis — no puede ser evaluador(a)</p>
+                            )}
                           </div>
                           {isSelected && (
                             <span className="text-xs font-medium text-accent">✓</span>
@@ -484,9 +515,19 @@ export default function AdminEvaluators() {
                     {ev.theses} proyectos
                   </button>
                 </div>
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex gap-2 flex-wrap">
                   <Button size="sm" variant="outline" onClick={() => handleEditEvaluator(ev)}>
                     Editar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                    disabled={sendingCredentials === ev.id}
+                    onClick={() => handleSendCredentials(ev)}
+                  >
+                    <Send className="w-3 h-3 mr-1" />
+                    {sendingCredentials === ev.id ? 'Enviando...' : 'Enviar acceso'}
                   </Button>
                   <Button size="sm" variant="destructive" onClick={() => handleDeleteEvaluator(ev.id)}>
                     Eliminar

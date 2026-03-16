@@ -119,16 +119,31 @@ async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy) {
 
   const studentList = students.map(s => `• ${s.full_name || 'Estudiante'} (${s.institutional_email || 'sin correo'})`).join('<br />');
 
+  // Generar contraseña del evaluador (mismo formato usado en seed: nombre_lowercase + cedula)
+  const evalCedula = db.prepare('SELECT cedula FROM users WHERE id = ?').get(evaluatorId)?.cedula;
+  const evalFirstName = (evaluator.full_name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '') || 'usuario';
+  const evalPassword = evalCedula ? `${evalFirstName}${evalCedula}` : null;
+
   const subject = `[SisTesis] Has sido asignado como evaluador de la tesis: ${thesis.title}`;
   const body = `
     <div style="font-family:sans-serif;max-width:600px">
       <h2 style="color:#1a1a2e">Nueva asignación de evaluación</h2>
       <p>Hola <strong>${evaluator.full_name || 'Evaluador'}</strong>,</p>
       <p>Has sido asignado como evaluador para la siguiente tesis:</p>
-      <p><strong>Tesis:</strong> ${thesis.title}</p>
-      <p><strong>Estudiantes:</strong><br />${studentList}</p>
+      <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px">
+        <p style="margin:4px 0"><strong>Tesis:</strong> ${thesis.title}</p>
+        <p style="margin:4px 0"><strong>Estudiantes:</strong></p>
+        ${studentList}
+      </div>
+      <h3 style="margin-top:24px;color:#1a1a2e">Datos de acceso al sistema</h3>
+      <ul style="padding-left:18px;">
+        <li><strong>URL:</strong> <a href="https://lidis.usbcali.edu.co/sistesis/">https://lidis.usbcali.edu.co/sistesis/</a></li>
+        <li><strong>Usuario:</strong> ${evaluator.institutional_email}</li>
+        ${evalPassword ? `<li><strong>Contraseña:</strong> ${evalPassword}</li>` : '<li><em>Usa la contraseña proporcionada al crear tu cuenta.</em></li>'}
+      </ul>
+      <p style="margin-top:16px">Por favor ingresa al sistema para revisar el documento y registrar tu evaluación.</p>
       <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
-      <p style="color:#888;font-size:12px">Si necesitas más información, contacta al administrador del sistema.</p>
+      <p style="color:#888;font-size:12px">Este correo fue enviado automáticamente por el sistema SisTesis. Si tienes dudas, contacta al administrador.</p>
     </div>
   `;
 
@@ -152,109 +167,84 @@ function logNotification(db, userId, eventType, subject, body, relatedThesisId, 
  * @param {string} description  - Descripción del evento (texto del timeline)
  * @param {string} triggeredBy  - user_id del usuario que disparó el evento
  */
+/**
+ * Reemplaza {{variable}} en una plantilla con los valores del contexto.
+ * Las variables no encontradas se reemplazan con cadena vacía.
+ */
+function renderTemplate(template, ctx) {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => (ctx[key] !== undefined && ctx[key] !== null) ? ctx[key] : '');
+}
+
 async function notifyTimeline(db, thesisId, eventType, description, triggeredBy) {
   try {
     const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesisId);
     if (!thesis) return;
 
-    const label = EVENT_LABELS[eventType] || eventType;
-    const subject = `[SisTesis] ${label}: ${thesis.title}`;
-    const body = `
-      <div style="font-family:sans-serif;max-width:600px">
-        <h2 style="color:#1a1a2e">${label}</h2>
-        <p><strong>Tesis:</strong> ${thesis.title}</p>
-        <p><strong>Detalle:</strong> ${description || label}</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-        <p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p>
-      </div>
-    `;
+    // Datos de contexto compartido para plantillas
+    const studentRows   = db.prepare(`SELECT u.full_name, u.institutional_email FROM users u JOIN thesis_students ts ON u.id = ts.student_id WHERE ts.thesis_id = ?`).all(thesisId);
+    const evaluatorRows = db.prepare(`SELECT u.full_name FROM users u JOIN thesis_evaluators te ON u.id = te.evaluator_id WHERE te.thesis_id = ?`).all(thesisId);
+    const programRows   = db.prepare(`SELECT p.name FROM programs p JOIN thesis_programs tp ON p.id = tp.program_id WHERE tp.thesis_id = ?`).all(thesisId);
 
-    // Obtener listas de usuarios involucrados
-    const studentIds   = db.prepare('SELECT student_id FROM thesis_students WHERE thesis_id = ?').all(thesisId).map(r => r.student_id);
+    const defenseDateStr = thesis.defense_date
+      ? new Date(thesis.defense_date * 1000).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '';
+
+    const baseCtx = {
+      titulo_tesis:         thesis.title || '',
+      descripcion:          description || '',
+      nombres_estudiantes:  studentRows.map(s => s.full_name || '').join(', '),
+      correos_estudiantes:  studentRows.map(s => s.institutional_email || '').join(', '),
+      nombres_evaluadores:  evaluatorRows.map(e => e.full_name || '').join(', '),
+      programa:             programRows.map(p => p.name).join(', '),
+      fecha:                new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }),
+      fecha_sustentacion:   defenseDateStr,
+      lugar_sustentacion:   thesis.defense_location || '',
+      info_sustentacion:    thesis.defense_info || '',
+    };
+
+    // Cargar plantilla configurada (o fallback genérico)
+    const label = EVENT_LABELS[eventType] || eventType;
+    const tpl = db.prepare('SELECT subject, body_html FROM notification_templates WHERE event_type = ?').get(eventType);
+    const subjectTpl  = tpl?.subject   || `[SisTesis] ${label}: {{titulo_tesis}}`;
+    const bodyTpl     = tpl?.body_html || `<div style="font-family:sans-serif;max-width:600px"><p>Hola <strong>{{destinatario_nombre}}</strong>,</p><p><strong>Tesis:</strong> {{titulo_tesis}}</p><p><strong>Detalle:</strong> {{descripcion}}</p><hr style="border:none;border-top:1px solid #eee;margin:20px 0"><p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p></div>`;
+
+    // Obtener IDs de usuarios involucrados
+    const studentIds   = studentRows.length
+      ? db.prepare('SELECT student_id FROM thesis_students WHERE thesis_id = ?').all(thesisId).map(r => r.student_id)
+      : [];
     const evaluatorIds = db.prepare('SELECT evaluator_id FROM thesis_evaluators WHERE thesis_id = ?').all(thesisId).map(r => r.evaluator_id);
     const adminIds     = db.prepare("SELECT DISTINCT user_id FROM user_roles WHERE role IN ('admin','superadmin')").all().map(r => r.user_id);
 
-    // Determinar destinatarios según el tipo de evento
+    // Leer reglas configurables de la BD
+    const rules = db.prepare('SELECT role, enabled FROM notification_rules WHERE event_type = ?').all(eventType);
     let recipientIds = [];
-
-    switch (eventType) {
-// Tesis enviada a revisión: notificar a admins y evaluadores
-    case 'submitted':
-      recipientIds = [...adminIds, ...evaluatorIds];
-      break;
-
-    // Feedback del admin: notificar únicamente a estudiantes
-    case 'admin_feedback':
-      recipientIds = [...studentIds];
-      break;
-
-    // Decisión del admin (aprobar para sustentación o rechazar): notificar únicamente a estudiantes
-    case 'admin_decision':
-      recipientIds = [...studentIds];
-      break;
-
-    // Evaluadores asignados: notificar únicamente a estudiantes (no enviar a evaluadores)
-    case 'evaluators_assigned':
-      recipientIds = [...studentIds];
-      break;
-
-    // Revisión aprobada: notificar a estudiantes
-    case 'review_ok':
-      recipientIds = [...studentIds];
-      break;
-
-    // Revisión con observaciones: notificar a estudiantes
-    case 'review_fail':
-      recipientIds = [...studentIds];
-      break;
-
-    // Estudiante envió revisión: notificar únicamente a admins
-    case 'revision_submitted':
-      recipientIds = [...adminIds];
-      break;
-
-    // Evaluación enviada por evaluador: notificar solo a admins (NO estudiantes)
-    case 'evaluation_submitted':
-      recipientIds = [...adminIds];
-      break;
-
-    // Sustentación programada: notificar a estudiantes y admins (no evaluadores)
-    case 'defense_scheduled':
-      recipientIds = [...studentIds, ...adminIds];
-      break;
-
-    // Firma de acta: notificar solo a admins (no evaluadores)
-    case 'act_signature':
-      recipientIds = [...adminIds];
-      break;
-
-    // Cambio automático de estado: notificar a estudiantes y admins (no evaluadores)
-    case 'status_changed':
-      recipientIds = [...studentIds, ...adminIds];
-        break;
-
-      // Evento manual genérico (creado por admin/evaluador):
-      // si es un evento de acta → sin estudiantes; si no → todos
-      default:
-        if (ACT_EVENTS.has(eventType)) {
-          recipientIds = [...adminIds, ...evaluatorIds];
-        } else {
-          recipientIds = [...studentIds, ...evaluatorIds, ...adminIds];
-        }
+    if (rules.length > 0) {
+      for (const rule of rules) {
+        if (!rule.enabled) continue;
+        if (rule.role === 'student')   recipientIds.push(...studentIds);
+        if (rule.role === 'admin')     recipientIds.push(...adminIds);
+        if (rule.role === 'evaluator') recipientIds.push(...evaluatorIds);
+      }
+    } else {
+      recipientIds = ACT_EVENTS.has(eventType)
+        ? [...adminIds, ...evaluatorIds]
+        : [...studentIds, ...evaluatorIds, ...adminIds];
     }
 
-    // Eliminar duplicados y al propio disparador (no se notifica a sí mismo)
     const uniqueIds = [...new Set(recipientIds)].filter(id => id !== triggeredBy);
-
-    // Obtener config SMTP (usar la del disparador o la default del superadmin)
     const smtpOwnerId = triggeredBy || null;
 
     for (const recipientId of uniqueIds) {
-      const user = db.prepare('SELECT id, institutional_email FROM users WHERE id = ?').get(recipientId);
+      const user = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(recipientId);
       if (!user || !user.institutional_email) continue;
 
-      const success = await sendEmail(db, user.institutional_email, subject, body, smtpOwnerId);
-      logNotification(db, recipientId, eventType, subject, body, thesisId, success ? null : 'failed');
+      // Contexto personalizado por destinatario
+      const ctx = { ...baseCtx, destinatario_nombre: user.full_name || 'Usuario' };
+      const renderedSubject = renderTemplate(subjectTpl, ctx);
+      const renderedBody    = renderTemplate(bodyTpl, ctx);
+
+      const success = await sendEmail(db, user.institutional_email, renderedSubject, renderedBody, smtpOwnerId);
+      logNotification(db, recipientId, eventType, renderedSubject, renderedBody, thesisId, success ? null : 'failed');
     }
   } catch (err) {
     console.error('[notify] Error en notifyTimeline:', err.message);

@@ -26,7 +26,7 @@ services:
       dockerfile: Dockerfile
     container_name: thesis_frontend
     ports:
-      - "5173:5173"
+      - "9048:9048"
     environment:
       - VITE_API_BASE=http://backend:4000
     depends_on:
@@ -40,4 +40,4 @@ services:
       - ./tsconfig.json:/app/tsconfig.json
       - ./tsconfig.app.json:/app/tsconfig.app.json
       - ./tsconfig.node.json:/app/tsconfig.node.json
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "9048"]

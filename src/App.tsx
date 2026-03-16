@@ -23,8 +23,7 @@ import AdminWeights from "./pages/admin/AdminWeights";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminSMTPConfig from "./pages/admin/AdminSMTPConfig";
 import AdminNotifications from "./pages/admin/AdminNotifications";
-import SuperReviewItems from "./pages/admin/SuperReviewItems";
-import SuperWeights from "./pages/admin/SuperWeights";
+import AdminNotificationRules from "./pages/admin/AdminNotificationRules";
 import StudentRegister from "./pages/auth/StudentRegister";
 import StudentLogin from "./pages/auth/StudentLogin";
 import StaffLogin from "./pages/auth/StaffLogin";
@@ -68,6 +67,7 @@ const App = () => (
             <Route path="/admin/users" element={<AdminUsers />} />
             <Route path="/admin/smtp-config" element={<AdminSMTPConfig />} />
             <Route path="/admin/notifications" element={<AdminNotifications />} />
+            <Route path="/admin/notification-rules" element={<AdminNotificationRules />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

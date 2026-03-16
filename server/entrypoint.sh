@@ -18,6 +18,12 @@ if [ ! -d /app/uploads ]; then
   chmod 777 /app/uploads
 fi
 
+# Recompilar better-sqlite3 solo en desarrollo (cuando node_modules viene montado del host)
+# En producción, el módulo ya está compilado dentro de la imagen
+if [ "$NODE_ENV" != "production" ]; then
+  cd /app && npm rebuild better-sqlite3 --build-from-source > /dev/null 2>&1 || true
+fi
+
 # El esquema se crea automáticamente al importar db.js en index.js
 
 # Ejecutar seed (creación de admin + evaluadores) en cada arranque

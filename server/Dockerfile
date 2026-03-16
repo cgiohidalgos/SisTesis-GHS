@@ -17,8 +17,10 @@ RUN apt-get update && \
 COPY server/package.json server/package-lock.json* ./
 RUN npm install
 
-# Copiar el código del servidor
+# Copiar el código del servidor (puede sobreescribir node_modules con los del host)
 COPY server/ ./
+# Recompilar módulos nativos para la versión de Node del contenedor
+RUN npm rebuild better-sqlite3 --build-from-source
 
 # Instalar sqlite3 CLI para depuración y LibreOffice Writer para conversión DOCX→PDF
 # LibreOffice necesita una JRE, xvfb (X virtual framebuffer) y xauth para la conversión en headless mode.
@@ -29,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-jre \
     xvfb \
     xauth \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 

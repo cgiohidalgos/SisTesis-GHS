@@ -67,7 +67,7 @@ export default function StudentRegister() {
       toast.error("Todos los campos son obligatorios, incluido el correo institucional");
       return;
     }
-    if (errors.studentCode || errors.cedula) {
+    if (errors.studentCode || errors.cedula || errors.institutionalEmail) {
       toast.error("Corrige los errores antes de enviar");
       return;
     }
@@ -79,13 +79,15 @@ export default function StudentRegister() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           institutional_email: form.institutionalEmail,
-          password: form.password,
           full_name: form.fullName,
           student_code: form.studentCode,
           cedula: form.cedula,
         }),
       });
-      if (!resp.ok) throw new Error('registration error');
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || 'Error al registrarse');
+      }
       const { user, token } = await resp.json();
       if (token) localStorage.setItem('token', token);
       toast.success("Registro exitoso. Bienvenido(a).");
@@ -177,7 +179,7 @@ export default function StudentRegister() {
           <Button
             type="submit"
             className="w-full"
-            disabled={loading || !!errors.studentCode || !!errors.cedula}
+            disabled={loading || !!errors.studentCode || !!errors.cedula || !!errors.institutionalEmail}
           >
             {loading ? "Registrando..." : "Registrarse"}
           </Button>

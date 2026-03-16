@@ -58,6 +58,7 @@ export default function AdminThesisDetail() {
   const [digitalSignFile, setDigitalSignFile] = useState<File | null>(null);
   const [digitalSignerRole, setDigitalSignerRole] = useState<string>("");
   const [digitalSignerName, setDigitalSignerName] = useState<string>("");
+  const [digitalSignerTitle, setDigitalSignerTitle] = useState<string>("");
   const [loadingDigitalSign, setLoadingDigitalSign] = useState(false);
   const [digitalProgDirectorName, setDigitalProgDirectorName] = useState<string>("");
 
@@ -65,6 +66,7 @@ export default function AdminThesisDetail() {
   const [meritoriaStatus, setMeritoriaStatus] = useState<any>(null);
   const [meritoriaSignFile, setMeritoriaSignFile] = useState<File | null>(null);
   const [meritoriaSignerName, setMeritoriaSignerName] = useState<string>("");
+  const [meritoriaSignerTitle, setMeritoriaSignerTitle] = useState<string>("");
   const [loadingMeritoria, setLoadingMeritoria] = useState(false);
   const [showReplaceDialog, setShowReplaceDialog] = useState(false);
   const [isAddingEvaluator, setIsAddingEvaluator] = useState(false);
@@ -76,6 +78,8 @@ export default function AdminThesisDetail() {
 
   // Estado para enlaces de firma compartibles
   const [generatedSigningLinks, setGeneratedSigningLinks] = useState<Record<string, {url: string; copied: boolean}>>({});
+  // Títulos académicos por firmante (key = normalizePersonKey)
+  const [signerTitles, setSignerTitles] = useState<Record<string, string>>({});
 
   // compute consolidated averages and breakdown for display
   const consolidated = (() => {
@@ -180,7 +184,12 @@ export default function AdminThesisDetail() {
       // Exclude currently assigned evaluators except the one we're replacing
       const assignedIds = new Set((thesis?.evaluators || []).map((x: any) => x.id));
       assignedIds.delete(ev.id);
-      setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)));
+      // Exclude directors of this thesis
+      const dirNamesUpper = (thesis?.directors || []).map((d: string) => d.toUpperCase());
+      setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)).map((u: any) => ({
+        ...u,
+        _isDirector: dirNamesUpper.includes((u.full_name || '').toUpperCase()),
+      })));
     } catch (err: any) {
       console.error('load evaluators for replace', err);
       toast.error(err.message || 'Error cargando evaluadores disponibles');
@@ -203,7 +212,12 @@ export default function AdminThesisDetail() {
       if (!resp.ok) throw new Error('No se pudieron cargar evaluadores disponibles');
       const list = await resp.json();
       const assignedIds = new Set((thesis?.evaluators || []).map((x: any) => x.id));
-      setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)));
+      // Exclude directors of this thesis
+      const dirNamesUpper = (thesis?.directors || []).map((d: string) => d.toUpperCase());
+      setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)).map((u: any) => ({
+        ...u,
+        _isDirector: dirNamesUpper.includes((u.full_name || '').toUpperCase()),
+      })));
     } catch (err: any) {
       console.error('load evaluators for add', err);
       toast.error(err.message || 'Error cargando evaluadores disponibles');
@@ -1074,14 +1088,48 @@ export default function AdminThesisDetail() {
                   {/* Sección de enlaces compartibles */}
                   <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
                     <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
-                    {digitalSignStatus.pendingSigners.map((pending: any, idx: number) => {
+                    {(() => {
+                      const anyLinkGenerated = Object.keys(generatedSigningLinks).length > 0;
+                      const progDirPending = digitalSignStatus.pendingSigners.find((p: any) => (typeof p === 'string' ? 'director' : p?.role) === 'program_director');
+                      const progDirNameMissing = progDirPending && !digitalProgDirectorName.trim();
+                      return digitalSignStatus.pendingSigners.map((pending: any, idx: number) => {
                       const name = normalizePersonName(pending);
                       const key = normalizePersonKey(pending);
                       const role = typeof pending === 'string' ? 'director' : (pending?.role || 'director');
+                      const isProgDir = role === 'program_director';
+                      const displayName = isProgDir && digitalProgDirectorName.trim() ? digitalProgDirectorName.trim() : name;
+                      const selectedTitle = signerTitles[key] || '';
+                      const fullName = selectedTitle ? `${selectedTitle} ${displayName}` : displayName;
                       return (
-                        <div key={`${key}-${idx}`} className="flex items-center gap-2">
-                          <div className="flex-1 min-w-0 text-xs">
-                            <p className="font-medium">{name}</p>
+                        <div key={`${key}-${idx}`}>
+                          {isProgDir && (
+                            <div className="mb-1">
+                              <input
+                                className="border rounded px-2 py-1 text-xs w-full"
+                                placeholder="Nombre del Director del Programa (obligatorio)"
+                                value={digitalProgDirectorName}
+                                onChange={(e) => setDigitalProgDirectorName(e.target.value)}
+                                disabled={anyLinkGenerated}
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0 text-xs space-y-1">
+                            <div className="flex items-center gap-2">
+                              <select
+                                className="border rounded px-1 py-0.5 text-xs w-28"
+                                value={selectedTitle}
+                                onChange={(e) => setSignerTitles(prev => ({ ...prev, [key]: e.target.value }))}
+                              >
+                                <option value="">Título...</option>
+                                <option value="Profesional">Profesional</option>
+                                <option value="Esp.">Especialista</option>
+                                <option value="Mg.">Magíster</option>
+                                <option value="PhD.">PhD</option>
+                                <option value="Dr.">Doctor</option>
+                              </select>
+                              <p className="font-medium">{fullName}</p>
+                            </div>
                             <p className="text-muted-foreground">{role === 'evaluator' ? 'Evaluador' : role === 'director' ? 'Director' : 'Director del Programa'}</p>
                           </div>
                           {generatedSigningLinks[key]?.url ? (
@@ -1097,15 +1145,19 @@ export default function AdminThesisDetail() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleGenerateSigningLink(key, name, role)}
+                              disabled={!selectedTitle || progDirNameMissing}
+                              onClick={() => handleGenerateSigningLink(key, fullName, role)}
                               className="whitespace-nowrap"
+                              title={progDirNameMissing ? 'Ingrese el nombre del Director del Programa' : !selectedTitle ? 'Seleccione un título académico' : ''}
                             >
                               🔗 Generar enlace
                             </Button>
                           )}
+                          </div>
                         </div>
                       );
-                    })}
+                    });
+                    })()}
                   </div>
                 </div>
               )}
@@ -1211,6 +1263,7 @@ export default function AdminThesisDetail() {
                   value={digitalSignerRole}
                   onChange={(e) => {
                     setDigitalSignerRole(e.target.value);
+                    setDigitalSignerTitle("");
                     if (e.target.value === 'director' && actaStatus?.directors?.length) {
                       setDigitalSignerName(normalizePersonName(actaStatus.directors[0]));
                     } else {
@@ -1222,6 +1275,21 @@ export default function AdminThesisDetail() {
                   <option value="director">Director de tesis</option>
                   <option value="program_director">Director del programa</option>
                 </select>
+
+                {digitalSignerRole && (
+                  <select
+                    className="border rounded px-2 py-1 text-sm w-full"
+                    value={digitalSignerTitle}
+                    onChange={(e) => setDigitalSignerTitle(e.target.value)}
+                  >
+                    <option value="">Título académico...</option>
+                    <option value="Profesional">Profesional</option>
+                    <option value="Esp.">Especialista</option>
+                    <option value="Mg.">Magíster</option>
+                    <option value="PhD.">PhD</option>
+                    <option value="Dr.">Doctor</option>
+                  </select>
+                )}
 
                 {digitalSignerRole === 'director' && actaStatus?.directors?.length > 1 && (
                   <select
@@ -1268,7 +1336,10 @@ export default function AdminThesisDetail() {
                       const form = new FormData();
                       form.append('signed_pdf', digitalSignFile);
                       form.append('signer_role', digitalSignerRole);
-                      if (digitalSignerName) form.append('signer_name', digitalSignerName);
+                      const fullSignerName = digitalSignerTitle && digitalSignerName
+                        ? `${digitalSignerTitle} ${digitalSignerName}`
+                        : digitalSignerName;
+                      if (fullSignerName) form.append('signer_name', fullSignerName);
 
                       const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/upload-signed`, {
                         method: 'POST',
@@ -1282,6 +1353,7 @@ export default function AdminThesisDetail() {
                       setDigitalSignFile(null);
                       setDigitalSignerRole("");
                       setDigitalSignerName("");
+                      setDigitalSignerTitle("");
                       fetchThesis();
                     } catch (e: any) {
                       toast.error(e.message || 'Error al subir PDF firmado');
@@ -1434,7 +1506,7 @@ export default function AdminThesisDetail() {
                   <select
                     className="border rounded px-2 py-1 text-sm w-full"
                     value={meritoriaSignerName}
-                    onChange={(e) => setMeritoriaSignerName(e.target.value)}
+                    onChange={(e) => { setMeritoriaSignerName(e.target.value); setMeritoriaSignerTitle(""); }}
                   >
                     <option value="">Seleccione director...</option>
                     {meritoriaStatus.pendingDirectors.map((d: any, idx: number) => {
@@ -1447,6 +1519,20 @@ export default function AdminThesisDetail() {
                       );
                     })}
                   </select>
+                  {meritoriaSignerName && (
+                    <select
+                      className="border rounded px-2 py-1 text-sm w-full"
+                      value={meritoriaSignerTitle}
+                      onChange={(e) => setMeritoriaSignerTitle(e.target.value)}
+                    >
+                      <option value="">Título académico...</option>
+                      <option value="Profesional">Profesional</option>
+                      <option value="Esp.">Especialista</option>
+                      <option value="Mg.">Magíster</option>
+                      <option value="PhD.">PhD</option>
+                      <option value="Dr.">Doctor</option>
+                    </select>
+                  )}
                   <input
                     type="file"
                     accept="application/pdf"
@@ -1463,7 +1549,10 @@ export default function AdminThesisDetail() {
                         const token = localStorage.getItem('token');
                         const form = new FormData();
                         form.append('signed_pdf', meritoriaSignFile);
-                        form.append('signer_name', meritoriaSignerName);
+                        const fullMeritoriaName = meritoriaSignerTitle && meritoriaSignerName
+                          ? `${meritoriaSignerTitle} ${meritoriaSignerName}`
+                          : meritoriaSignerName;
+                        form.append('signer_name', fullMeritoriaName);
                         const resp = await fetch(`${API_BASE}/theses/${thesis.id}/meritoria/upload-signed`, {
                           method: 'POST',
                           headers: { Authorization: token ? `Bearer ${token}` : '' },
@@ -1474,6 +1563,7 @@ export default function AdminThesisDetail() {
                         toast.success('Firma registrada en carta meritoria');
                         setMeritoriaSignFile(null);
                         setMeritoriaSignerName('');
+                        setMeritoriaSignerTitle('');
                         fetchThesis();
                       } catch (e: any) {
                         toast.error(e.message || 'Error al subir');
@@ -1555,15 +1645,21 @@ export default function AdminThesisDetail() {
                   <p className="text-sm text-muted-foreground">No hay evaluadores disponibles.</p>
                 ) : (
                   availableEvaluators.map((ev: any) => (
-                    <label key={ev.id} className="flex items-center gap-2 p-2 border rounded cursor-pointer">
+                    <label key={ev.id} className={`flex items-center gap-2 p-2 border rounded ${ev._isDirector ? 'opacity-50 cursor-not-allowed border-red-200 bg-red-50' : 'cursor-pointer'}`}>
                       <input
                         type="radio"
                         name="replacement"
                         value={ev.id}
                         checked={selectedReplacementId === ev.id}
                         onChange={() => setSelectedReplacementId(ev.id)}
+                        disabled={ev._isDirector}
                       />
-                      <span>{ev.full_name || ev.institutional_email}</span>
+                      <div>
+                        <span>{ev.full_name || ev.institutional_email}</span>
+                        {ev._isDirector && (
+                          <p className="text-xs text-red-500 font-medium">Director(a) de esta tesis</p>
+                        )}
+                      </div>
                     </label>
                   ))
                 )}
