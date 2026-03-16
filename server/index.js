@@ -1023,6 +1023,47 @@ app.post('/theses/:id/assign-evaluators', authMiddleware, requireRole('admin'), 
   }
 });
 
+// Remover un evaluador asignado si aún no ha enviado evaluación de documento
+app.delete('/theses/:id/evaluators/:evaluatorId', authMiddleware, requireRole('admin'), (req, res) => {
+  const thesis_id = req.params.id;
+  const evaluator_id = req.params.evaluatorId;
+  const te = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, evaluator_id);
+  if (!te) return res.status(404).json({ error: 'assignment not found' });
+  const started = db.prepare(`
+    SELECT 1 FROM evaluations
+    WHERE thesis_evaluator_id = ? AND evaluation_type = 'document' AND submitted_at IS NOT NULL
+    LIMIT 1
+  `).get(te.id);
+  if (started) {
+    return res.status(400).json({ error: 'El evaluador ya inició la evaluación y no puede ser cambiado' });
+  }
+
+  const evaluatorRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(evaluator_id);
+  const desc = evaluatorRow?.full_name ? `Evaluador removido: ${evaluatorRow.full_name}` : 'Evaluador removido';
+
+  const tx = db.transaction(() => {
+    // Remove any partial evaluations and associated data
+    const evalIds = db.prepare('SELECT id FROM evaluations WHERE thesis_evaluator_id = ?').all(te.id).map(r => r.id);
+    if (evalIds.length) {
+      const placeholders = evalIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM evaluation_scores WHERE evaluation_id IN (${placeholders})`).run(...evalIds);
+      db.prepare(`DELETE FROM evaluation_files WHERE evaluation_id IN (${placeholders})`).run(...evalIds);
+      db.prepare(`DELETE FROM evaluations WHERE id IN (${placeholders})`).run(...evalIds);
+    }
+    db.prepare('DELETE FROM thesis_evaluators WHERE id = ?').run(te.id);
+    db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), thesis_id, 'evaluator_removed', desc, 1, Date.now());
+  });
+
+  try {
+    tx();
+    notifyTimeline(db, thesis_id, 'evaluator_removed', desc, req.user.id).catch(console.error);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // Reply to thesis (admin reviews checklist, may send back to student)
 app.post('/theses/:id/reply', authMiddleware, requireRole('admin'), (req, res) => {
   const thesis_id = req.params.id;
@@ -1486,10 +1527,24 @@ app.put('/users/:id', authMiddleware, requireRole('admin'), async (req, res) => 
 app.delete('/users/:id', authMiddleware, requireRole('admin'), (req, res) => {
   const { id } = req.params;
   const tx = db.transaction(() => {
-    // roles y enlaces con tesis
+    // roles y enlaces with tesis
     db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id);
-    // evaluador: quitar asignaciones y evaluaciones
-    db.prepare('DELETE FROM thesis_evaluators WHERE evaluator_id = ?').run(id);
+
+    // remove any notifications (FK -> users)
+    db.prepare('DELETE FROM notifications WHERE user_id = ?').run(id);
+
+    // remove any smtp config, signatures, and program admin links
+    db.prepare('DELETE FROM smtp_config WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM acta_signatures WHERE signer_user_id = ?').run(id);
+    db.prepare('DELETE FROM digital_signatures WHERE signer_user_id = ?').run(id);
+    db.prepare('DELETE FROM program_admins WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM programs WHERE admin_user_id = ?').run(id);
+
+    // if user is a student, unlink from thesis_students
+    db.prepare('DELETE FROM thesis_students WHERE student_id = ?').run(id);
+
+    // evaluador: primero borramos evaluaciones y sus artefactos, luego la asignación
+    // para evitar violaciones de foreign key.
     db.prepare(`DELETE FROM evaluation_files WHERE evaluation_id IN (
          SELECT e.id FROM evaluations e
          JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
@@ -1503,6 +1558,8 @@ app.delete('/users/:id', authMiddleware, requireRole('admin'), (req, res) => {
     db.prepare(`DELETE FROM evaluations WHERE thesis_evaluator_id IN (
          SELECT id FROM thesis_evaluators WHERE evaluator_id = ?
        )`).run(id);
+    db.prepare('DELETE FROM thesis_evaluators WHERE evaluator_id = ?').run(id);
+
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
   });
   try {

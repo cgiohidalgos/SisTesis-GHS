@@ -60,7 +60,7 @@ export default function StudentTimeline() {
         if (data && data[0] && data[0].timeline && Array.isArray(data[0].timeline)) {
           data[0].timeline = data[0].timeline.map((e: any) => ({
             ...e,
-            date: e.date ? new Date(e.date).toLocaleString() : undefined,
+            date: e.date ?? undefined,
           }));
         }
         setThesis(data[0] || null);

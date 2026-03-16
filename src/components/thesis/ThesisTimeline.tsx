@@ -42,6 +42,24 @@ function safeRender(value: any) {
   return String(value);
 }
 
+function normalizeTimestamp(value: unknown) {
+  if (value == null) return undefined;
+  // Prefer numeric timestamps; if seconds, convert to ms.
+  const num = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+  if (typeof num === 'number') {
+    return num < 1e12 ? num * 1000 : num;
+  }
+  return num;
+}
+
+function formatTimelineDate(value: unknown) {
+  if (value == null) return undefined;
+  const normalized = normalizeTimestamp(value);
+  const date = typeof normalized === 'number' ? new Date(normalized) : new Date(String(normalized));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
 export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecommendations, isBlindReview, isAdmin }: ThesisTimelineProps) {
   return (
     <div className="relative">
@@ -111,24 +129,24 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                     event.active ? "text-accent-foreground" : event.completed ? "text-foreground" : "text-muted-foreground"
                   )}
                 >
-                    <span className="whitespace-pre-wrap">
-                      {safeRender(event.label)}
-                    </span>
-                  </h4>
-                  {event.date && (
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">
-                      {new Date(event.date).toLocaleString()}
-                    </span>
-                  )}
-                </div>
+                  <span className="whitespace-pre-wrap">
+                    {safeRender(event.label)}
+                  </span>
+                </h4>
+                {event.date && (
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {formatTimelineDate(event.date)}
+                  </span>
+                )}
+              </div>
 
-                {event.actor && !isBlindReview && (
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                    <ActorIcon className="w-3 h-3" />
-                    <span>
-                      {safeRender(event.actor)}
-                    </span>
-                  </div>
+              {event.actor && !isBlindReview && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                  <ActorIcon className="w-3 h-3" />
+                  <span>
+                    {safeRender(event.actor)}
+                  </span>
+                </div>
                 )}
 
                 {event.actor && isBlindReview && event.actorRole === "evaluator" && (
@@ -143,7 +161,7 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                   {event.defense_date && (
                     <p className="text-sm">
                       <strong>Fecha y hora:</strong>{' '}
-                      <span className="font-medium">{new Date(event.defense_date).toLocaleString()}</span>
+                      <span className="font-medium">{formatTimelineDate(event.defense_date)}</span>
                     </p>
                   )}
                   {event.defense_location && (

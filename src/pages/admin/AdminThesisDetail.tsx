@@ -301,11 +301,11 @@ export default function AdminThesisDetail() {
       });
       if (!resp.ok) throw new Error('No se pudo cargar la tesis');
       const data = await resp.json();
-      // convert timeline dates to readable form
+      // keep timeline dates as raw values (they will be formatted in the timeline component)
       if (data.timeline && Array.isArray(data.timeline)) {
         data.timeline = data.timeline.map((e: any) => ({
           ...e,
-          date: e.date ? new Date(e.date).toLocaleString() : undefined,
+          date: e.date ?? undefined,
         }));
       }
       setThesis(data);
@@ -711,6 +711,7 @@ export default function AdminThesisDetail() {
                     );
                   }
                 }
+                const canChangeEvaluator = !docSent;
                 return (
                   <AccordionItem
                     key={
@@ -725,7 +726,36 @@ export default function AdminThesisDetail() {
                   >
                     <AccordionTrigger className="hover:no-underline py-4 flex justify-between items-center">
                       <span>{ev.is_blind ? 'Evaluador (Par ciego)' : ev.name}</span>
-                      {dueStatus}
+                      <div className="flex items-center gap-2">
+                        {canChangeEvaluator && (
+                          <button
+                            className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (!confirm('¿Cambiar este evaluador? Se eliminará la asignación actual.')) return;
+                              try {
+                                const token = localStorage.getItem('token');
+                                const resp = await fetch(`${API_BASE}/theses/${thesis.id}/evaluators/${ev.id}`, {
+                                  method: 'DELETE',
+                                  headers: { Authorization: token ? `Bearer ${token}` : '' },
+                                });
+                                if (!resp.ok) {
+                                  const err = await resp.json().catch(() => null);
+                                  throw new Error(err?.error || 'No se pudo quitar evaluador');
+                                }
+                                toast.success('Evaluador removido. Asigne un reemplazo.');
+                                fetchThesis();
+                                navigate(`/admin/evaluators?thesis=${thesis.id}`);
+                              } catch (err: any) {
+                                toast.error(err.message || 'Error cambiando evaluador');
+                              }
+                            }}
+                          >
+                            Cambiar evaluador
+                          </button>
+                        )}
+                        {dueStatus}
+                      </div>
                     </AccordionTrigger>
                     <AccordionContent className="pb-4 space-y-4">
                       {/* document rubric accordion if sent*/}
