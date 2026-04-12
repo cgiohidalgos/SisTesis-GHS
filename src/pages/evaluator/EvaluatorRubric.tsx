@@ -234,7 +234,7 @@ export default function EvaluatorRubric() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Fecha y Hora</p>
-                <p className="text-sm font-medium">{new Date(thesis.defense_date).toLocaleString()}</p>
+                <p className="text-sm font-medium">{new Date(thesis.defense_date * 1000).toLocaleString()}</p>
               </div>
               {thesis.defense_location && (
                 <div>
@@ -259,11 +259,11 @@ export default function EvaluatorRubric() {
           <div className="p-6 space-y-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
-                <p className="text-4xl font-black text-primary">{finalWeightedScore.toFixed(2)}<span className="text-lg text-muted-foreground font-medium ml-1">/ 5.00</span></p>
+                <p className="text-4xl font-black text-primary">{finalWeightedScore.toFixed(1)}<span className="text-lg text-muted-foreground font-medium ml-1">/ 5.0</span></p>
                 <p className="text-sm font-medium text-success mt-1">Nota Final Ponderada</p>
               </div>
               <div className="text-xs text-muted-foreground bg-slate-100 dark:bg-slate-800 p-3 rounded-lg font-mono break-words">
-                Cálculo: ({docScore.toFixed(2)} x {weights.doc}%) {wantPresentation ? "+ (" + presScore.toFixed(2) + " x " + weights.presentation + "%)" : ""}
+                Cálculo: ({docScore.toFixed(1)} x {weights.doc}%) {wantPresentation ? "+ (" + presScore.toFixed(1) + " x " + weights.presentation + "%)" : ""}
               {/* show debug info when no eval present */}
               {docEval || presEval ? null : (
                 <p className="text-xs text-red-500 mt-2">No se encontró evaluación para el usuario actual.</p>

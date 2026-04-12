@@ -20,7 +20,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 export default function AdminPrograms() {
   const { user, isSuper } = useAuth();
-  const [programs, setPrograms] = useState<{ id: string; name: string; admin_user_ids?: string[]; reception_start?: string; reception_end?: string; max_evaluators?: number }[]>([]);
+  const [programs, setPrograms] = useState<{ id: string; name: string; admin_user_ids?: string[]; reception_start?: string; reception_end?: string; max_evaluators?: number; hidden?: boolean }[]>([]);
   const [admins, setAdmins] = useState<{id:string;full_name:string;institutional_email:string}[]>([]);
   const [name, setName] = useState("");
   const [adminIds, setAdminIds] = useState<string[]>([]);
@@ -127,6 +127,22 @@ export default function AdminPrograms() {
     setMaxEvaluators(p.max_evaluators || 2);
   };
 
+  const handleToggleHidden = async (id: string) => {
+    try {
+      const token = localStorage.getItem("token");
+      const resp = await fetch(`${API_BASE}/programs/${id}/toggle-hidden`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error("Error actualizando visibilidad");
+      const { hidden } = await resp.json();
+      setPrograms((ps) => ps.map(p => p.id === id ? { ...p, hidden } : p));
+      toast.success(hidden ? "Programa ocultado" : "Programa visible");
+    } catch (err: any) {
+      toast.error(err.message || "Error al cambiar visibilidad");
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (!confirm("¿Eliminar este programa?")) return;
     try {
@@ -165,9 +181,14 @@ export default function AdminPrograms() {
             </div>
           ) : (
             programs.map((p) => (
-              <div key={p.id} className="bg-card p-3 rounded flex justify-between items-center">
+              <div key={p.id} className={`bg-card p-3 rounded flex justify-between items-center ${p.hidden ? 'opacity-50' : ''}`}>
                 <div>
-                  <span>{p.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span>{p.name}</span>
+                    {p.hidden && (
+                      <span className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">Oculto</span>
+                    )}
+                  </div>
                   {p.reception_start && p.reception_end && (
                     <p className="text-xs text-muted-foreground">
                       Recepción: {p.reception_start} → {p.reception_end}
@@ -181,6 +202,9 @@ export default function AdminPrograms() {
                   )}
                 </div>
                 <div className="space-x-2">
+                  <Button size="sm" variant="ghost" onClick={() => handleToggleHidden(p.id)}>
+                    {p.hidden ? 'Mostrar' : 'Ocultar'}
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={() => handleEdit(p)}>
                     Edit
                   </Button>

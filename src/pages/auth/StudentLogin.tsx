@@ -4,7 +4,7 @@ import { getApiBase } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GraduationCap } from "lucide-react";
+import { GraduationCap, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 export default function StudentLogin() {
@@ -98,10 +98,21 @@ export default function StudentLogin() {
           </p>
         </form>
 
-        <div className="mt-4 text-center">
+        <div className="mt-4 text-center space-y-2">
           <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">
             ← Volver al inicio
           </Link>
+          <div>
+            <a
+              href="/Manual_Estudiante.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-sm text-accent hover:underline font-medium"
+            >
+              <FileText className="w-4 h-4" />
+              Manual de usuario para estudiantes
+            </a>
+          </div>
         </div>
       </div>
     </div>

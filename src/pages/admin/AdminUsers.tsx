@@ -30,7 +30,7 @@ export default function AdminUsers() {
     student_code: "",
     cedula: "",
     institutional_email: "",
-    roles: "student",
+    roles: ["student"] as string[],
     program_ids: [] as string[],
   });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,15 +80,15 @@ export default function AdminUsers() {
     }
   }, [isSuper, authLoading, navigate]);
 
-  // while we are checking or if unauthorized just don't render anything
-  if (!authLoading && !isSuper) {
-    return null;
-  }
-
   useEffect(() => {
     fetchUsers();
     fetchPrograms();
   }, []);
+
+  // while we are checking or if unauthorized just don't render anything
+  if (!authLoading && !isSuper) {
+    return null;
+  }
 
   const resetForm = () => {
     setForm({
@@ -97,7 +97,8 @@ export default function AdminUsers() {
       student_code: "",
       cedula: "",
       institutional_email: "",
-      roles: "student",
+      roles: ["student"],
+      program_ids: [],
     });
     setEditingId(null);
   };
@@ -112,11 +113,9 @@ export default function AdminUsers() {
         student_code: form.student_code || undefined,
         cedula: form.cedula || undefined,
         institutional_email: form.institutional_email || undefined,
-        roles: form.roles ? [form.roles] : [],
+        roles: form.roles,
+        program_ids: form.roles.includes('admin') ? (form.program_ids || []) : [],
       };
-      if (form.roles === 'admin') {
-        payload.program_ids = form.program_ids || [];
-      }
       if (!editingId || form.password) payload.password = form.password;
 
       let resp;
@@ -167,7 +166,7 @@ export default function AdminUsers() {
       student_code: u.student_code || "",
       cedula: u.cedula || "",
       institutional_email: u.institutional_email || "",
-      roles: u.roles[0] || "student",
+      roles: u.roles.length > 0 ? u.roles : ["student"],
       program_ids: u.program_ids || [],
     });
     toast.success(`Editando ${u.full_name || "usuario"}`);
@@ -254,19 +253,26 @@ export default function AdminUsers() {
             />
           </div>
           <div>
-            <Label>Rol</Label>
-            <select
-              className="block w-full rounded border px-2 py-1"
-              value={form.roles}
-              onChange={(e) => setForm({ ...form, roles: e.target.value, program_ids: [] })}
-            >
-              <option value="student">Estudiante</option>
-              <option value="evaluator">Evaluador</option>
-              <option value="admin">Admin</option>
-              <option value="superadmin">Superadmin</option>
-            </select>
+            <Label>Roles</Label>
+            <div className="flex flex-wrap gap-4 mt-1">
+              {["student", "evaluator", "admin", "superadmin"].map((r) => (
+                <label key={r} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.roles.includes(r)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...form.roles, r]
+                        : form.roles.filter((x: string) => x !== r);
+                      setForm({ ...form, roles: next, program_ids: next.includes('admin') ? form.program_ids : [] });
+                    }}
+                  />
+                  <span className="capitalize">{r === "student" ? "Estudiante" : r === "evaluator" ? "Evaluador" : r === "admin" ? "Admin" : "Superadmin"}</span>
+                </label>
+              ))}
+            </div>
           </div>
-          {form.roles === 'admin' && (
+          {form.roles.includes('admin') && (
             <div>
               <Label>Programas asignados</Label>
               <select

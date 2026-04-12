@@ -48,6 +48,8 @@ export default function AdminThesisDetail() {
   const [comment, setComment] = useState("");
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
   const [reviewItems, setReviewItems] = useState<{id:string,label:string}[]>([]);
+  const [programDocRubric, setProgramDocRubric] = useState<any[] | null>(null);
+  const [programPresRubric, setProgramPresRubric] = useState<any[] | null>(null);
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
   const [actaStatus, setActaStatus] = useState<any>(null);
   const [overrideScore, setOverrideScore] = useState<number | null>(null);
@@ -404,19 +406,39 @@ export default function AdminThesisDetail() {
   // Copiar enlace al portapapeles
   const handleCopyLink = (signerName: string) => {
     const link = generatedSigningLinks[signerName]?.url;
-    if (link) {
-      navigator.clipboard.writeText(link).then(() => {
+    if (!link) return;
+    const markCopied = () => {
+      setGeneratedSigningLinks(prev => ({
+        ...prev,
+        [signerName]: { ...prev[signerName], copied: true }
+      }));
+      setTimeout(() => {
         setGeneratedSigningLinks(prev => ({
           ...prev,
-          [signerName]: { ...prev[signerName], copied: true }
+          [signerName]: { ...prev[signerName], copied: false }
         }));
-        setTimeout(() => {
-          setGeneratedSigningLinks(prev => ({
-            ...prev,
-            [signerName]: { ...prev[signerName], copied: false }
-          }));
-        }, 2000);
-      });
+      }, 2000);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(link).then(markCopied).catch(() => fallbackCopy(link, markCopied));
+    } else {
+      fallbackCopy(link, markCopied);
+    }
+  };
+
+  const fallbackCopy = (text: string, onSuccess: () => void) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand('copy');
+      onSuccess();
+    } catch { /* ignore */ } finally {
+      document.body.removeChild(ta);
     }
   };
 
@@ -446,32 +468,7 @@ export default function AdminThesisDetail() {
 
   useEffect(() => {
     fetchThesis();
-    // load review checklist template (admins allowed too)
-    (async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const resp = await fetch(`${API_BASE}/super/review-items`, {
-          headers: { Authorization: token ? `Bearer ${token}` : '' },
-        });
-        if (resp.ok) {
-          const items = await resp.json();
-          // Deduplicar por etiqueta, ya que algunos ítems pueden venir repetidos con distinto id
-          const seenLabels = new Set<string>();
-          const uniqueItems = items.filter((item: any) => {
-            const label = String(item?.label ?? '').trim().toLowerCase();
-            if (!label || seenLabels.has(label)) return false;
-            seenLabels.add(label);
-            return true;
-          });
-          setReviewItems(uniqueItems);
-          const init: Record<string, boolean> = {};
-          uniqueItems.forEach((it:any) => { init[it.id] = false; });
-          setChecklist(init);
-        }
-      } catch (e) {
-        console.error('failed to load review items', e);
-      }
-    })();
+    // load review checklist per-program (loaded after thesis fetch via separate effect)
     // also load evaluation weights if superadmin
     (async () => {
       try {
@@ -488,6 +485,46 @@ export default function AdminThesisDetail() {
       }
     })();
   }, [id]);
+
+  // Load review items for the thesis's program once thesis is available
+  useEffect(() => {
+    if (!thesis) return;
+    const programId = thesis.programs?.[0]?.id;
+    if (!programId) return;
+    (async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const resp = await fetch(`${API_BASE}/admin/program-review-items/${programId}`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (resp.ok) {
+          const items = await resp.json();
+          setReviewItems(items);
+          const init: Record<string, boolean> = {};
+          items.forEach((it: any) => { init[it.id] = false; });
+          setChecklist(init);
+        }
+      } catch (e) {
+        console.error('failed to load review items', e);
+      }
+      // Load program rubric so admin sees the same rubric used by evaluators
+      try {
+        const token = localStorage.getItem('token');
+        const rubricResp = await fetch(`${API_BASE}/admin/program-rubrics/${programId}`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (rubricResp.ok) {
+          const rubrics = await rubricResp.json();
+          const docR = rubrics.find((r: any) => r.evaluation_type === 'document');
+          const presR = rubrics.find((r: any) => r.evaluation_type === 'presentation');
+          if (docR) setProgramDocRubric(docR.sections_json);
+          if (presR) setProgramPresRubric(presR.sections_json);
+        }
+      } catch (e) {
+        console.error('failed to load program rubric', e);
+      }
+    })();
+  }, [thesis?.programs?.[0]?.id]);
 
   const markNonCompliant = async () => {
     if (!thesis) return;
@@ -519,7 +556,7 @@ export default function AdminThesisDetail() {
 
   // component for scheduling the defense date/location
   const DefenseScheduler = ({ thesis, onScheduled }: any) => {
-    const [date, setDate] = useState<string>(thesis.defense_date ? new Date(thesis.defense_date).toISOString().slice(0,16) : '');
+    const [date, setDate] = useState<string>(thesis.defense_date ? new Date(thesis.defense_date * 1000).toISOString().slice(0,16) : '');
     const [location, setLocation] = useState<string>(thesis.defense_location || '');
     const [info, setInfo] = useState<string>(thesis.defense_info || '');
     const [saving, setSaving] = useState(false);
@@ -665,7 +702,7 @@ export default function AdminThesisDetail() {
                 const hasSubmitted = thesis.evaluations?.some((x:any) => x.evaluator_id === e.id);
                 return (
                   <span key={e.id} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm">
-                    <span>{e.is_blind ? 'Par ciego' : normalizePersonName(e)}</span>
+                    <span>{normalizePersonName(e)}{e.is_blind ? ' (par ciego)' : ''}{e.institutional_email ? ` — ${e.institutional_email}` : ''}</span>
                     {!hasSubmitted && (
                       <button
                         className="text-xs text-destructive hover:text-destructive/80"
@@ -739,7 +776,7 @@ export default function AdminThesisDetail() {
                     className="border-b px-2"
                   >
                     <AccordionTrigger className="hover:no-underline py-4 flex justify-between items-center">
-                      <span>{ev.is_blind ? 'Evaluador (Par ciego)' : ev.name}</span>
+                      <span>{ev.name}{ev.is_blind ? ' (par ciego)' : ''}{ev.institutional_email ? ` — ${ev.institutional_email}` : ''}</span>
                       <div className="flex items-center gap-2">
                         {canChangeEvaluator && (
                           <button
@@ -789,7 +826,7 @@ export default function AdminThesisDetail() {
                                 showFiles={false}
                                 initialConcept={docEval.concept || null}
                                 initialFinalScore={docEval.final_score}
-                                initialSections={docEval ? defaultRubric.map((s: any) => ({
+                                initialSections={docEval ? (programDocRubric ?? defaultRubric).map((s: any) => ({
                                   ...s,
                                   criteria: s.criteria.map((c: any) => {
                                     const sc = docEval.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
@@ -821,7 +858,7 @@ export default function AdminThesisDetail() {
                                 showFiles={false}
                                 initialConcept={presEval.concept || null}
                                 initialFinalScore={presEval.final_score}
-                                initialSections={presEval ? presentationRubric.map((s: any) => ({
+                                initialSections={presEval ? (programPresRubric ?? presentationRubric).map((s: any) => ({
                                   ...s,
                                   criteria: s.criteria.map((c: any) => {
                                     const sc = presEval.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
@@ -870,7 +907,7 @@ export default function AdminThesisDetail() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Fecha y Hora</p>
-                <p className="text-sm font-medium">{new Date(thesis.defense_date).toLocaleString()}</p>
+                <p className="text-sm font-medium">{new Date(thesis.defense_date * 1000).toLocaleString()}</p>
               </div>
               {thesis.defense_location && (
                 <div>
@@ -932,16 +969,16 @@ export default function AdminThesisDetail() {
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
                     <p className="text-4xl font-black text-primary">
-                      {consolidated.finalWeighted.toFixed(2)}
+                      {consolidated.finalWeighted.toFixed(1)}
                       <span className="text-lg text-muted-foreground font-medium ml-1">/ 5.00</span>
                     </p>
                     <p className="text-sm font-medium text-success mt-1">Nota Final Ponderada</p>
                   </div>
                   <div className="text-xs text-muted-foreground bg-slate-100 dark:bg-slate-800 p-3 rounded-lg font-mono">
                     {overrideScore != null ? (
-                      <>Nota fijada manualmente: {overrideScore.toFixed(2)}</>
+                      <>Nota fijada manualmente: {overrideScore.toFixed(1)}</>
                     ) : (
-                      <>Cálculo: ({consolidated.docAvg.toFixed(2)} x {weights.doc}%) {thesis.defense_date ? `+ (${consolidated.presAvg.toFixed(2)} x ${weights.presentation}%)` : ''} = {consolidated.finalWeighted.toFixed(2)}</>
+                      <>Cálculo: ({consolidated.docAvg.toFixed(1)} x {weights.doc}%) {thesis.defense_date ? `+ (${consolidated.presAvg.toFixed(1)} x ${weights.presentation}%)` : ''} = {consolidated.finalWeighted.toFixed(1)}</>
                     )}
                   </div>
                 </div>
@@ -955,9 +992,9 @@ export default function AdminThesisDetail() {
                       : docScore;
                     return (
                       <div key={`${key}-${idx}`} className="mb-2">
-                        <strong>{displayName}</strong>: documento {docScore!==null?docScore.toFixed(2):'-'}, sustentación {presScore!==null?presScore.toFixed(2):'-'}, total {totalScore!==null?totalScore.toFixed(2):'-'}
+                        <strong>{displayName}</strong>: documento {docScore!==null?docScore.toFixed(1):'-'}, sustentación {presScore!==null?presScore.toFixed(1):'-'}, total {totalScore!==null?totalScore.toFixed(1):'-'}
                         <div className="text-xs text-muted-foreground">
-                          ({docScore!==null?`${docScore.toFixed(2)} x ${weights.doc}%`:'0'}{thesis.defense_date?` + ${presScore!==null?`${presScore.toFixed(2)} x ${weights.presentation}%`:'0'}`:''})
+                          ({docScore!==null?`${docScore.toFixed(1)} x ${weights.doc}%`:'0'}{thesis.defense_date?` + ${presScore!==null?`${presScore.toFixed(1)} x ${weights.presentation}%`:'0'}`:''})
                         </div>
                       </div>
                     );
@@ -1024,7 +1061,7 @@ export default function AdminThesisDetail() {
             {thesis.defense_date ? (
               <div className="space-y-2">
                 <p>
-                  <strong>Fecha y hora:</strong>{' '}{new Date(thesis.defense_date).toLocaleString()}
+                  <strong>Fecha y hora:</strong>{' '}{new Date(thesis.defense_date * 1000).toLocaleString()}
                 </p>
                 {thesis.defense_location && (
                   <p><strong>Lugar:</strong> {thesis.defense_location}</p>
@@ -1374,12 +1411,12 @@ export default function AdminThesisDetail() {
           <div className="mb-6 border p-4 rounded bg-yellow-50">
             <h3 className="font-semibold mb-1">🏅 Carta de Recomendación Meritoria</h3>
             <p className="text-xs text-muted-foreground mb-3">
-              La tesis obtuvo una nota de <strong>{Number(meritoriaStatus.score).toFixed(2)}</strong>, por lo que requiere carta de recomendación meritoria firmada por los directores.
+              La tesis obtuvo una nota de <strong>{Number(meritoriaStatus.score).toFixed(1)}</strong>, por lo que requiere carta de recomendación meritoria firmada por los evaluadores.
             </p>
 
             {/* Estado de firmas */}
             <div className="mb-3 space-y-1">
-              <p className="text-xs font-medium">Firmas de directores:</p>
+              <p className="text-xs font-medium">Firmas de evaluadores:</p>
               {meritoriaStatus.directors.map((d: any, idx: number) => {
                 const name = normalizePersonName(d);
                 const key = normalizePersonKey(d);
@@ -1403,7 +1440,7 @@ export default function AdminThesisDetail() {
                     <div key={`${key}-${idx}`} className="flex items-center gap-2">
                       <div className="flex-1 min-w-0 text-xs">
                         <p className="font-medium">{name}</p>
-                        <p className="text-muted-foreground">Director</p>
+                        <p className="text-muted-foreground">Evaluador</p>
                       </div>
                       {generatedSigningLinks[key]?.url ? (
                         <Button
@@ -1433,7 +1470,7 @@ export default function AdminThesisDetail() {
             {/* Banner firmada completa */}
             {meritoriaStatus.allSigned && (
               <div className="bg-green-50 border border-green-200 rounded p-3 mb-3">
-                <p className="text-sm font-medium text-green-700 mb-2">✅ Carta firmada por todos los directores</p>
+                <p className="text-sm font-medium text-green-700 mb-2">✅ Carta firmada por todos los evaluadores</p>
                 <div className="flex gap-2 flex-wrap">
                   <Button variant="outline" size="sm" onClick={async () => {
                     try {

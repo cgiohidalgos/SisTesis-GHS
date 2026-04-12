@@ -158,10 +158,10 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
 
                 {event.status === 'defense_scheduled' ? (
                 <div className="mt-2 p-3 bg-info/10 rounded">
-                  {event.defense_date && (
+                  {(event.defense_date_display || event.defense_date) && (
                     <p className="text-sm">
                       <strong>Fecha y hora:</strong>{' '}
-                      <span className="font-medium">{formatTimelineDate(event.defense_date)}</span>
+                      <span className="font-medium">{event.defense_date_display || formatTimelineDate(event.defense_date)}</span>
                     </p>
                   )}
                   {event.defense_location && (

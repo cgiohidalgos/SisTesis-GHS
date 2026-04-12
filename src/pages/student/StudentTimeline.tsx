@@ -180,7 +180,7 @@ export default function StudentTimeline() {
               )}
               {thesis.defense_date && (
                 <p className="text-sm text-muted-foreground mt-2">
-                  <strong>Sustentación:</strong> {new Date(thesis.defense_date).toLocaleString()} {thesis.defense_location ? `en ${thesis.defense_location}` : ''}
+                  <strong>Sustentación:</strong> {new Date(thesis.defense_date * 1000).toLocaleString()} {thesis.defense_location ? `en ${thesis.defense_location}` : ''}
                   {thesis.defense_info && ` – ${thesis.defense_info}`}
                 </p>
               )}
@@ -300,13 +300,13 @@ export default function StudentTimeline() {
                       {docEvals.map((ev:any, i:number) => (
                         <div key={ev.id || i} className="flex justify-between text-sm">
                           <span className="text-muted-foreground">{isBlind ? `Evaluador ${i+1}` : ev.evaluator_name}</span>
-                          <span className="font-semibold">{Number(ev.final_score).toFixed(2)}</span>
+                          <span className="font-semibold">{Number(ev.final_score).toFixed(1)}</span>
                         </div>
                       ))}
                       {docAvg != null && (
                         <div className="border-t pt-2 mt-2 flex justify-between text-sm font-bold">
                           <span>Promedio Documento</span>
-                          <span>{docAvg.toFixed(2)} / 5.00</span>
+                          <span>{docAvg.toFixed(1)} / 5.0</span>
                         </div>
                       )}
                     </ScoreCard>
@@ -321,13 +321,13 @@ export default function StudentTimeline() {
                       {presEvals.map((ev:any, i:number) => (
                         <div key={ev.id || i} className="flex justify-between text-sm">
                           <span className="text-muted-foreground">{isBlind ? `Evaluador ${i+1}` : ev.evaluator_name}</span>
-                          <span className="font-semibold">{Number(ev.final_score).toFixed(2)}</span>
+                          <span className="font-semibold">{Number(ev.final_score).toFixed(1)}</span>
                         </div>
                       ))}
                       {presAvg != null && (
                         <div className="border-t pt-2 mt-2 flex justify-between text-sm font-bold">
                           <span>Promedio Sustentación</span>
-                          <span>{presAvg.toFixed(2)} / 5.00</span>
+                          <span>{presAvg.toFixed(1)} / 5.0</span>
                         </div>
                       )}
                     </ScoreCard>
@@ -337,17 +337,17 @@ export default function StudentTimeline() {
                   {shouldShowConsolidated && (
                     <ScoreCard label="Calificación Consolidada">
                       <div className="text-center mb-3">
-                        <span className="text-3xl font-black text-primary">{Number(finalScore).toFixed(2)}</span>
-                        <span className="text-lg text-muted-foreground"> / 5.00</span>
+                        <span className="text-3xl font-black text-primary">{Number(finalScore).toFixed(1)}</span>
+                        <span className="text-lg text-muted-foreground"> / 5.0</span>
                       </div>
                       <div className="text-sm text-center font-semibold text-muted-foreground mb-2">Nota Final Ponderada</div>
                       {hasDefense && allEvaluatedPresentation ? (
                         <p className="text-sm text-center text-muted-foreground break-words">
-                          Cálculo: ({docAvg.toFixed(2)} × {w.doc}%) + ({presAvg?.toFixed(2)} × {w.presentation}%) = {Number(finalScore).toFixed(2)}
+                          Cálculo: ({docAvg.toFixed(1)} × {w.doc}%) + ({presAvg?.toFixed(1)} × {w.presentation}%) = {Number(finalScore).toFixed(1)}
                         </p>
                       ) : (
                         <p className="text-sm text-center text-muted-foreground break-words">
-                          Cálculo: promedio documento = {docAvg.toFixed(2)}
+                          Cálculo: promedio documento = {docAvg.toFixed(1)}
                         </p>
                       )}
 
@@ -356,12 +356,12 @@ export default function StudentTimeline() {
                           {perEvaluator.map((pe, i) => (
                             <div key={i} className="text-sm text-muted-foreground">
                               <span className="font-medium text-foreground">{pe.name || `Evaluador ${i+1}`}:</span>{' '}
-                              {pe.docScore != null && <>documento {pe.docScore.toFixed(2)}</>}
-                              {pe.presScore != null && <>, sustentación {pe.presScore.toFixed(2)}</>}
-                              {pe.total != null && <>, total <span className="font-semibold text-foreground">{pe.total.toFixed(2)}</span></>}
+                              {pe.docScore != null && <>documento {pe.docScore.toFixed(1)}</>}
+                              {pe.presScore != null && <>, sustentación {pe.presScore.toFixed(1)}</>}
+                              {pe.total != null && <>, total <span className="font-semibold text-foreground">{pe.total.toFixed(1)}</span></>}
                               {pe.docScore != null && pe.presScore != null && (
                                 <div className="text-xs ml-4 text-muted-foreground/70">
-                                  ({pe.docScore.toFixed(2)} × {w.doc}% + {pe.presScore.toFixed(2)} × {w.presentation}%)
+                                  ({pe.docScore.toFixed(1)} × {w.doc}% + {pe.presScore.toFixed(1)} × {w.presentation}%)
                                 </div>
                               )}
                             </div>

@@ -182,11 +182,11 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
 
     // Datos de contexto compartido para plantillas
     const studentRows   = db.prepare(`SELECT u.full_name, u.institutional_email FROM users u JOIN thesis_students ts ON u.id = ts.student_id WHERE ts.thesis_id = ?`).all(thesisId);
-    const evaluatorRows = db.prepare(`SELECT u.full_name FROM users u JOIN thesis_evaluators te ON u.id = te.evaluator_id WHERE te.thesis_id = ?`).all(thesisId);
+    const evaluatorRows = db.prepare(`SELECT u.full_name, te.is_blind FROM users u JOIN thesis_evaluators te ON u.id = te.evaluator_id WHERE te.thesis_id = ?`).all(thesisId);
     const programRows   = db.prepare(`SELECT p.name FROM programs p JOIN thesis_programs tp ON p.id = tp.program_id WHERE tp.thesis_id = ?`).all(thesisId);
 
     const defenseDateStr = thesis.defense_date
-      ? new Date(thesis.defense_date * 1000).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      ? new Date(thesis.defense_date * 1000).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       : '';
 
     const baseCtx = {
@@ -194,7 +194,7 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
       descripcion:          description || '',
       nombres_estudiantes:  studentRows.map(s => s.full_name || '').join(', '),
       correos_estudiantes:  studentRows.map(s => s.institutional_email || '').join(', '),
-      nombres_evaluadores:  evaluatorRows.map(e => e.full_name || '').join(', '),
+      nombres_evaluadores:  evaluatorRows.some(e => e.is_blind) ? 'pares ciegos' : evaluatorRows.map(e => e.full_name || '').join(', '),
       programa:             programRows.map(p => p.name).join(', '),
       fecha:                new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }),
       fecha_sustentacion:   defenseDateStr,
@@ -203,7 +203,11 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
     };
 
     // Cargar plantilla configurada (o fallback genérico)
-    const label = EVENT_LABELS[eventType] || eventType;
+    let label = EVENT_LABELS[eventType] || eventType;
+    // For defense_scheduled, use the verb from the description (programada vs reprogramada)
+    if (eventType === 'defense_scheduled' && description && description.startsWith('Sustentación reprogramada')) {
+      label = 'Sustentación reprogramada';
+    }
     const tpl = db.prepare('SELECT subject, body_html FROM notification_templates WHERE event_type = ?').get(eventType);
     const subjectTpl  = tpl?.subject   || `[SisTesis] ${label}: {{titulo_tesis}}`;
     const bodyTpl     = tpl?.body_html || `<div style="font-family:sans-serif;max-width:600px"><p>Hola <strong>{{destinatario_nombre}}</strong>,</p><p><strong>Tesis:</strong> {{titulo_tesis}}</p><p><strong>Detalle:</strong> {{descripcion}}</p><hr style="border:none;border-top:1px solid #eee;margin:20px 0"><p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p></div>`;
@@ -214,6 +218,7 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
       : [];
     const evaluatorIds = db.prepare('SELECT evaluator_id FROM thesis_evaluators WHERE thesis_id = ?').all(thesisId).map(r => r.evaluator_id);
     const adminIds     = db.prepare("SELECT DISTINCT user_id FROM user_roles WHERE role IN ('admin','superadmin')").all().map(r => r.user_id);
+    const directorIds  = db.prepare('SELECT user_id FROM thesis_directors WHERE thesis_id = ? AND user_id IS NOT NULL').all(thesisId).map(r => r.user_id);
 
     // Leer reglas configurables de la BD
     const rules = db.prepare('SELECT role, enabled FROM notification_rules WHERE event_type = ?').all(eventType);
@@ -224,11 +229,12 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
         if (rule.role === 'student')   recipientIds.push(...studentIds);
         if (rule.role === 'admin')     recipientIds.push(...adminIds);
         if (rule.role === 'evaluator') recipientIds.push(...evaluatorIds);
+        if (rule.role === 'director')  recipientIds.push(...directorIds);
       }
     } else {
       recipientIds = ACT_EVENTS.has(eventType)
         ? [...adminIds, ...evaluatorIds]
-        : [...studentIds, ...evaluatorIds, ...adminIds];
+        : [...studentIds, ...evaluatorIds, ...adminIds, ...directorIds];
     }
 
     const uniqueIds = [...new Set(recipientIds)].filter(id => id !== triggeredBy);

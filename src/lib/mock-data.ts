@@ -38,6 +38,7 @@ export interface TimelineEvent {
   revisionFiles?: { name: string; url: string }[];
   // details provided when a defense is scheduled
   defense_date?: string;
+  defense_date_display?: string;
   defense_location?: string;
   defense_info?: string;
 }

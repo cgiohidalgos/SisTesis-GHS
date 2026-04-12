@@ -109,7 +109,7 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const upload = multer({ 
   dest: uploadDir,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB max file size
+    fileSize: 100 * 1024 * 1024, // 100MB max file size
     files: 5 // max 5 files per request
   },
   fileFilter: (req, file, cb) => {
@@ -142,9 +142,9 @@ function scoreClassification(score) {
 
 function scoreToSpanishText(score) {
   const digits = ['CERO','UNO','DOS','TRES','CUATRO','CINCO','SEIS','SIETE','OCHO','NUEVE'];
-  const fixed = Number(score || 0).toFixed(2);
+  const fixed = Number(score || 0).toFixed(1);
   const [whole, decimals] = fixed.split('.');
-  return `${digits[Number(whole)] || whole} PUNTO ${digits[Number(decimals[0])] || decimals[0]} ${digits[Number(decimals[1])] || decimals[1]}`;
+  return `${digits[Number(whole)] || whole} PUNTO ${digits[Number(decimals[0])] || decimals[0]}`;
 }
 
 // Genera tabla de firmas dinámicamente según los datos disponibles
@@ -1629,16 +1629,21 @@ app.put('/users/:id', authMiddleware, requireRole('admin'), async (req, res) => 
 // Enviar credenciales de acceso a un usuario (genera nueva contraseña y envía email)
 app.post('/users/:id/send-credentials', authMiddleware, requireRole('admin'), async (req, res) => {
   const { id } = req.params;
-  const user = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(id);
+  const user = db.prepare('SELECT id, full_name, institutional_email, cedula FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
   if (!user.institutional_email) return res.status(400).json({ error: 'El usuario no tiene correo institucional' });
 
   const firstName = (user.full_name || '').split(' ')[0].toLowerCase() || 'usuario';
-  const newPassword = firstName + Math.random().toString(36).slice(-6);
-  const hash = await bcrypt.hash(newPassword, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
+  // Password follows fixed pattern: first name lowercase + cedula. Never reset.
+  const password = user.cedula ? firstName + user.cedula : firstName + Math.random().toString(36).slice(-6);
 
-  const sent = await sendWelcomeEmail(db, user.institutional_email, user.full_name, user.institutional_email, newPassword, req.user.id);
+  // Only set password if user doesn't have one yet (cedula-based passwords are set at seed time)
+  if (!user.cedula) {
+    const hash = await bcrypt.hash(password, 10);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
+  }
+
+  const sent = await sendWelcomeEmail(db, user.institutional_email, user.full_name, user.institutional_email, password, req.user.id);
   if (!sent) return res.status(500).json({ error: 'No se pudo enviar el correo. Verifica la configuración SMTP.' });
   res.json({ ok: true });
 });
@@ -1870,24 +1875,50 @@ app.get('/user_roles', (req, res) => {
 // This endpoint is intentionally public so the landing page can show reception windows
 // without requiring users to be logged in.
 app.get('/programs', (req, res) => {
-  // return program info along with list of admin user ids (and optional emails)
+  // Determine if caller is admin/superadmin to decide whether to include hidden programs
+  let isAdmin = false;
+  try {
+    const authHeader = req.headers['authorization'] || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (token) {
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'ebbc1015f164c3b46f50de43732395eed6d9fee8468d36b57bcd9e755911b626830a851fc20e8119d958a964ef918005416f9ef8c8c58068ea94b7d1629c67b4');
+      const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(decoded.id).map(r => r.role);
+      isAdmin = roles.includes('admin') || roles.includes('superadmin');
+    }
+  } catch {}
+
   const rows = db.prepare(
-    `SELECT p.id, p.name, p.reception_start, p.reception_end,
+    `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
             GROUP_CONCAT(pa.user_id) as admin_user_ids
      FROM programs p
      LEFT JOIN program_admins pa ON pa.program_id = p.id
-     GROUP BY p.id, p.name, p.reception_start, p.reception_end
+     GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden
      ORDER BY p.name`
   ).all();
-  // convert comma-separated string to array
-  const data = rows.map(r => ({
-    id: r.id,
-    name: r.name,
-    reception_start: r.reception_start ? new Date(r.reception_start).toISOString().slice(0,10) : null,
-    reception_end: r.reception_end ? new Date(r.reception_end).toISOString().slice(0,10) : null,
-    admin_user_ids: r.admin_user_ids ? r.admin_user_ids.split(',') : []
-  }));
+
+  const data = rows
+    .filter(r => isAdmin || !r.hidden)
+    .map(r => ({
+      id: r.id,
+      name: r.name,
+      reception_start: r.reception_start ? new Date(r.reception_start).toISOString().slice(0,10) : null,
+      reception_end: r.reception_end ? new Date(r.reception_end).toISOString().slice(0,10) : null,
+      max_evaluators: r.max_evaluators ?? 2,
+      hidden: !!r.hidden,
+      admin_user_ids: r.admin_user_ids ? r.admin_user_ids.split(',') : []
+    }));
   res.json(data);
+});
+
+// toggle visibilidad de un programa
+app.patch('/programs/:id/toggle-hidden', authMiddleware, requireRole('admin'), (req, res) => {
+  const id = req.params.id;
+  const prog = db.prepare('SELECT id, hidden FROM programs WHERE id = ?').get(id);
+  if (!prog) return res.status(404).json({ error: 'not found' });
+  const newHidden = prog.hidden ? 0 : 1;
+  db.prepare('UPDATE programs SET hidden = ? WHERE id = ?').run(newHidden, id);
+  res.json({ id, hidden: !!newHidden });
 });
 
 // List users with evaluator role — used by student thesis registration to pick directors.
@@ -1985,7 +2016,7 @@ app.get('/super/review-items', authMiddleware, (req, res) => {
   if (!roles.includes('admin') && !roles.includes('superadmin')) {
     return res.status(403).json({ error: 'forbidden' });
   }
-  const items = db.prepare('SELECT id, label, sort_order FROM review_items ORDER BY sort_order').all();
+  const items = db.prepare('SELECT id, label, sort_order FROM review_items WHERE program_id IS NULL ORDER BY sort_order').all();
   res.json(items);
 });
 
@@ -2080,8 +2111,10 @@ app.get('/admin/program-review-items/:programId', authMiddleware, (req, res) => 
   let items = db.prepare(
     'SELECT id, label, sort_order FROM review_items WHERE program_id = ? ORDER BY sort_order'
   ).all(programId);
-  // If no program-specific items exist, copy global items (program_id IS NULL) to this program
-  if (items.length === 0) {
+  // If no program-specific items exist AND program was never initialized, copy global defaults once
+  const initKey = `review_init_${programId}`;
+  const alreadyInit = db.prepare('SELECT value FROM settings WHERE key = ?').get(initKey);
+  if (items.length === 0 && !alreadyInit) {
     const globals = db.prepare(
       'SELECT label, sort_order FROM review_items WHERE program_id IS NULL ORDER BY sort_order'
     ).all();
@@ -2090,9 +2123,13 @@ app.get('/admin/program-review-items/:programId', authMiddleware, (req, res) => 
       for (const row of rows) insert.run(uuidv4(), row.label, row.sort_order, programId);
     });
     insertMany(globals);
+    db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(initKey, '1');
     items = db.prepare(
       'SELECT id, label, sort_order FROM review_items WHERE program_id = ? ORDER BY sort_order'
     ).all(programId);
+  } else if (items.length > 0 && !alreadyInit) {
+    // Mark as initialized if items already exist
+    db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(initKey, '1');
   }
   res.json(items);
 });
@@ -2232,18 +2269,34 @@ app.post('/super/users', authMiddleware, requireRole('superadmin'), async (req, 
 
 // Admins (not necessarily super) may create evaluators
 app.post('/users', authMiddleware, requireRole('admin'), async (req, res) => {
-  const { institutional_email, password, full_name, specialty } = req.body;
-  if (!institutional_email || !password) return res.status(400).json({ error: 'institutional_email and password required' });
+  const { institutional_email, full_name, specialty, cedula } = req.body;
+  let { password } = req.body;
+  if (!institutional_email) return res.status(400).json({ error: 'institutional_email required' });
+  // Auto-generate password as firstName+cedula if not provided
+  if (!password) {
+    const firstName = (full_name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '') || 'evaluador';
+    password = `${firstName}${cedula || Math.random().toString(36).slice(-6)}`;
+  }
   const existsEmail = db.prepare('SELECT id FROM users WHERE institutional_email = ?').get(institutional_email);
   if (existsEmail) return res.status(400).json({ error: 'institutional_email already in use' });
+  if (cedula) {
+    const existsCedula = db.prepare('SELECT id FROM users WHERE cedula = ?').get(cedula);
+    if (existsCedula) return res.status(400).json({ error: 'cedula already in use' });
+  }
   try {
     const id = uuidv4();
     const password_hash = await bcrypt.hash(password, 10);
-    db.prepare('INSERT INTO users (id, email, password_hash, full_name, institutional_email) VALUES (?, ?, ?, ?, ?)')
-      .run(id, institutional_email, password_hash, full_name || null, institutional_email);
+    db.prepare('INSERT INTO users (id, email, password_hash, full_name, institutional_email, cedula) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, institutional_email, password_hash, full_name || null, institutional_email, cedula || null);
     // assign evaluator role
     db.prepare('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)').run(uuidv4(), id, 'evaluator');
-    res.json({ id, institutional_email, full_name, specialty, roles: ['evaluator'] });
+    // save profile with specialty
+    db.prepare('INSERT OR REPLACE INTO profiles (id, full_name, institutional_email, cedula, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, full_name || null, institutional_email, cedula || null, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+    if (specialty) {
+      db.prepare('UPDATE profiles SET specialty = ? WHERE id = ?').run(specialty, id);
+    }
+    res.json({ id, institutional_email, full_name, specialty, cedula, roles: ['evaluator'], generatedPassword: password });
   } catch (err) {
     const msg = String(err);
     if (msg.includes('UNIQUE')) return res.status(400).json({ error: 'duplicate value' });
@@ -2592,7 +2645,7 @@ app.get('/theses', authMiddleware, (req, res) => {
        WHERE ts.thesis_id = ?`
     ).all(t.id);
     const evaluators = db.prepare(
-      `SELECT DISTINCT u.id, u.full_name as name, te.due_date, te.is_blind
+      `SELECT DISTINCT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind
        FROM users u
        JOIN thesis_evaluators te ON u.id = te.evaluator_id
        WHERE te.thesis_id = ?`
@@ -2613,6 +2666,8 @@ app.get('/theses', authMiddleware, (req, res) => {
     const isStudentRole = !roles.includes('admin') && !roles.includes('superadmin') && !roles.includes('evaluator');
     if (isStudentRole) {
       timeline = timeline.filter(ev => ev.status !== 'act_signature');
+      // Hide evaluator names for blind review from students
+      evaluators.forEach(ev => { if (ev.is_blind) ev.name = null; });
     }
     // enrich assignment/defense entries and prepare evaluator submission events
     let enrichedTimeline = timeline || [];
@@ -2629,9 +2684,15 @@ app.get('/theses', authMiddleware, (req, res) => {
           }
         }
         if (ev.status === 'defense_scheduled') {
-          ev.label = 'Sustentación programada';
-          ev.defense_date = t.defense_date;
-          ev.defense_location = t.defense_location;
+          // ev.label contains the original description (aliased from 'description' column)
+          const desc = ev.label || '';
+          ev.label = desc.startsWith('Sustentación reprogramada') ? 'Sustentación reprogramada' : 'Sustentación programada';
+          const fechaMatch = desc.match(/Fecha:\s*(.+)/);
+          const lugarMatch = desc.match(/Lugar:\s*(.+)/);
+          if (fechaMatch) {
+            ev.defense_date_display = fechaMatch[1].trim();
+          }
+          ev.defense_location = lugarMatch ? lugarMatch[1].trim() : (t.defense_location || '');
           ev.defense_info = t.defense_info;
         }
         return ev;
@@ -2771,7 +2832,7 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
      WHERE ts.thesis_id = ?`
   ).all(id);
   const evaluators = db.prepare(
-    `SELECT u.id, u.full_name as name, te.due_date, te.is_blind
+    `SELECT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind
      FROM users u
      JOIN thesis_evaluators te ON u.id = te.evaluator_id
      WHERE te.thesis_id = ?`
@@ -2831,9 +2892,14 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
         }
       }
       if (ev.status === 'defense_scheduled') {
-        ev.label = 'Sustentación programada';
-        ev.defense_date = thesis.defense_date;
-        ev.defense_location = thesis.defense_location;
+        const desc = ev.label || '';
+        ev.label = desc.startsWith('Sustentación reprogramada') ? 'Sustentación reprogramada' : 'Sustentación programada';
+        const fechaMatch = desc.match(/Fecha:\s*(.+)/);
+        const lugarMatch = desc.match(/Lugar:\s*(.+)/);
+        if (fechaMatch) {
+          ev.defense_date_display = fechaMatch[1].trim();
+        }
+        ev.defense_location = lugarMatch ? lugarMatch[1].trim() : (thesis.defense_location || '');
         ev.defense_info = thesis.defense_info;
       }
       return ev;
@@ -3039,17 +3105,23 @@ app.post('/theses/:id/schedule', authMiddleware, requireRole('admin'), (req, res
   if (!date || !location) {
     return res.status(400).json({ error: 'date and location required' });
   }
-  const ts = Date.parse(date);
+  // datetime-local sends "YYYY-MM-DDTHH:mm" without timezone — treat as Colombia time (UTC-5)
+  const dateStr = date.length === 16 ? date + ':00-05:00' : date;
+  const ts = Date.parse(dateStr);
   if (isNaN(ts)) {
     return res.status(400).json({ error: 'invalid date' });
   }
+  // Convert milliseconds to seconds (database uses Unix seconds)
+  const tsSeconds = Math.floor(ts / 1000);
+  // Determine if this is a reschedule (previous defense_date already set)
+  const existing = db.prepare('SELECT defense_date FROM theses WHERE id = ?').get(thesis_id);
+  const isReschedule = existing && existing.defense_date != null;
   db.prepare('UPDATE theses SET defense_date = ?, defense_location = ?, defense_info = ? WHERE id = ?')
-    .run(ts, location, info || null, thesis_id);
-  // add timeline entry
-  // create a multi‑line description for nicer display
-  let desc = `Sustentación programada:\n` +
-             `• Fecha: ${new Date(ts).toLocaleString()}\n` +
-             `• Lugar: ${location}`;
+    .run(tsSeconds, location, info || null, thesis_id);
+  // Format date in Colombia timezone for display
+  const dateDisplay = new Date(ts).toLocaleString('es-CO', { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const verb = isReschedule ? 'Sustentación reprogramada' : 'Sustentación programada';
+  let desc = `${verb}:\n• Fecha: ${dateDisplay}\n• Lugar: ${location}`;
   if (info) desc += `\n• ${info}`;
   db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(uuidv4(), thesis_id, 'defense_scheduled', desc, 1, nowSec());
@@ -3418,7 +3490,7 @@ app.get('/theses/:id/acta/download-for-signing', authMiddleware, async (req, res
         evaluadores: evalNames,
         observaciones: thesis.defense_info || 'Sin observaciones registradas',
         classification,
-        nota: Number(weighted.finalScore || 0).toFixed(2),
+        nota: Number(weighted.finalScore || 0).toFixed(1),
         calificacion_letras: scoreToSpanishText(weighted.finalScore),
         evaluators,
         directors,
@@ -3645,7 +3717,7 @@ app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, re
       evaluadores: evaluators.map(e => e.name).join(', '),
       observaciones: thesis.defense_info || 'Sin observaciones registradas',
       classification: scoreClassification(weighted.finalScore),
-      nota: Number(weighted.finalScore || 0).toFixed(2),
+      nota: Number(weighted.finalScore || 0).toFixed(1),
       calificacion_letras: scoreToSpanishText(weighted.finalScore),
       evaluators, directors, programDirectors, signatures, programName,
     });
@@ -3779,7 +3851,7 @@ app.get('/theses/:id/acta/export', authMiddleware, async (req, res) => {
       evaluadores: evalNames,
       observaciones: thesis.defense_info || 'Sin observaciones registradas',
       classification,
-      nota: Number(weighted.finalScore || 0).toFixed(2),
+      nota: Number(weighted.finalScore || 0).toFixed(1),
       calificacion_letras: scoreToSpanishText(weighted.finalScore),
       evaluators,
       directors,
@@ -4531,11 +4603,12 @@ app.get('/theses/:id/meritoria/status', authMiddleware, (req, res) => {
   const score = ctx.weighted?.finalScore || 0;
   if (score < 4.8) return res.json({ qualifies: false, score });
 
+  const evaluatorNames = ctx.evaluators.map(e => e.name);
   const merSigs = db.prepare('SELECT * FROM meritoria_signatures WHERE thesis_id = ? ORDER BY signed_at ASC').all(thesisId);
-  const pendingDirectors = ctx.directors.filter(d =>
+  const pendingDirectors = evaluatorNames.filter(d =>
     !merSigs.some(s => s.signer_name.toLowerCase() === d.toLowerCase())
   );
-  const allSigned = ctx.directors.length > 0 && pendingDirectors.length === 0;
+  const allSigned = evaluatorNames.length > 0 && pendingDirectors.length === 0;
 
   // URL del último PDF firmado subido
   const lastPdf = merSigs.filter(s => s.pdf_url).pop();
@@ -4543,7 +4616,7 @@ app.get('/theses/:id/meritoria/status', authMiddleware, (req, res) => {
   res.json({
     qualifies: true,
     score,
-    directors: ctx.directors,
+    directors: evaluatorNames,
     signatures: merSigs.map(s => ({ signer_name: s.signer_name, signed_at: s.signed_at })),
     pendingDirectors,
     allSigned,
@@ -4572,7 +4645,7 @@ app.get('/theses/:id/meritoria/download-for-signing', authMiddleware, (req, res)
   const buf = generateMeritoriaDocx({
     title: ctx.thesis.title || '',
     students: ctx.students,
-    directors: ctx.directors,
+    directors: ctx.evaluators.map(e => e.name),
     date,
     signatures: merSigs,
   });
@@ -4662,7 +4735,7 @@ app.get('/theses/:id/meritoria/download-final', authMiddleware, (req, res) => {
     const buf = generateMeritoriaDocx({
       title: ctx.thesis.title || '',
       students: ctx.students,
-      directors: ctx.directors,
+      directors: ctx.evaluators.map(e => e.name),
       date,
       signatures: merSigs,
     });
@@ -4797,7 +4870,7 @@ app.get('/sign/token/:token/download-pdf', async (req, res) => {
       evaluadores: evaluators.map(e => e.name).join(', '),
       observaciones: thesis.defense_info || 'Sin observaciones registradas',
       classification: scoreClassification(weighted.finalScore),
-      nota: Number(weighted.finalScore || 0).toFixed(2),
+      nota: Number(weighted.finalScore || 0).toFixed(1),
       calificacion_letras: scoreToSpanishText(weighted.finalScore),
       evaluators,
       directors,
@@ -5459,7 +5532,7 @@ app.use((err, req, res, next) => {
 
   // Manejo específico de errores de multer (subida de archivos)
   if (err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ error: 'Archivo demasiado grande. Máximo 10MB permitido.' });
+    return res.status(400).json({ error: 'Archivo demasiado grande. Máximo 100MB permitido.' });
   }
   if (err.code === 'LIMIT_UNEXPECTED_FILE') {
     return res.status(400).json({ error: 'Tipo de archivo no permitido.' });

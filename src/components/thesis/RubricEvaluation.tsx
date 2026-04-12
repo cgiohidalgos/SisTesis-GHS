@@ -328,7 +328,7 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
           <h3 className="font-heading text-lg font-bold text-foreground">Nota Final Ponderada</h3>
           {displayFinalScore !== null ? (
             <div className="text-right">
-              <span className="text-4xl font-heading font-bold text-accent">{displayFinalScore.toFixed(2)}</span>
+              <span className="text-4xl font-heading font-bold text-accent">{displayFinalScore.toFixed(1)}</span>
               <span className="text-lg text-muted-foreground">/5.0</span>
             </div>
           ) : (

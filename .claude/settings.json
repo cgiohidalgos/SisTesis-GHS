@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker inspect:*)",
+      "Bash(grep -v \"^$\\(docker network inspect audimedia_default --format '{{.Id}}'\\)\")",
+      "Bash(ls /root/SisTesis-GHS/Dockerfile* /root/SisTesis-GHS/server/Dockerfile)",
+      "Bash(host sistesis.site)",
+      "Bash(dig sistesis.site +short)",
+      "Bash(nslookup sistesis.site)",
+      "Bash(curl -s --max-time 5 http://sistesis.site/ -o /dev/null -w \"%{http_code} -> %{redirect_url}\\\\n\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://sistesis.site/)",
+      "Bash(curl -sk -o /dev/null -w \"%{http_code}\" https://sistesis.site/)",
+      "Bash(curl -sk https://sistesis.site/)",
+      "Bash(curl -sk -H \"Host: sistesis.site\" https://104.225.223.220/)",
+      "Bash(openssl s_client -connect sistesis.site:443 -servername sistesis.site)",
+      "Bash(openssl x509:*)",
+      "Bash(curl -skI https://sistesis.site/)",
+      "Bash(curl -skI https://sistesis.site/favicon.svg)",
+      "Bash(curl -sk -X POST https://sistesis.site/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@admin.com\",\"password\":\"admin\"}')",
+      "Bash(curl -sk -X POST https://sistesis.site/api/auth/login -H 'Content-Type: application/json' -d '{\"identifier\":\"admin@admin.com\",\"password\":\"admin\"}')",
+      "Bash(curl -sk -X POST https://sistesis.site/api/auth/login -H 'Content-Type: application/json' -d '{\"identifier\":\"admin@admin.com\",\"password\":\"Know_how123*\"}')",
+      "Bash(curl -sk https://sistesis.site/api/super/users -H 'Authorization: Bearer __TRACKED_VAR__')",
+      "Bash(python3 -c ':*)",
+      "Bash(curl -sk https://sistesis.site/api/health)",
+      "Bash(curl -sk https://sistesis.site/api/programs -H 'Authorization: Bearer __TRACKED_VAR__')",
+      "Bash(curl -sk https://sistesis.site/api/admin/program-review-items/cde6d00a-b916-4369-a72f-a44c4f2227dd -H 'Authorization: Bearer __TRACKED_VAR__')",
+      "Bash(curl -sk https://sistesis.site/api/admin/program-review-items/__TRACKED_VAR__ -H 'Authorization: Bearer __TRACKED_VAR__')",
+      "Bash(curl -sk -X DELETE https://sistesis.site/api/admin/program-review-items/__TRACKED_VAR__/__TRACKED_VAR__ -H 'Authorization: Bearer __TRACKED_VAR__')",
+      "Bash(curl -sk https://sistesis.site/api/super/review-items -H 'Authorization: Bearer __TRACKED_VAR__')"
+    ]
+  }
+}

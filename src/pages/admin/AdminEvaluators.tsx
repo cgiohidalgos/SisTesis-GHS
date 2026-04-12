@@ -68,7 +68,7 @@ export default function AdminEvaluators() {
   const [newEval, setNewEval] = useState({ name: "", institutionalEmail: "", specialty: "", password: "", cedula: "" });
   const [filter, setFilter] = useState("");
   const [selectedEvaluators, setSelectedEvaluators] = useState<string[]>([]);
-  const [isBlind, setIsBlind] = useState(false);
+  const [isBlind, setIsBlind] = useState(true);
   const [dueDate, setDueDate] = useState<string>("");
   const [search] = useSearchParams();
   const navigate = useNavigate();

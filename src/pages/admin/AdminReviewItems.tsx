@@ -22,6 +22,7 @@ export default function AdminReviewItems() {
   const [loading, setLoading] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [addingItem, setAddingItem] = useState(false);
+  const [editingLabels, setEditingLabels] = useState<Record<string, string>>({});
 
   // Load programs (filtered by user's affiliation)
   useEffect(() => {
@@ -66,6 +67,7 @@ export default function AdminReviewItems() {
         if (resp.ok) {
           const data = await resp.json();
           setItems(data);
+          setEditingLabels(Object.fromEntries(data.map((i: ReviewItem) => [i.id, i.label])));
         } else {
           toast.error("Error cargando elementos");
         }
@@ -91,6 +93,7 @@ export default function AdminReviewItems() {
       if (!resp.ok) throw new Error("Error creando elemento");
       const item = await resp.json();
       setItems((prev) => [...prev, item]);
+      setEditingLabels((prev) => ({ ...prev, [item.id]: item.label }));
       setNewLabel("");
       toast.success("Elemento agregado");
     } catch (err: any) {
@@ -100,7 +103,11 @@ export default function AdminReviewItems() {
     }
   };
 
-  const handleUpdateItem = async (id: string, label: string) => {
+  const handleUpdateItem = async (id: string) => {
+    const label = editingLabels[id];
+    if (label === undefined) return;
+    const original = items.find((it) => it.id === id)?.label;
+    if (label === original) return;
     try {
       const token = localStorage.getItem("token");
       const resp = await fetch(`${API_BASE}/admin/program-review-items/${selectedProgram}/${id}`, {
@@ -168,8 +175,9 @@ export default function AdminReviewItems() {
             items.map((it) => (
               <div key={it.id} className="flex items-center gap-2">
                 <Input
-                  value={it.label}
-                  onChange={(e) => handleUpdateItem(it.id, e.target.value)}
+                  value={editingLabels[it.id] ?? it.label}
+                  onChange={(e) => setEditingLabels((prev) => ({ ...prev, [it.id]: e.target.value }))}
+                  onBlur={() => handleUpdateItem(it.id)}
                   className="flex-1 text-sm"
                 />
                 <Button variant="destructive" size="sm" onClick={() => handleDeleteItem(it.id)}>
