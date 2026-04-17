@@ -14,6 +14,7 @@ interface AuthContextType {
   profile: { full_name: string; student_code?: string; cedula?: string; institutional_email?: string } | null;
   loading: boolean;
   signOut: () => Promise<void>;
+  refreshSession: () => Promise<AppRole | null>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -25,6 +26,7 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   signOut: async () => {},
+  refreshSession: async () => null,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -36,24 +38,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<AuthContextType["profile"]>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchUserData = async (userId: string) => {
+  const fetchUserData = async (userId: string): Promise<AppRole | null> => {
+    let resolvedRole: AppRole | null = null;
     try {
       const rolesResp = await fetch(`${API_BASE}/user_roles?user_id=${encodeURIComponent(userId)}`);
       const ro = await rolesResp.json();
       setRoles(ro || []);
       setIsSuper(Array.isArray(ro) && ro.includes('superadmin'));
       if (ro && Array.isArray(ro)) {
-        // se da prioridad a roles de mayor privilegio
         if (ro.includes('superadmin') || ro.includes('admin')) {
-          setRole('admin');
+          resolvedRole = 'admin';
         } else if (ro.includes('evaluator')) {
-          setRole('evaluator');
+          resolvedRole = 'evaluator';
         } else if (ro.includes('student')) {
-          setRole('student');
-        } else {
-          setRole(null);
+          resolvedRole = 'student';
         }
       }
+      setRole(resolvedRole);
 
       const profileResp = await fetch(`${API_BASE}/profiles/${encodeURIComponent(userId)}`);
       if (profileResp.ok) {
@@ -63,32 +64,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error('fetchUserData error', err);
     }
+    return resolvedRole;
+  };
+
+  const refreshSession = async (): Promise<AppRole | null> => {
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/auth/session`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      const data = await resp.json();
+      const sess = data.session ?? null;
+      setSession(sess);
+      setUser(sess?.user ?? null);
+      if (sess?.user) {
+        return await fetchUserData(sess.user.id);
+      } else {
+        setRole(null);
+        setProfile(null);
+      }
+    } catch (err) {
+      console.error('session check error', err);
+    } finally {
+      setLoading(false);
+    }
+    return null;
   };
 
   useEffect(() => {
-    // Simple session check against local API using token from localStorage
-    (async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const resp = await fetch(`${API_BASE}/auth/session`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
-        const data = await resp.json();
-        const sess = data.session ?? null;
-        setSession(sess);
-        setUser(sess?.user ?? null);
-        if (sess?.user) {
-          fetchUserData(sess.user.id);
-        } else {
-          setRole(null);
-          setProfile(null);
-        }
-      } catch (err) {
-        console.error('session check error', err);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    refreshSession();
   }, []);
 
   const signOut = async () => {
@@ -109,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, roles, role, isSuper, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ user, session, roles, role, isSuper, profile, loading, signOut, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );

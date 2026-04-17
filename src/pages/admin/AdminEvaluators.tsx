@@ -37,25 +37,8 @@ interface EvaluatedThesis {
   student_names?: string;
 }
 
-// fallback list of simulated evaluators in case backend has none
-const simulatedEvaluators: Evaluator[] = [
-  { id: 'sim-1', name: 'Carlos Giovanny Hidalgo Suarez', institutionalEmail: 'carlos.hidalgo@usbcali.edu.co', specialty: 'Software', theses: 0 },
-  { id: 'sim-2', name: 'María Fernanda López', institutionalEmail: 'maria.lopez@usbcali.edu.co', specialty: 'BI', theses: 0 },
-  { id: 'sim-3', name: 'Luis Alberto Ramírez', institutionalEmail: 'luis.ramirez@usbcali.edu.co', specialty: 'Seguridad', theses: 0 },
-  { id: 'sim-4', name: 'Ana Sofía Pérez', institutionalEmail: 'ana.perez@usbcali.edu.co', specialty: 'Redes', theses: 0 },
-  { id: 'sim-5', name: 'Juan Diego Rodríguez', institutionalEmail: 'juan.rodriguez@usbcali.edu.co', specialty: 'IA', theses: 0 },
-  { id: 'sim-6', name: 'Andrés Felipe Morales', institutionalEmail: 'andres.morales@usbcali.edu.co', specialty: 'Datos', theses: 0 },
-  { id: 'sim-7', name: 'Natalia Jiménez García', institutionalEmail: 'natalia.jimenez@usbcali.edu.co', specialty: 'Sistemas', theses: 0 },
-  { id: 'sim-8', name: 'Sofía Camila Torres', institutionalEmail: 'sofia.torres@usbcali.edu.co', specialty: 'Calidad', theses: 0 },
-  { id: 'sim-9', name: 'David Alejandro Castro', institutionalEmail: 'david.castro@usbcali.edu.co', specialty: 'Robótica', theses: 0 },
-  { id: 'sim-10', name: 'Laura Valentina Herrera', institutionalEmail: 'laura.herrera@usbcali.edu.co', specialty: 'Gestión', theses: 0 },
-];
-
-// start with a simulated list so the UI always shows evaluadores
-const initialEvaluators: Evaluator[] = simulatedEvaluators;
-
 export default function AdminEvaluators() {
-  const [evaluators, setEvaluators] = useState<Evaluator[]>(initialEvaluators);
+  const [evaluators, setEvaluators] = useState<Evaluator[]>([]);
   const [loadingEvaluators, setLoadingEvaluators] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);

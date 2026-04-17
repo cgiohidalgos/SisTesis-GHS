@@ -29,6 +29,7 @@ const ROLES = [
   { key: "student",   label: "Estudiante" },
   { key: "admin",     label: "Admin" },
   { key: "evaluator", label: "Evaluador" },
+  { key: "director",  label: "Director(es)" },
 ];
 
 const VARIABLES = [

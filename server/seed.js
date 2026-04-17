@@ -169,54 +169,6 @@ async function run() {
     console.log(`Created evaluator: ${fullName} (${email}), password: ${password}`);
   }
 
-  // Seed simulated evaluators (10 users)
-  const simulatedEvaluators = [
-    'Carlos Giovanny Hidalgo Suarez',
-    'María Fernanda López',
-    'Luis Alberto Ramírez',
-    'Ana Sofía Pérez',
-    'Juan Diego Rodríguez',
-    'Andrés Felipe Morales',
-    'Natalia Jiménez García',
-    'Sofía Camila Torres',
-    'David Alejandro Castro',
-    'Laura Valentina Herrera',
-  ];
-
-  for (let i = 0; i < simulatedEvaluators.length; i++) {
-    const fullName = simulatedEvaluators[i];
-    const email = `evaluador${i + 1}@usbcali.edu.co`;
-
-    const cedula = `1000000${i + 1}`; // simple dummy cedula
-    const existingEval = db.prepare('SELECT id FROM users WHERE institutional_email = ? OR cedula = ?').get(email, cedula);
-    if (existingEval) {
-      console.log(`🔁 Saltando evaluador existente (email/cedula): ${email} / ${cedula}`);
-      continue;
-    }
-
-    const idEval = uuidv4();
-    const password = `${fullName.split(' ')[0]}${cedula}`;
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    try {
-      db.prepare('INSERT INTO users (id, email, password_hash, full_name, institutional_email, cedula) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(idEval, email, passwordHash, fullName, email, cedula);
-
-      db.prepare('INSERT INTO user_roles (id, user_id, role, created_at) VALUES (?, ?, ?, ?)')
-        .run(uuidv4(), idEval, 'evaluator', now);
-
-      db.prepare('INSERT OR REPLACE INTO profiles (id, full_name, institutional_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-        .run(idEval, fullName, email, now, now);
-
-      console.log(`Created evaluator: ${fullName} (${email}), password: ${password}`);
-    } catch (err) {
-      if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        console.log(`⚠️ Skipped evaluator due to duplicate cedula/email: ${email} / ${cedula}`);
-        continue;
-      }
-      throw err;
-    }
-  }
 }
 
 run()

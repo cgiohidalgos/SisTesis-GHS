@@ -269,7 +269,6 @@ export default function RegisterThesis() {
       if (existing) {
         // actualizar
         if (selectedPrograms.length) body.program_ids = selectedPrograms;
-        console.log('updating thesis with', body);
         const resp = await fetch(`${API_BASE}/theses/${existing.id}`, {
           method: "PUT",
           headers: {

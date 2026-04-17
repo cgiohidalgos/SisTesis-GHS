@@ -1,13 +1,16 @@
 import AppLayout from "@/components/layout/AppLayout";
 import ThesisCard from "@/components/thesis/ThesisCard";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { getApiBase } from "@/lib/utils";
 
 const API_BASE = getApiBase();
 
 export default function EvaluatorDashboard() {
   const [theses, setTheses] = useState<any[]>([]);
+  const [directedTheses, setDirectedTheses] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
+  const navigate = useNavigate();
 
   const fetchSession = async () => {
     try {
@@ -102,6 +105,21 @@ export default function EvaluatorDashboard() {
 
   useEffect(() => {
     fetchTheses();
+
+    const fetchDirected = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const resp = await fetch(`${API_BASE}/theses/directed`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (resp.ok) {
+          setDirectedTheses(await resp.json());
+        }
+      } catch (e) {
+        console.error('directed theses error', e);
+      }
+    };
+    fetchDirected();
   }, [user]);
 
   return (
@@ -129,6 +147,44 @@ export default function EvaluatorDashboard() {
           </div>
         ) : (
           <p className="text-center text-muted-foreground">No tienes proyectos asignados por el momento.</p>
+        )}
+
+        {directedTheses.length > 0 ? (
+          <div id="students" className="mt-10">
+            <h2 className="font-heading text-2xl font-bold text-foreground mb-1">Mis estudiantes</h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              Vista de seguimiento de los proyectos de tus estudiantes.
+            </p>
+            <div className="space-y-3">
+              {directedTheses.map((thesis) => {
+                const studentNames = Array.isArray(thesis.students)
+                  ? thesis.students.map((s: any) => s.name || s.full_name).filter(Boolean).join(", ")
+                  : "";
+                return (
+                  <button
+                    key={thesis.id}
+                    className="w-full text-left border rounded-xl p-4 bg-white dark:bg-slate-950 hover:border-primary/60 hover:shadow-sm transition-all"
+                    onClick={() => navigate(`/evaluator/student/${thesis.id}`)}
+                  >
+                    <p className="font-semibold text-sm line-clamp-2">{thesis.title}</p>
+                    {studentNames && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        <strong>Estudiante{thesis.students?.length > 1 ? "s" : ""}:</strong> {studentNames}
+                      </p>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div id="students" className="mt-10">
+            <h2 className="font-heading text-2xl font-bold text-foreground mb-1">Mis estudiantes</h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              Vista de seguimiento de los proyectos de tus estudiantes.
+            </p>
+            <p className="text-center text-muted-foreground">No tienes estudiantes asignados por el momento.</p>
+          </div>
         )}
       </div>
     </AppLayout>

@@ -28,7 +28,7 @@ const navItems = {
   ],
   evaluator: [
     { label: "Proyectos asignados", href: "/evaluator", icon: FileText },
-    // (el enlace Evaluar redirige al dashboard, así que no necesita entrada separada)
+    { label: "Mis estudiantes", href: "/evaluator#students", icon: Users },
   ],
   admin: [
     { label: "Panel", href: "/admin", icon: LayoutDashboard },
@@ -117,11 +117,23 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
 
         <nav className="flex-1 px-3 py-4 space-y-1">
           {items.map((item) => {
-            const isActive = location.pathname === item.href;
+            const [itemPath, itemHash] = item.href.split('#');
+            const currentHash = location.hash.replace('#', '');
+            const isActive = itemHash
+              ? location.pathname === itemPath && currentHash === itemHash
+              : location.pathname === itemPath && !currentHash;
             return (
               <Link
                 key={item.href}
                 to={item.href}
+                onClick={() => {
+                  if (itemHash) {
+                    setTimeout(() => {
+                      document.getElementById(itemHash)?.scrollIntoView({ behavior: 'smooth' });
+                    }, 50);
+                  }
+                  setSidebarOpen(false);
+                }}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
                   isActive

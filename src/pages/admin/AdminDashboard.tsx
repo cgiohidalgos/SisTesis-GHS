@@ -34,7 +34,6 @@ export default function AdminDashboard() {
       const headers = { Authorization: token ? `Bearer ${token}` : '' };
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
-      console.log('AdminDashboard fetching stats and theses');
       const [sresp, tresp] = await Promise.all([
         fetch(`${API_BASE}/admin/stats`, { headers, signal: controller.signal }),
         fetch(`${API_BASE}/theses`, { headers, signal: controller.signal }),
@@ -42,7 +41,6 @@ export default function AdminDashboard() {
       clearTimeout(timeoutId);
       if (sresp.ok) {
         const sjson = await sresp.json();
-        console.log('stats response', sjson);
         const baseStats = [
           { label: 'Total proyectos de grado', value: sjson.totalTheses, icon: FileText, color: 'text-info' },
           { label: 'En Evaluación', value: sjson.inEvaluation, icon: Clock, color: 'text-warning' },

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { getApiBase } from "@/lib/utils";
 import { useNavigate, Link } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 
 export default function StaffLogin() {
   const navigate = useNavigate();
+  const { refreshSession } = useAuth();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,7 +25,6 @@ export default function StaffLogin() {
     setLoading(true);
     try {
       const url = `${getApiBase()}/auth/login`;
-      console.log('StaffLogin: POST', url);
       // simple timeout helper
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -35,23 +36,17 @@ export default function StaffLogin() {
       });
       clearTimeout(timeoutId);
       if (!resp.ok) throw new Error(`status ${resp.status}`);
-      const { user, token } = await resp.json();
-      const rolesUrl = `${getApiBase()}/user_roles?user_id=${encodeURIComponent(user.id)}`;
-      console.log('StaffLogin: GET', rolesUrl);
-      const rolesResp = await fetch(rolesUrl, { signal: controller.signal });
-      const roles = await rolesResp.json();
-      const userRole = roles?.[0];
+      const { token } = await resp.json();
       if (token) localStorage.setItem('token', token);
-      if (userRole === "admin" || userRole === "superadmin") {
+      const resolvedRole = await refreshSession();
+      toast.success("Bienvenido(a)");
+      if (resolvedRole === "admin") {
         navigate("/admin");
-      } else if (userRole === "evaluator") {
+      } else if (resolvedRole === "evaluator") {
         navigate("/evaluator");
       } else {
         navigate("/");
       }
-      toast.success("Bienvenido(a)");
-      // reload app so AuthProvider picks up the new roles on the target page
-      window.location.reload();
     } catch (error: any) {
       console.error('login error', error);
       if (error.name === 'AbortError') {

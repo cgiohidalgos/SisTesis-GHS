@@ -217,7 +217,14 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
       ? db.prepare('SELECT student_id FROM thesis_students WHERE thesis_id = ?').all(thesisId).map(r => r.student_id)
       : [];
     const evaluatorIds = db.prepare('SELECT evaluator_id FROM thesis_evaluators WHERE thesis_id = ?').all(thesisId).map(r => r.evaluator_id);
-    const adminIds     = db.prepare("SELECT DISTINCT user_id FROM user_roles WHERE role IN ('admin','superadmin')").all().map(r => r.user_id);
+    // Only notify admins of the programs associated with this thesis (+ superadmins)
+    const thesisProgramIds = db.prepare('SELECT program_id FROM thesis_programs WHERE thesis_id = ?').all(thesisId).map(r => r.program_id);
+    const programAdminIds = thesisProgramIds.length
+      ? db.prepare(`SELECT DISTINCT user_id FROM program_admins WHERE program_id IN (${thesisProgramIds.map(() => '?').join(',')})`)
+          .all(...thesisProgramIds).map(r => r.user_id)
+      : [];
+    const superAdminIds = db.prepare("SELECT DISTINCT user_id FROM user_roles WHERE role = 'superadmin'").all().map(r => r.user_id);
+    const adminIds = [...new Set([...programAdminIds, ...superAdminIds])];
     const directorIds  = db.prepare('SELECT user_id FROM thesis_directors WHERE thesis_id = ? AND user_id IS NOT NULL').all(thesisId).map(r => r.user_id);
 
     // Leer reglas configurables de la BD
@@ -330,6 +337,47 @@ function startReminderCron(db) {
   console.log('[cron] Recordatorios automáticos activados (8:00 AM hora Bogotá)');
 }
 
+/**
+ * Inicia el cron job que hace backup diario de la base de datos SQLite.
+ * Corre todos los días a las 2:00 AM. Conserva los últimos 7 backups.
+ */
+function startBackupCron(dbPath) {
+  let cron;
+  try { cron = require('node-cron'); } catch (e) {
+    console.warn('[backup] node-cron no disponible, backup automático desactivado');
+    return;
+  }
+  const fs = require('fs');
+  const path = require('path');
+
+  const backupDir = path.join(path.dirname(dbPath), 'backups');
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+  const runBackup = () => {
+    try {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const dest = path.join(backupDir, `data-${ts}.sqlite`);
+      fs.copyFileSync(dbPath, dest);
+      console.log(`[backup] Backup creado: ${dest}`);
+
+      // Mantener solo los últimos 7 backups
+      const files = fs.readdirSync(backupDir)
+        .filter(f => f.startsWith('data-') && f.endsWith('.sqlite'))
+        .sort();
+      const toDelete = files.slice(0, Math.max(0, files.length - 7));
+      for (const f of toDelete) {
+        fs.unlinkSync(path.join(backupDir, f));
+        console.log(`[backup] Backup antiguo eliminado: ${f}`);
+      }
+    } catch (e) {
+      console.error('[backup] Error al crear backup:', e);
+    }
+  };
+
+  cron.schedule('0 2 * * *', runBackup, { timezone: 'America/Bogota' });
+  console.log('[backup] Backup automático activado (2:00 AM hora Bogotá, retención: 7 días)');
+}
+
 module.exports = {
   sendEmail,
   sendWelcomeEmail,
@@ -341,4 +389,5 @@ module.exports = {
   getSMTPConfig,
   createTransport,
   startReminderCron,
+  startBackupCron,
 };

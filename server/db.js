@@ -596,6 +596,29 @@ if (rulesCount === 0) {
   console.log('migration: seeded default notification_rules');
 }
 
+// Ensure submitted/director rule exists for DBs seeded before this entry was added
+try {
+  db.prepare('INSERT OR IGNORE INTO notification_rules (event_type, role, enabled) VALUES (?, ?, ?)').run('submitted', 'director', 1);
+} catch (e) {
+  console.warn('migration: could not ensure submitted/director rule', e);
+}
+
+// Backfill user_id in thesis_directors where missing by matching name to users.full_name
+try {
+  const unlinked = db.prepare("SELECT id, name FROM thesis_directors WHERE user_id IS NULL").all();
+  let filled = 0;
+  for (const row of unlinked) {
+    const matched = db.prepare('SELECT id FROM users WHERE full_name = ?').get(row.name);
+    if (matched) {
+      db.prepare('UPDATE thesis_directors SET user_id = ? WHERE id = ?').run(matched.id, row.id);
+      filled++;
+    }
+  }
+  if (filled > 0) console.log(`migration: backfilled user_id for ${filled} thesis_directors`);
+} catch (e) {
+  console.warn('migration: thesis_directors backfill failed', e);
+}
+
 // Tabla de plantillas de notificación configurables por superadmin
 db.prepare(`CREATE TABLE IF NOT EXISTS notification_templates (
   event_type   TEXT PRIMARY KEY,

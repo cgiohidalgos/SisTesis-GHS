@@ -16,7 +16,7 @@ const Docxtemplater = require('docxtemplater');
 const PizZip = require('pizzip');
 const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
-const { notifyTimeline, startReminderCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned } = require('./notifications');
+const { notifyTimeline, startReminderCron, startBackupCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned, logNotification } = require('./notifications');
 const logger = require('./logger');
 
 const execPromise = util.promisify(exec);
@@ -747,8 +747,9 @@ app.post('/theses/:id/files', authMiddleware, upload.fields([
     }
     for (const name of directorList) {
       if (name && name.length > 1) {
-        db.prepare('INSERT INTO thesis_directors (id, thesis_id, name) VALUES (?, ?, ?)')
-          .run(uuidv4(), thesis_id, name);
+        const matchedUser = db.prepare('SELECT id FROM users WHERE full_name = ?').get(name);
+        db.prepare('INSERT INTO thesis_directors (id, thesis_id, name, user_id) VALUES (?, ?, ?, ?)')
+          .run(uuidv4(), thesis_id, name, matchedUser?.id || null);
       }
     }
   }
@@ -1215,7 +1216,7 @@ app.post('/theses/:id/assign-student', authMiddleware, requireRole('admin'), (re
 
 // Actualizar tesis (solo admin o creador mientras esté en borrador)
 app.put('/theses/:id', authMiddleware, async (req, res) => {
-  const { title, abstract, status, companion, program_ids, keywords } = req.body;
+  const { title, abstract, status, companion, program_ids, keywords, director_ids } = req.body;
   const thesis_id = req.params.id;
   const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesis_id);
   if (!thesis) return res.status(404).json({ error: 'not found' });
@@ -1308,6 +1309,18 @@ app.put('/theses/:id', authMiddleware, async (req, res) => {
     }
   }
 
+  // director_ids: replace directors with user-linked entries
+  if (director_ids && Array.isArray(director_ids)) {
+    db.prepare('DELETE FROM thesis_directors WHERE thesis_id = ?').run(thesis_id);
+    for (const uid of director_ids) {
+      const dirUser = db.prepare('SELECT full_name FROM users WHERE id = ?').get(uid);
+      if (dirUser) {
+        db.prepare('INSERT INTO thesis_directors (id, thesis_id, name, user_id) VALUES (?, ?, ?, ?)')
+          .run(uuidv4(), thesis_id, dirUser.full_name, uid);
+      }
+    }
+  }
+
   res.json({ ok: true });
 });
 
@@ -1338,7 +1351,7 @@ app.put('/theses/:id/submit', authMiddleware, (req, res) => {
   db.prepare('UPDATE theses SET status = ? WHERE id = ?').run('submitted', thesis_id);
   db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(uuidv4(), thesis_id, 'submitted', 'Tesis enviada a evaluación', 1, now);
-  notifyTimeline(db, thesis_id, 'submitted', 'Tesis enviada a evaluación', req.user.id).catch(console.error);
+  notifyTimeline(db, thesis_id, 'submitted', 'Tesis enviada a evaluación', null).catch(console.error);
   res.json({ ok: true });
 });
 
@@ -1612,6 +1625,10 @@ app.put('/users/:id', authMiddleware, requireRole('admin'), async (req, res) => 
     }
     db.prepare('UPDATE users SET full_name = ?, email = ?, student_code = ?, cedula = ?, institutional_email = ? WHERE id = ?')
       .run(full_name, email, student_code || null, cedula || null, institutional_email || null, id);
+    // Sync director name in thesis_directors
+    if (full_name) {
+      db.prepare('UPDATE thesis_directors SET name = ? WHERE user_id = ?').run(full_name, id);
+    }
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
@@ -2340,6 +2357,10 @@ app.put('/super/users/:id', authMiddleware, requireRole('superadmin'), async (re
       params.push(uid);
       db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     }
+    // Sync director name in thesis_directors
+    if (full_name) {
+      db.prepare('UPDATE thesis_directors SET name = ? WHERE user_id = ?').run(full_name, uid);
+    }
     if (roles && Array.isArray(roles)) {
       // replace roles
       db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(uid);
@@ -2593,7 +2614,9 @@ app.post('/theses', authMiddleware, upload.fields([
       const dirList = Array.isArray(directors) ? directors : [];
       for (const name of dirList) {
         if (name && name.length > 1) {
-          db.prepare('INSERT INTO thesis_directors (id, thesis_id, name) VALUES (?, ?, ?)').run(uuidv4(), id, name);
+          const matchedUser = db.prepare('SELECT id FROM users WHERE full_name = ?').get(name);
+          db.prepare('INSERT INTO thesis_directors (id, thesis_id, name, user_id) VALUES (?, ?, ?, ?)')
+            .run(uuidv4(), id, name, matchedUser?.id || null);
         }
       }
     }
@@ -2608,6 +2631,32 @@ app.post('/theses', authMiddleware, upload.fields([
     cleanup();
     throw err;
   }
+});
+
+app.get('/theses/directed', authMiddleware, (req, res) => {
+  // Returns theses where the authenticated user is a director (via thesis_directors.user_id)
+  const rows = db.prepare(`
+    SELECT DISTINCT t.* FROM theses t
+    INNER JOIN thesis_directors td ON t.id = td.thesis_id
+    WHERE td.user_id = ? AND t.status != 'deleted'
+    ORDER BY t.created_at DESC
+  `).all(req.user.id);
+
+  const enriched = rows.map(t => {
+    const students = db.prepare(
+      `SELECT u.id, u.full_name as name, u.institutional_email FROM users u
+       JOIN thesis_students ts ON u.id = ts.student_id
+       WHERE ts.thesis_id = ?`
+    ).all(t.id);
+    const programs = db.prepare(
+      `SELECT p.id, p.name FROM programs p
+       JOIN thesis_programs tp ON p.id = tp.program_id
+       WHERE tp.thesis_id = ?`
+    ).all(t.id);
+    return { ...t, students, programs };
+  });
+
+  res.json(enriched);
 });
 
 app.get('/theses', authMiddleware, (req, res) => {
@@ -5429,13 +5478,21 @@ app.post('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) 
 
 // GET /admin/notifications - obtener historial de notificaciones
 app.get('/admin/notifications', authMiddleware, requireRole('admin'), (req, res) => {
-  const limit = parseInt(req.query.limit) || 50;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+  const offset = parseInt(req.query.offset) || 0;
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN sent_at IS NOT NULL AND error IS NULL THEN 1 ELSE 0 END) as totalSent,
+      SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as totalFailed
+    FROM notifications
+  `).get();
   const notifications = db.prepare(`
     SELECT n.*, u.full_name, u.email FROM notifications n
     LEFT JOIN users u ON u.id = n.user_id
-    ORDER BY n.created_at DESC LIMIT ?
-  `).all(limit);
-  res.json(notifications);
+    ORDER BY n.created_at DESC LIMIT ? OFFSET ?
+  `).all(limit, offset);
+  res.json({ notifications, total: totals.total, totalSent: totals.totalSent, totalFailed: totals.totalFailed });
 });
 
 // reenvía un mensaje fallido o pendiente
@@ -5454,6 +5511,22 @@ app.post('/admin/notifications/:id/resend', authMiddleware, requireRole('admin')
     res.json({ ok: true, success });
   } catch (err) {
     console.error('[resend notification] error', err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// POST /admin/notifications/send-custom - enviar mensaje personalizado a un usuario
+app.post('/admin/notifications/send-custom', authMiddleware, requireRole('admin'), async (req, res) => {
+  const { userId, subject, body } = req.body;
+  if (!userId || !subject || !body) return res.status(400).json({ error: 'userId, subject y body son requeridos' });
+  const user = db.prepare('SELECT id, institutional_email, full_name FROM users WHERE id = ?').get(userId);
+  if (!user || !user.institutional_email) return res.status(400).json({ error: 'Usuario no encontrado o sin email' });
+  try {
+    const success = await sendEmail(db, user.institutional_email, subject, body, null);
+    logNotification(db, userId, 'custom', subject, body, null, success ? null : 'failed');
+    res.json({ ok: true, success });
+  } catch (err) {
+    console.error('[send-custom notification] error', err);
     res.status(500).json({ error: String(err) });
   }
 });
@@ -5594,4 +5667,5 @@ app.listen(PORT, '0.0.0.0', () => {
     healthCheckUrl: `http://localhost:${PORT}/health`
   });
   startReminderCron(db);
+  startBackupCron(process.env.DB_PATH || '/app/data/data.sqlite');
 });

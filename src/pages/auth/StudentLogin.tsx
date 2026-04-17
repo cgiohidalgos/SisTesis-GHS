@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { getApiBase } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 
 export default function StudentLogin() {
   const navigate = useNavigate();
+  const { refreshSession } = useAuth();
   const [loading, setLoading] = useState(false);
   const [studentCode, setStudentCode] = useState("");
   const [password, setPassword] = useState("");
@@ -23,7 +25,6 @@ export default function StudentLogin() {
     setLoading(true);
     try {
       const url = `${getApiBase()}/auth/login`;
-      console.log('StudentLogin: POST', url);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
       const resp = await fetch(url, {
@@ -36,10 +37,9 @@ export default function StudentLogin() {
       if (!resp.ok) throw new Error(`status ${resp.status}`);
       const data = await resp.json();
       if (data.token) localStorage.setItem('token', data.token);
+      await refreshSession();
       toast.success("Bienvenido(a)");
       navigate("/student");
-      // reload after navigation so AuthProvider picks up roles for current route
-      window.location.reload();
     } catch (error: any) {
       console.error('student login error', error);
       if (error.name === 'AbortError') {
