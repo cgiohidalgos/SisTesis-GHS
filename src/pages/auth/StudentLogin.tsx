@@ -74,7 +74,7 @@ export default function StudentLogin() {
               id="code"
               value={studentCode}
               onChange={(e) => setStudentCode(e.target.value)}
-              placeholder="2020134567 o correo@uni.edu"
+              placeholder="30000057197 o nombre@correo.usbcali.edu.co"
             />
           </div>
           <div>

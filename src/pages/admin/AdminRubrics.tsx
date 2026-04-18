@@ -27,6 +27,31 @@ export default function AdminRubrics() {
   const [editSections, setEditSections] = useState<RubricSection[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadingDefaults, setLoadingDefaults] = useState(false);
+  const [downloadingXlsx, setDownloadingXlsx] = useState(false);
+
+  const handleDownloadXlsx = async () => {
+    if (!selectedProgram) return;
+    setDownloadingXlsx(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(
+        `${API_BASE}/admin/program-rubrics/${selectedProgram}/download-xlsx-full`,
+        { headers: { Authorization: token ? `Bearer ${token}` : '' } }
+      );
+      if (!resp.ok) throw new Error('Error generando el archivo');
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Rubricas_Completas.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast.error(err.message || 'Error descargando');
+    } finally {
+      setDownloadingXlsx(false);
+    }
+  };
 
   const handleLoadDefaults = async () => {
     if (!selectedProgram) return;
@@ -236,15 +261,26 @@ export default function AdminRubrics() {
           <div className="space-y-4">
             {/* Mostrar rúbricas existentes */}
             {rubrics.length > 0 ? (
-              <Accordion type="single" collapsible className="w-full border rounded-lg overflow-hidden">
+              <>
+                {/* Botón de descarga completa */}
+                <div className="flex gap-3 flex-wrap">
+                  <Button
+                    variant="outline"
+                    onClick={() => handleDownloadXlsx()}
+                    disabled={downloadingXlsx}
+                    className="text-green-700 border-green-400 hover:bg-green-50"
+                  >
+                    {downloadingXlsx ? '⏳ Descargando...' : '📥 Descargar Rúbricas Completas (XLSX)'}
+                  </Button>
+                </div>
+
+                <Accordion type="single" collapsible className="w-full border rounded-lg overflow-hidden">
                 {rubrics.map((rubric, idx) => (
                   <AccordionItem key={idx} value={`rubric-${idx}`} className="border-b">
                     <AccordionTrigger className="hover:no-underline py-3 px-4">
-                      <div className="flex-1 text-left">
-                        <span className="font-medium">
-                          Rúbrica de {rubric.evaluation_type === 'document' ? 'Documento' : 'Sustentación'}
-                        </span>
-                      </div>
+                      <span className="font-medium">
+                        Rúbrica de {rubric.evaluation_type === 'document' ? 'Documento' : 'Sustentación'}
+                      </span>
                     </AccordionTrigger>
                     <AccordionContent className="p-4 space-y-3">
                       {editingType === rubric.evaluation_type ? (
@@ -389,6 +425,7 @@ export default function AdminRubrics() {
                   </AccordionItem>
                 ))}
               </Accordion>
+              </>
             ) : (
               <div className="text-center py-8">
                 <p className="text-muted-foreground mb-4">No hay rúbricas guardadas aún para este programa.</p>

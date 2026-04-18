@@ -97,6 +97,9 @@ app.use(express.json());
 
 const db = require('./db');
 
+// Migration: add cvlac column to users if not present
+try { db.prepare('ALTER TABLE users ADD COLUMN cvlac TEXT').run(); } catch (_) {}
+
 // Helper: Unix timestamp en segundos (consistente con SQLite strftime('%s','now'))
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -666,7 +669,7 @@ function getActaContext(thesisId) {
     .map(p => ({ id: p.director_id, name: p.director_name, program: p.name }));
   
   const students = db.prepare(
-    `SELECT u.id, u.full_name as name, u.student_code, u.cedula, u.institutional_email
+    `SELECT u.id, u.full_name as name, u.student_code, u.cedula, u.institutional_email, u.cvlac
      FROM users u
      JOIN thesis_students ts ON ts.student_id = u.id
      WHERE ts.thesis_id = ?`
@@ -720,6 +723,19 @@ app.post('/theses/:id/files', authMiddleware, upload.fields([
   for (const field of ['document', 'endorsement']) {
     if (files[field] && files[field][0]) {
       const f = files[field][0];
+      
+      // Eliminar archivo anterior del mismo tipo (sobrescribir)
+      const oldFile = db.prepare('SELECT file_url FROM thesis_files WHERE thesis_id = ? AND file_type = ?').get(thesis_id, field);
+      if (oldFile && oldFile.file_url) {
+        // Eliminar archivo físico anterior
+        const oldPath = path.join(uploadDir, oldFile.file_url);
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
+      // Eliminar registro anterior de la base de datos
+      db.prepare('DELETE FROM thesis_files WHERE thesis_id = ? AND file_type = ?').run(thesis_id, field);
+      
       const id = uuidv4();
       // store only basename so we can serve via /uploads/:file
       const basename = path.basename(f.path);
@@ -935,8 +951,8 @@ app.post('/theses/:id/feedback', authMiddleware, requireRole('admin'), upload.si
   const id = uuidv4();
   // add timeline event for feedback
   db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(id, thesis_id, 'admin_feedback', comment || 'Feedback del admin', 0, created_at);
-  notifyTimeline(db, thesis_id, 'admin_feedback', comment || 'Feedback del admin', req.user.id).catch(console.error);
+    .run(id, thesis_id, 'admin_feedback', comment || 'Comentario del administrador', 0, created_at);
+  notifyTimeline(db, thesis_id, 'admin_feedback', comment || 'Comentario del administrador', req.user.id).catch(console.error);
   // store file if present
   if (req.file) {
     const basename = path.basename(req.file.path);
@@ -953,7 +969,7 @@ app.post('/theses/:id/decision', authMiddleware, requireRole('admin'), (req, res
   const now = nowSec();
   if (action === 'sustentacion') {
     db.prepare('UPDATE theses SET status = ? WHERE id = ?').run('sustentacion', thesis_id);
-    const descSust = 'Aprobada para sustentación' + (comment ? `: ${comment}` : '');
+    const descSust = 'Tesis aprobada para sustentación' + (comment ? `. ${comment}` : '');
     db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(uuidv4(), thesis_id, 'admin_decision', descSust, 1, now);
     notifyTimeline(db, thesis_id, 'admin_decision', descSust, req.user.id).catch(console.error);
@@ -961,7 +977,7 @@ app.post('/theses/:id/decision', authMiddleware, requireRole('admin'), (req, res
   }
   if (action === 'reject') {
     db.prepare('UPDATE theses SET status = ? WHERE id = ?').run('draft', thesis_id);
-    const descRej = 'Rechazada por admin' + (comment ? `: ${comment}` : '');
+    const descRej = 'Tesis devuelta con observaciones del administrador' + (comment ? `. ${comment}` : '');
     db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(uuidv4(), thesis_id, 'admin_decision', descRej, 1, now);
     notifyTimeline(db, thesis_id, 'admin_decision', descRej, req.user.id).catch(console.error);
@@ -989,7 +1005,7 @@ app.post('/theses/:id/assign-evaluator', authMiddleware, requireRole('admin'), (
   // build a descriptive timeline entry
   let desc;
   if (is_blind) {
-    desc = 'Evaluador asignado (par ciego)';
+    desc = 'Evaluador asignado como par ciego';
   } else {
     const row = db.prepare('SELECT full_name FROM users WHERE id = ?').get(evaluator_id);
     desc = `Evaluador asignado${row && row.full_name ? `: ${row.full_name}` : ''}`;
@@ -1027,7 +1043,7 @@ app.post('/theses/:id/assign-evaluators', authMiddleware, requireRole('admin'), 
     // build a description string that includes evaluator names when not blind
     let desc;
     if (is_blind) {
-      desc = `Evaluadores asignados (${evaluator_ids.length}) (pares ciegos)`;
+      desc = `${evaluator_ids.length} evaluadores asignados como pares ciegos`;
     } else {
       const placeholders = evaluator_ids.map(() => '?').join(',');
       const rows = db.prepare(`SELECT full_name FROM users WHERE id IN (${placeholders})`).all(...evaluator_ids);
@@ -1090,7 +1106,7 @@ app.post('/theses/:id/replace-evaluator', authMiddleware, requireRole('admin'), 
     db.prepare('UPDATE thesis_evaluators SET evaluator_id = ? WHERE id = ?').run(new_evaluator_id, te.id);
     const oldName = oldEvaluatorRow?.full_name || old_evaluator_id;
     const newName = newEvaluatorRow?.full_name || new_evaluator_id;
-    const desc = `Evaluador reemplazado: ${oldName} → ${newName}`;
+    const desc = `Evaluador reemplazado: ${oldName} por ${newName}`;
     db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(uuidv4(), thesis_id, 'evaluator_replaced', desc, 1, nowSec());
   });
@@ -1098,7 +1114,7 @@ app.post('/theses/:id/replace-evaluator', authMiddleware, requireRole('admin'), 
     tx();
     const oldName = oldEvaluatorRow?.full_name || old_evaluator_id;
     const newName = newEvaluatorRow?.full_name || new_evaluator_id;
-    notifyTimeline(db, thesis_id, 'evaluator_replaced', `Evaluador reemplazado: ${oldName} → ${newName}`, req.user.id).catch(console.error);
+    notifyTimeline(db, thesis_id, 'evaluator_replaced', `Evaluador reemplazado: ${oldName} por ${newName}`, req.user.id).catch(console.error);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -1121,7 +1137,7 @@ app.delete('/theses/:id/evaluators/:evaluatorId', authMiddleware, requireRole('a
   }
 
   const evaluatorRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(evaluator_id);
-  const desc = evaluatorRow?.full_name ? `Evaluador removido: ${evaluatorRow.full_name}` : 'Evaluador removido';
+  const desc = evaluatorRow?.full_name ? `Evaluador retirado de la asignación: ${evaluatorRow.full_name}` : 'Evaluador retirado de la asignación';
 
   const tx = db.transaction(() => {
     // Remove any partial evaluations and associated data
@@ -1154,13 +1170,13 @@ app.post('/theses/:id/reply', authMiddleware, requireRole('admin'), (req, res) =
   if (!thesis) return res.status(404).json({ error: 'not found' });
   const now = nowSec();
   if (ok) {
-    const descOk = comment || 'Revisión positiva';
+    const descOk = comment || 'Documentación revisada y aprobada';
     db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(uuidv4(), thesis_id, 'review_ok', descOk, 1, now);
     notifyTimeline(db, thesis_id, 'review_ok', descOk, req.user.id).catch(console.error);
   } else {
     db.prepare('UPDATE theses SET status = ? WHERE id = ?').run('draft', thesis_id);
-    const descFail = comment || 'Revisión negativa';
+    const descFail = comment || 'Documentación devuelta con observaciones pendientes';
     db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(uuidv4(), thesis_id, 'review_fail', descFail, 1, now);
     notifyTimeline(db, thesis_id, 'review_fail', descFail, req.user.id).catch(console.error);
@@ -1216,7 +1232,7 @@ app.post('/theses/:id/assign-student', authMiddleware, requireRole('admin'), (re
 
 // Actualizar tesis (solo admin o creador mientras esté en borrador)
 app.put('/theses/:id', authMiddleware, async (req, res) => {
-  const { title, abstract, status, companion, program_ids, keywords, director_ids } = req.body;
+  const { title, abstract, status, companion, program_ids, keywords, director_ids, cvlac } = req.body;
   const thesis_id = req.params.id;
   const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesis_id);
   if (!thesis) return res.status(404).json({ error: 'not found' });
@@ -1231,6 +1247,8 @@ app.put('/theses/:id', authMiddleware, async (req, res) => {
 
   db.prepare('UPDATE theses SET title = ?, abstract = ?, keywords = ?, status = ? WHERE id = ?')
     .run(title || thesis.title, abstract || thesis.abstract, keywords !== undefined ? keywords : thesis.keywords, status || thesis.status, thesis_id);
+
+  if (cvlac !== undefined) db.prepare('UPDATE users SET cvlac = ? WHERE id = ?').run(cvlac || null, req.user.id);
 
   // companion logic: either update existing or create new when provided
   if (companion) {
@@ -1264,6 +1282,7 @@ app.put('/theses/:id', authMiddleware, async (req, res) => {
         // update email too in case code changed
         sql += ', email = ?';
         params.push(companion.student_code + '@estudiante.local');
+        if (companion.cvlac !== undefined) { sql += ', cvlac = ?'; params.push(companion.cvlac || null); }
         if (companion.password) {
           const hash = await bcrypt.hash(companion.password, 10);
           sql += ', password_hash = ?';
@@ -1363,7 +1382,7 @@ app.delete('/theses/:id', authMiddleware, (req, res) => {
   if (!thesis) return res.status(404).json({ error: 'not found' });
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
   console.log('roles for user', roles);
-  if (roles.includes('admin') || (thesis.created_by === req.user.id && thesis.status === 'draft')) {
+  if (roles.includes('admin') || roles.includes('superadmin') || (thesis.created_by === req.user.id && thesis.status === 'draft')) {
     // if an admin and there are already evaluations, perform soft delete
     const evCount = db.prepare(
       `SELECT COUNT(*) as c FROM evaluations e
@@ -1463,6 +1482,217 @@ app.get('/theses/:id/evaluations', authMiddleware, (req, res) => {
 });
 
 // Listar evaluaciones por evaluador
+// GET /evaluations/rubric-xlsx?thesis_id=X&evaluation_type=Y — evaluador descarga su rúbrica (pre-llenada si ya evaluó)
+app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), async (req, res) => {
+  const { thesis_id, evaluation_type } = req.query;
+  if (!thesis_id || !evaluation_type) return res.status(400).json({ error: 'thesis_id y evaluation_type son requeridos' });
+
+  // Obtener tesis y programa
+  const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesis_id);
+  if (!thesis) return res.status(404).json({ error: 'Tesis no encontrada' });
+
+  // Verificar que el evaluador esté asignado a esta tesis
+  const assignment = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, req.user.id);
+  if (!assignment) return res.status(403).json({ error: 'No tiene acceso a esta tesis' });
+
+  const program = db.prepare('SELECT name FROM programs WHERE id = ?').get(thesis.program_id);
+  const rubric = db.prepare('SELECT * FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(thesis.program_id, evaluation_type);
+  if (!rubric) return res.status(404).json({ error: 'Rúbrica no encontrada para este programa' });
+
+  // Buscar evaluación existente del evaluador para esta tesis/tipo (ronda actual)
+  const currentRound = thesis.revision_round || 0;
+  const existingEval = db.prepare(`
+    SELECT e.* FROM evaluations e
+    JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+    WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = ? AND e.revision_round = ?
+    ORDER BY e.submitted_at DESC LIMIT 1
+  `).get(thesis_id, req.user.id, evaluation_type, currentRound);
+
+  // Cargar puntajes si existe evaluación
+  let scores = [];
+  if (existingEval) {
+    scores = db.prepare('SELECT section_id, criterion_id, score, observations FROM evaluation_scores WHERE evaluation_id = ?').all(existingEval.id);
+  }
+
+  try {
+    const ExcelJS = require('exceljs');
+    const sections = JSON.parse(rubric.sections_json);
+    const typeLabel = evaluation_type === 'document' ? 'Documento' : 'Sustentación';
+    const programName = program ? program.name : 'Programa';
+    const isFilled = scores.length > 0;
+
+    const COLOR = {
+      titleBg: '1E3A5F', titleFg: 'FFFFFF',
+      headerBg: '2E75B6', headerFg: 'FFFFFF',
+      sectionColors: ['D6E4F0', 'D5E8D4', 'FFE6CC', 'E1D5E7', 'DAE8FC'],
+      sectionFg: '1E3A5F',
+      criterionAlt: 'F0F7FF',
+      inputBg: 'FFFDE7',
+      filledBg: 'E8F5E9',
+      subtotalBg: 'E2EFDA', subtotalFg: '375623',
+      totalBg: '375623', totalFg: 'FFFFFF',
+      border: 'B0BEC5',
+    };
+
+    const font  = (bold = false, size = 11, color = '000000') => ({ name: 'Calibri', bold, size, color: { argb: 'FF' + color } });
+    const fill  = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
+    const bdr   = (hex = COLOR.border) => { const s = { style: 'thin', color: { argb: 'FF' + hex } }; return { top: s, left: s, bottom: s, right: s }; };
+    const align = (h = 'left', v = 'middle', wrap = false) => ({ horizontal: h, vertical: v, wrapText: wrap });
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SisTesis';
+    const ws = wb.addWorksheet(`Rúbrica ${typeLabel}`.substring(0, 31), {
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+      views: [{ state: 'frozen', ySplit: 4 }],
+    });
+    ws.columns = [
+      { width: 28 }, { width: 10 }, { width: 8 },
+      { width: 42 }, { width: 16 }, { width: 18 }, { width: 20 },
+    ];
+
+    // Título
+    const tRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '']);
+    ws.mergeCells(1, 1, 1, 7); tRow.height = 32;
+    Object.assign(tRow.getCell(1), { font: font(true, 14, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
+
+    // Programa
+    const pRow = ws.addRow([programName, '', '', '', '', '', '']);
+    ws.mergeCells(2, 1, 2, 7); pRow.height = 20;
+    Object.assign(pRow.getCell(1), { font: font(false, 11, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
+
+    // Tesis
+    const thesisRow = ws.addRow([`Tesis: ${thesis.title || ''}`, '', '', '', '', '', '']);
+    ws.mergeCells(3, 1, 3, 7); thesisRow.height = 18;
+    Object.assign(thesisRow.getCell(1), { font: font(false, 10, COLOR.titleFg), fill: fill('2E5080'), alignment: align('left', 'middle', true), border: bdr() });
+
+    // Estado
+    const estadoRow = ws.addRow([isFilled ? '✅ Evaluación enviada — puntajes cargados automáticamente' : '⚠️ Evaluación pendiente — complete la columna amarilla', '', '', '', '', '', '']);
+    ws.mergeCells(4, 1, 4, 7); estadoRow.height = 18;
+    const estadoCell = estadoRow.getCell(1);
+    estadoCell.font = { name: 'Calibri', italic: true, size: 10, color: { argb: isFilled ? 'FF375623' : 'FF8B5E00' } };
+    estadoCell.fill = fill(isFilled ? 'E2EFDA' : 'FFF8E1');
+    estadoCell.alignment = align('center', 'middle');
+    estadoCell.border = bdr();
+
+    // Encabezados
+    const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado']);
+    hRow.height = 28;
+    hRow.eachCell(c => Object.assign(c, { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('center', 'middle', true), border: bdr() }));
+
+    let currentRow = 6;
+    const sectionSubtotalRefs = [];
+
+    sections.forEach((section, sIdx) => {
+      const count = section.criteria.length;
+      const secStart = currentRow;
+      const secBg = COLOR.sectionColors[sIdx % COLOR.sectionColors.length];
+
+      section.criteria.forEach((criterion, cIdx) => {
+        const er = currentRow;
+        const existingScore = scores.find(sc => sc.section_id === section.id && sc.criterion_id === criterion.id);
+        const scoreValue = existingScore ? existingScore.score : null;
+        const obsValue = existingScore ? existingScore.observations : '';
+
+        const row = ws.addRow([
+          cIdx === 0 ? section.name : '',
+          cIdx === 0 ? section.weight : '',
+          cIdx === 0 ? count : '',
+          criterion.name,
+          criterion.maxScore,
+          scoreValue,
+          null,
+        ]);
+        row.height = 22;
+
+        Object.assign(row.getCell(1), { font: font(true, 11, COLOR.sectionFg), fill: fill(secBg), alignment: align('center', 'middle', true), border: bdr() });
+        Object.assign(row.getCell(2), { font: font(true, 11, COLOR.sectionFg), fill: fill(secBg), alignment: align('center', 'middle'), numFmt: '0"%"', border: bdr() });
+        Object.assign(row.getCell(3), { font: font(false, 10, '555555'), fill: fill(secBg), alignment: align('center', 'middle'), border: bdr() });
+
+        const critBg = cIdx % 2 === 0 ? 'FFFFFF' : COLOR.criterionAlt;
+        Object.assign(row.getCell(4), { font: font(false, 11), fill: fill(critBg), alignment: align('left', 'middle', true), border: bdr() });
+        Object.assign(row.getCell(5), { font: font(false, 11, '444444'), fill: fill(critBg), alignment: align('center', 'middle'), border: bdr() });
+
+        // Columna F: verde si ya tiene puntaje, amarillo si no
+        const cF = row.getCell(6);
+        cF.fill = fill(scoreValue !== null ? COLOR.filledBg : COLOR.inputBg);
+        cF.alignment = align('center', 'middle');
+        cF.border = bdr(scoreValue !== null ? '375623' : 'FFBB00');
+        cF.font = font(scoreValue !== null, 11, scoreValue !== null ? '375623' : '333333');
+        if (!isFilled) cF.note = `Ingrese el puntaje obtenido (0 – ${criterion.maxScore})`;
+
+        // Columna G: fórmula aporte
+        const cG = row.getCell(7);
+        cG.value = { formula: `IFERROR((F${er}/E${er})*(B${secStart}/C${secStart}),0)` };
+        cG.numFmt = '0.00';
+        Object.assign(cG, { font: font(false, 11, COLOR.sectionFg), fill: fill(critBg), alignment: align('center', 'middle'), border: bdr() });
+
+        // Fila observación si existe
+        if (isFilled && obsValue) {
+          currentRow++;
+          const obsRow = ws.addRow(['', '', '', `  ↳ Obs: ${obsValue}`, '', '', '']);
+          obsRow.height = 16;
+          Object.assign(obsRow.getCell(4), { font: { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF666666' } }, fill: fill('FAFAFA'), alignment: align('left', 'middle', true), border: bdr() });
+          [1,2,3,5,6,7].forEach(col => { obsRow.getCell(col).fill = fill('FAFAFA'); obsRow.getCell(col).border = bdr(); });
+        }
+
+        currentRow++;
+      });
+
+      if (count > 1) {
+        ws.mergeCells(secStart, 1, secStart + count - 1, 1);
+        ws.mergeCells(secStart, 2, secStart + count - 1, 2);
+        ws.mergeCells(secStart, 3, secStart + count - 1, 3);
+      }
+
+      // Subtotal sección
+      const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null]);
+      stRow.height = 20;
+      stRow.getCell(7).value = { formula: `SUM(G${secStart}:G${currentRow - 1})` };
+      stRow.getCell(7).numFmt = '0.00';
+      sectionSubtotalRefs.push(`G${currentRow}`);
+      [1,2,3,4,5,6,7].forEach(col => Object.assign(stRow.getCell(col), { font: font(col === 4, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align(col === 4 ? 'right' : 'center', 'middle'), border: bdr() }));
+      currentRow++;
+
+      ws.addRow([]).height = 5;
+      currentRow++;
+    });
+
+    // Nota final
+    const finalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null]);
+    finalRow.height = 30;
+    finalRow.getCell(7).value = { formula: `(${sectionSubtotalRefs.join('+')})/100*5` };
+    finalRow.getCell(7).numFmt = '0.0"  / 5.0"';
+    [1,2,3,4,5,6,7].forEach(col => Object.assign(finalRow.getCell(col), { font: font(true, 13, COLOR.totalFg), fill: fill(COLOR.totalBg), alignment: align(col === 6 ? 'right' : 'center', 'middle'), border: bdr() }));
+
+    // Observaciones generales
+    if (isFilled && existingEval.general_observations) {
+      ws.addRow([]).height = 8;
+      const goTitle = ws.addRow(['Observaciones Generales', '', '', '', '', '', '']);
+      ws.mergeCells(goTitle.number, 1, goTitle.number, 7);
+      Object.assign(goTitle.getCell(1), { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('left', 'middle'), border: bdr() });
+      const goRow = ws.addRow([existingEval.general_observations, '', '', '', '', '', '']);
+      ws.mergeCells(goRow.number, 1, goRow.number, 7);
+      goRow.height = 40;
+      Object.assign(goRow.getCell(1), { font: font(false, 10), fill: fill('F9F9F9'), alignment: align('left', 'middle', true), border: bdr() });
+    }
+
+    // Pie
+    ws.addRow([]).height = 8;
+    const instr = ws.addRow([isFilled ? '* Puntajes cargados desde la evaluación enviada. Los aportes se calculan automáticamente.' : '* Complete únicamente la columna "Puntaje Obtenido" (celdas en amarillo).']);
+    ws.mergeCells(instr.number, 1, instr.number, 7);
+    instr.getCell(1).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
+
+    const filename = `Rubrica_${typeLabel}_${(thesis.title || 'Tesis').replace(/\s+/g, '_').substring(0, 40)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    logger.error('Error generando XLSX evaluador:', err);
+    res.status(500).json({ error: 'Error generando el archivo' });
+  }
+});
+
 app.get('/evaluators/:id/evaluations', authMiddleware, requireRole('evaluator'), (req, res) => {
   const evaluator_id = req.params.id;
   if (evaluator_id !== req.user.id) return res.status(403).json({ error: 'forbidden' });
@@ -1611,8 +1841,10 @@ app.get('/evaluator/:id/evaluated-theses', authMiddleware, requireRole('admin'),
 
 // Editar usuario (solo admin)
 app.put('/users/:id', authMiddleware, requireRole('admin'), async (req, res) => {
-  const { full_name, email, student_code, cedula, institutional_email, password } = req.body;
+  let { full_name, email, student_code, cedula, institutional_email, password } = req.body;
   const { id } = req.params;
+  // Convertir nombre a mayúsculas
+  if (full_name) full_name = full_name.toUpperCase();
   try {
     // check uniqueness if provided
     if (student_code) {
@@ -1650,15 +1882,9 @@ app.post('/users/:id/send-credentials', authMiddleware, requireRole('admin'), as
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
   if (!user.institutional_email) return res.status(400).json({ error: 'El usuario no tiene correo institucional' });
 
-  const firstName = (user.full_name || '').split(' ')[0].toLowerCase() || 'usuario';
-  // Password follows fixed pattern: first name lowercase + cedula. Never reset.
-  const password = user.cedula ? firstName + user.cedula : firstName + Math.random().toString(36).slice(-6);
-
-  // Only set password if user doesn't have one yet (cedula-based passwords are set at seed time)
-  if (!user.cedula) {
-    const hash = await bcrypt.hash(password, 10);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
-  }
+  if (!user.cedula) return res.status(400).json({ error: 'El usuario no tiene cédula registrada' });
+  const firstName = (user.full_name || '').split(' ')[0].toLowerCase();
+  const password = firstName + user.cedula;
 
   const sent = await sendWelcomeEmail(db, user.institutional_email, user.full_name, user.institutional_email, password, req.user.id);
   if (!sent) return res.status(500).json({ error: 'No se pudo enviar el correo. Verifica la configuración SMTP.' });
@@ -1761,9 +1987,11 @@ function requireRole(role) {
 
 app.post('/auth/register', async (req, res) => {
   // students register using their institutional email; password is auto-generated if not provided
-  const { institutional_email, full_name, student_code, cedula } = req.body;
+  let { institutional_email, full_name, student_code, cedula } = req.body;
   let { password } = req.body;
   if (!institutional_email) return res.status(400).json({ error: 'institutional_email required' });
+  // Convertir nombre a mayúsculas
+  if (full_name) full_name = full_name.toUpperCase();
   // auto-generate password if not provided (sent by email)
   const autoPassword = !password;
   if (autoPassword) {
@@ -1906,23 +2134,21 @@ app.get('/programs', (req, res) => {
   } catch {}
 
   const rows = db.prepare(
-    `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
+    `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators,
             GROUP_CONCAT(pa.user_id) as admin_user_ids
      FROM programs p
      LEFT JOIN program_admins pa ON pa.program_id = p.id
-     GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden
+     GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators
      ORDER BY p.name`
   ).all();
 
   const data = rows
-    .filter(r => isAdmin || !r.hidden)
     .map(r => ({
       id: r.id,
       name: r.name,
       reception_start: r.reception_start ? new Date(r.reception_start).toISOString().slice(0,10) : null,
       reception_end: r.reception_end ? new Date(r.reception_end).toISOString().slice(0,10) : null,
       max_evaluators: r.max_evaluators ?? 2,
-      hidden: !!r.hidden,
       admin_user_ids: r.admin_user_ids ? r.admin_user_ids.split(',') : []
     }));
   res.json(data);
@@ -2286,9 +2512,11 @@ app.post('/super/users', authMiddleware, requireRole('superadmin'), async (req, 
 
 // Admins (not necessarily super) may create evaluators
 app.post('/users', authMiddleware, requireRole('admin'), async (req, res) => {
-  const { institutional_email, full_name, specialty, cedula } = req.body;
+  let { institutional_email, full_name, specialty, cedula } = req.body;
   let { password } = req.body;
   if (!institutional_email) return res.status(400).json({ error: 'institutional_email required' });
+  // Convertir nombre a mayúsculas
+  if (full_name) full_name = full_name.toUpperCase();
   // Auto-generate password as firstName+cedula if not provided
   if (!password) {
     const firstName = (full_name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '') || 'evaluador';
@@ -2492,6 +2720,7 @@ app.post('/theses', authMiddleware, upload.fields([
   const abstract    = req.body.abstract;
   const keywords    = req.body.keywords || null;
   const urlField    = req.body.url || null;
+  const cvlac       = req.body.cvlac || null;
   const companion   = tryParse(req.body.companion);
   const program_ids = tryParse(req.body.program_ids);
   const directors   = tryParse(req.body.directors);
@@ -2558,9 +2787,10 @@ app.post('/theses', authMiddleware, upload.fields([
   };
 
   try {
-    // Asociar el estudiante que solicita
+    // Asociar el estudiante que solicita y guardar cvlac
     db.prepare('INSERT INTO thesis_students (id, thesis_id, student_id) VALUES (?, ?, ?)')
       .run(uuidv4(), id, req.user.id);
+    if (cvlac) db.prepare('UPDATE users SET cvlac = ? WHERE id = ?').run(cvlac, req.user.id);
 
     // si se proporciona compañero crearlo y asociar
     if (companion) {
@@ -2568,6 +2798,8 @@ app.post('/theses', authMiddleware, upload.fields([
         cleanup();
         return res.status(400).json({ error: 'companion requires full_name, student_code and cedula' });
       }
+      // Convertir nombre del compañero a mayúsculas
+      companion.full_name = companion.full_name.toUpperCase();
       const dup = db.prepare('SELECT id FROM users WHERE student_code = ? OR cedula = ?').get(companion.student_code, companion.cedula);
       if (dup) {
         cleanup();
@@ -2577,8 +2809,8 @@ app.post('/theses', authMiddleware, upload.fields([
       const compFirstName = (companion.full_name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '') || 'usuario';
       const compPassword = `${compFirstName}_${companion.cedula || Math.random().toString(36).slice(-6)}`;
       const hash = await bcrypt.hash(compPassword, 10);
-      db.prepare('INSERT INTO users (id, email, password_hash, full_name, student_code, cedula, institutional_email) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(compId, companion.student_code + '@estudiante.local', hash, companion.full_name, companion.student_code, companion.cedula, companion.institutional_email || null);
+      db.prepare('INSERT INTO users (id, email, password_hash, full_name, student_code, cedula, institutional_email, cvlac) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(compId, companion.student_code + '@estudiante.local', hash, companion.full_name, companion.student_code, companion.cedula, companion.institutional_email || null, companion.cvlac || null);
       db.prepare('INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)').run(uuidv4(), compId, 'student');
       db.prepare('INSERT INTO thesis_students (id, thesis_id, student_id) VALUES (?, ?, ?)').run(uuidv4(), id, compId);
       // Enviar email de bienvenida al compañero
@@ -2689,7 +2921,7 @@ app.get('/theses', authMiddleware, (req, res) => {
   // enriquecer con estudiantes, evaluadores y línea de tiempo
   const enriched = rows.map(t => {
     const students = db.prepare(
-      `SELECT u.id, u.full_name as name, u.student_code, u.cedula, u.institutional_email FROM users u
+      `SELECT u.id, u.full_name as name, u.student_code, u.cedula, u.institutional_email, u.cvlac FROM users u
        JOIN thesis_students ts ON u.id = ts.student_id
        WHERE ts.thesis_id = ?`
     ).all(t.id);
@@ -2876,7 +3108,7 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   const thesis = db.prepare('SELECT *, final_weighted_override FROM theses WHERE id = ?').get(id);
   if (!thesis) return res.status(404).json({ error: 'not found' });
   const students = db.prepare(
-    `SELECT u.id, u.full_name as name, u.student_code, u.cedula, u.email, u.institutional_email FROM users u
+    `SELECT u.id, u.full_name as name, u.student_code, u.cedula, u.email, u.institutional_email, u.cvlac FROM users u
      JOIN thesis_students ts ON u.id = ts.student_id
      WHERE ts.thesis_id = ?`
   ).all(id);
@@ -2887,8 +3119,11 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
      WHERE te.thesis_id = ?`
   ).all(id).map(ev => ({ ...ev, is_blind: !!ev.is_blind }));
   const directors = db.prepare(
-    `SELECT name FROM thesis_directors WHERE thesis_id = ?`
-  ).all(id).map(r => r.name);
+    `SELECT td.name, u.email, u.institutional_email 
+     FROM thesis_directors td
+     LEFT JOIN users u ON td.user_id = u.id
+     WHERE td.thesis_id = ?`
+  ).all(id);
   const programs = db.prepare(
     `SELECT p.id, p.name FROM programs p
      JOIN thesis_programs tp ON p.id = tp.program_id
@@ -5252,6 +5487,582 @@ app.get('/super/rubrics', authMiddleware, (req, res) => {
     sections_json: JSON.parse(r.sections_json)
   }));
   res.json(result);
+});
+
+// GET /admin/program-rubrics/:programId/:evaluationType/download-xlsx — descargar rúbrica en xlsx
+app.get('/admin/program-rubrics/:programId/:evaluationType/download-xlsx', authMiddleware, async (req, res) => {
+  const { programId, evaluationType } = req.params;
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperAdmin = roles.includes('superadmin');
+
+  if (!isSuperAdmin) {
+    const adminProg = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ? AND program_id = ?').get(req.user.id, programId);
+    if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
+  }
+
+  const program = db.prepare('SELECT name FROM programs WHERE id = ?').get(programId);
+  const rubric = db.prepare('SELECT * FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(programId, evaluationType);
+  if (!rubric) return res.status(404).json({ error: 'Rúbrica no encontrada' });
+
+  try {
+    const ExcelJS = require('exceljs');
+    const sections = JSON.parse(rubric.sections_json);
+    const typeLabel = evaluationType === 'document' ? 'Documento' : 'Sustentación';
+    const programName = program ? program.name : 'Programa';
+
+    // Paleta de colores
+    const COLOR = {
+      titleBg:      '1E3A5F', // azul oscuro
+      titleFg:      'FFFFFF',
+      headerBg:     '2E75B6', // azul medio
+      headerFg:     'FFFFFF',
+      sectionBg:    'D6E4F0', // azul claro
+      sectionFg:    '1E3A5F',
+      criterionBg:  'FFFFFF',
+      criterionAlt: 'F0F7FF', // azul muy claro (filas alternas)
+      inputBg:      'FFFDE7', // amarillo suave — celda para llenar
+      subtotalBg:   'E2EFDA', // verde claro
+      subtotalFg:   '375623',
+      totalBg:      '375623', // verde oscuro
+      totalFg:      'FFFFFF',
+      border:       'B0BEC5',
+    };
+
+    const font = (bold = false, size = 11, color = '000000') => ({ name: 'Calibri', bold, size, color: { argb: 'FF' + color } });
+    const fill = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
+    const border = () => {
+      const s = { style: 'thin', color: { argb: 'FF' + COLOR.border } };
+      return { top: s, left: s, bottom: s, right: s };
+    };
+    const align = (h = 'left', v = 'middle', wrap = false) => ({ horizontal: h, vertical: v, wrapText: wrap });
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SisTesis';
+    wb.created = new Date();
+    const ws = wb.addWorksheet(`Rúbrica ${typeLabel}`.substring(0, 31), {
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+      views: [{ state: 'frozen', ySplit: 3 }],
+    });
+
+    // Anchos de columnas
+    ws.columns = [
+      { key: 'seccion',   width: 28 },
+      { key: 'peso',      width: 10 },
+      { key: 'nro',       width: 8  },
+      { key: 'criterio',  width: 42 },
+      { key: 'maxScore',  width: 16 },
+      { key: 'obtenido',  width: 18 },
+      { key: 'aporte',    width: 20 },
+    ];
+
+    // --- Fila 1: Título ---
+    const titleRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '']);
+    ws.mergeCells(1, 1, 1, 7);
+    titleRow.height = 32;
+    const titleCell = titleRow.getCell(1);
+    titleCell.font = font(true, 14, COLOR.titleFg);
+    titleCell.fill = fill(COLOR.titleBg);
+    titleCell.alignment = align('center', 'middle');
+    titleCell.border = border();
+
+    // --- Fila 2: Subtítulo programa ---
+    const subRow = ws.addRow([programName, '', '', '', '', '', '']);
+    ws.mergeCells(2, 1, 2, 7);
+    subRow.height = 20;
+    const subCell = subRow.getCell(1);
+    subCell.font = font(false, 11, COLOR.titleFg);
+    subCell.fill = fill(COLOR.titleBg);
+    subCell.alignment = align('center', 'middle');
+    subCell.border = border();
+
+    // --- Fila 3: Encabezados ---
+    const headers = ['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado'];
+    const headerRow = ws.addRow(headers);
+    headerRow.height = 28;
+    headerRow.eachCell((cell) => {
+      cell.font = font(true, 11, COLOR.headerFg);
+      cell.fill = fill(COLOR.headerBg);
+      cell.alignment = align('center', 'middle', true);
+      cell.border = border();
+    });
+
+    // --- Datos por sección ---
+    let dataRowStart = 4; // fila Excel actual (1-indexed)
+    let currentExcelRow = 4;
+    const sectionSubtotalRefs = [];
+
+    sections.forEach((section, sIdx) => {
+      const count = section.criteria.length;
+      const sectionFirstRow = currentExcelRow;
+      const sectionColors = [COLOR.sectionBg, 'D0E8FF', 'C8E6C9', 'FFE0B2', 'E8DAEF'];
+      const secBg = sectionColors[sIdx % sectionColors.length];
+
+      section.criteria.forEach((criterion, cIdx) => {
+        const er = currentExcelRow;
+        const isAlt = cIdx % 2 === 1;
+        const critBg = isAlt ? COLOR.criterionAlt : COLOR.criterionBg;
+
+        const row = ws.addRow([
+          cIdx === 0 ? section.name : '',
+          cIdx === 0 ? section.weight : '',
+          cIdx === 0 ? count : '',
+          criterion.name,
+          criterion.maxScore,
+          null, // celda para llenar — amarilla
+          null, // fórmula
+        ]);
+        row.height = 22;
+
+        // Sección (A)
+        const cA = row.getCell(1);
+        cA.font = font(true, 11, COLOR.sectionFg);
+        cA.fill = fill(secBg);
+        cA.alignment = align('center', 'middle', true);
+        cA.border = border();
+
+        // Peso (B)
+        const cB = row.getCell(2);
+        cB.font = font(true, 11, COLOR.sectionFg);
+        cB.fill = fill(secBg);
+        cB.alignment = align('center', 'middle');
+        cB.numFmt = '0"%"';
+        cB.border = border();
+
+        // Nro criterios (C)
+        const cC = row.getCell(3);
+        cC.font = font(false, 10, '555555');
+        cC.fill = fill(secBg);
+        cC.alignment = align('center', 'middle');
+        cC.border = border();
+
+        // Criterio (D)
+        const cD = row.getCell(4);
+        cD.font = font(false, 11);
+        cD.fill = fill(critBg);
+        cD.alignment = align('left', 'middle', true);
+        cD.border = border();
+
+        // Puntaje máximo (E)
+        const cE = row.getCell(5);
+        cE.font = font(false, 11, '444444');
+        cE.fill = fill(critBg);
+        cE.alignment = align('center', 'middle');
+        cE.border = border();
+
+        // Puntaje obtenido (F) — celda amarilla para llenar
+        const cF = row.getCell(6);
+        cF.fill = fill(COLOR.inputBg);
+        cF.alignment = align('center', 'middle');
+        cF.border = { top: { style: 'thin', color: { argb: 'FFFFBB00' } }, left: { style: 'thin', color: { argb: 'FFFFBB00' } }, bottom: { style: 'thin', color: { argb: 'FFFFBB00' } }, right: { style: 'thin', color: { argb: 'FFFFBB00' } } };
+        cF.note = 'Ingrese el puntaje obtenido (0 – ' + criterion.maxScore + ')';
+
+        // Aporte ponderado (G) — fórmula
+        const cG = row.getCell(7);
+        cG.value = { formula: `IFERROR((F${er}/E${er})*(B${sectionFirstRow}/C${sectionFirstRow}),0)` };
+        cG.numFmt = '0.00';
+        cG.font = font(false, 11, '1E3A5F');
+        cG.fill = fill(critBg);
+        cG.alignment = align('center', 'middle');
+        cG.border = border();
+
+        currentExcelRow++;
+      });
+
+      // Merge sección, peso, nro verticalmente
+      if (count > 1) {
+        ws.mergeCells(sectionFirstRow, 1, currentExcelRow - 1, 1);
+        ws.mergeCells(sectionFirstRow, 2, currentExcelRow - 1, 2);
+        ws.mergeCells(sectionFirstRow, 3, currentExcelRow - 1, 3);
+      }
+
+      // Fila subtotal sección
+      const subRow2 = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null]);
+      subRow2.height = 20;
+      const stG = subRow2.getCell(7);
+      stG.value = { formula: `SUM(G${sectionFirstRow}:G${currentExcelRow - 1})` };
+      stG.numFmt = '0.00';
+      sectionSubtotalRefs.push(`G${currentExcelRow}`);
+
+      [1,2,3,4,5,6,7].forEach(col => {
+        const c = subRow2.getCell(col);
+        c.font = font(col === 4, 11, COLOR.subtotalFg);
+        c.fill = fill(COLOR.subtotalBg);
+        c.alignment = align(col === 4 ? 'right' : 'center', 'middle');
+        c.border = border();
+      });
+      currentExcelRow++;
+
+      // Fila separadora
+      const sepRow = ws.addRow(['', '', '', '', '', '', '']);
+      sepRow.height = 6;
+      currentExcelRow++;
+    });
+
+    // --- Fila total final ---
+    const totalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (escala 0.0 – 5.0)', null]);
+    totalRow.height = 28;
+    const tG = totalRow.getCell(7);
+    tG.value = { formula: `(${sectionSubtotalRefs.join('+')})/100*5` };
+    tG.numFmt = '0.0';
+    [1,2,3,4,5,6,7].forEach(col => {
+      const c = totalRow.getCell(col);
+      c.font = font(true, 13, COLOR.totalFg);
+      c.fill = fill(COLOR.totalBg);
+      c.alignment = align(col === 6 ? 'right' : 'center', 'middle');
+      c.border = border();
+    });
+
+    // --- Nota instruccional al pie ---
+    const noteRow = ws.addRow(['', '', '', '', '', '', '']);
+    noteRow.height = 8;
+    const instrRow = ws.addRow(['* Complete únicamente la columna "Puntaje Obtenido" (celdas en amarillo). Los aportes y la nota final se calculan automáticamente.', '', '', '', '', '', '']);
+    ws.mergeCells(instrRow.number, 1, instrRow.number, 7);
+    instrRow.getCell(1).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
+    instrRow.getCell(1).alignment = align('left', 'middle');
+
+    // Enviar respuesta
+    const filename = `Rubrica_${typeLabel}_${programName.replace(/\s+/g, '_')}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    logger.error('Error generando XLSX rúbrica:', err);
+    res.status(500).json({ error: 'Error generando el archivo' });
+  }
+});
+
+// GET /admin/program-rubrics/:programId/download-xlsx-full — descarga ambas rúbricas + resumen en un solo xlsx
+app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, async (req, res) => {
+  const { programId } = req.params;
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperAdmin = roles.includes('superadmin');
+
+  if (!isSuperAdmin) {
+    const adminProg = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ? AND program_id = ?').get(req.user.id, programId);
+    if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
+  }
+
+  const program = db.prepare('SELECT name FROM programs WHERE id = ?').get(programId);
+  const rubrics = db.prepare('SELECT * FROM program_rubrics WHERE program_id = ?').all(programId);
+  if (!rubrics.length) return res.status(404).json({ error: 'No hay rúbricas para este programa' });
+
+  try {
+    const ExcelJS = require('exceljs');
+    const programName = program ? program.name : 'Programa';
+
+    const COLOR = {
+      titleBg: '1E3A5F', titleFg: 'FFFFFF',
+      headerBg: '2E75B6', headerFg: 'FFFFFF',
+      sectionColors: ['D6E4F0', 'D5E8D4', 'FFE6CC', 'E1D5E7', 'DAE8FC'],
+      sectionFg: '1E3A5F',
+      criterionAlt: 'F0F7FF',
+      inputBg: 'FFFDE7',
+      subtotalBg: 'E2EFDA', subtotalFg: '375623',
+      totalBg: '375623', totalFg: 'FFFFFF',
+      border: 'B0BEC5',
+      summaryAccentDoc: '2E75B6',
+      summaryAccentPres: '375623',
+      summaryTotal: '1E3A5F',
+    };
+
+    const font = (bold = false, size = 11, color = '000000') => ({ name: 'Calibri', bold, size, color: { argb: 'FF' + color } });
+    const fill = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
+    const thinBorder = (hex = COLOR.border) => { const s = { style: 'thin', color: { argb: 'FF' + hex } }; return { top: s, left: s, bottom: s, right: s }; };
+    const align = (h = 'left', v = 'middle', wrap = false) => ({ horizontal: h, vertical: v, wrapText: wrap });
+
+    // Helper: construye una hoja de rúbrica y retorna la celda con la nota final
+    const buildRubricSheet = (wb, sections, typeLabel, sheetName) => {
+      const ws = wb.addWorksheet(sheetName, {
+        pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+        views: [{ state: 'frozen', ySplit: 3 }],
+      });
+      ws.columns = [
+        { width: 28 }, { width: 10 }, { width: 8 },
+        { width: 42 }, { width: 16 }, { width: 18 }, { width: 20 },
+      ];
+
+      // Título
+      const titleRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '']);
+      ws.mergeCells(1, 1, 1, 7);
+      titleRow.height = 32;
+      Object.assign(titleRow.getCell(1), { font: font(true, 14, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: thinBorder() });
+
+      // Programa
+      const progRow = ws.addRow([programName, '', '', '', '', '', '']);
+      ws.mergeCells(2, 1, 2, 7);
+      progRow.height = 20;
+      Object.assign(progRow.getCell(1), { font: font(false, 11, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: thinBorder() });
+
+      // Encabezados
+      const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado']);
+      hRow.height = 28;
+      hRow.eachCell(c => Object.assign(c, { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('center', 'middle', true), border: thinBorder() }));
+
+      let currentRow = 4;
+      const sectionSubtotalRefs = [];
+
+      sections.forEach((section, sIdx) => {
+        const count = section.criteria.length;
+        const secStart = currentRow;
+        const secBg = COLOR.sectionColors[sIdx % COLOR.sectionColors.length];
+
+        section.criteria.forEach((criterion, cIdx) => {
+          const er = currentRow;
+          const row = ws.addRow([
+            cIdx === 0 ? section.name : '',
+            cIdx === 0 ? section.weight : '',
+            cIdx === 0 ? count : '',
+            criterion.name,
+            criterion.maxScore,
+            null, null,
+          ]);
+          row.height = 22;
+
+          const styleCell = (cell, bg, bold = false, hAlign = 'left') => Object.assign(cell, { font: font(bold, 11, COLOR.sectionFg), fill: fill(bg), alignment: align(hAlign, 'middle', true), border: thinBorder() });
+
+          styleCell(row.getCell(1), secBg, true, 'center');
+          styleCell(row.getCell(2), secBg, true, 'center');
+          row.getCell(2).numFmt = '0"%"';
+          styleCell(row.getCell(3), secBg, false, 'center');
+          row.getCell(3).font = font(false, 10, '555555');
+
+          const critBg = cIdx % 2 === 0 ? 'FFFFFF' : COLOR.criterionAlt;
+          Object.assign(row.getCell(4), { font: font(false, 11), fill: fill(critBg), alignment: align('left', 'middle', true), border: thinBorder() });
+          Object.assign(row.getCell(5), { font: font(false, 11, '444444'), fill: fill(critBg), alignment: align('center', 'middle'), border: thinBorder() });
+
+          const cF = row.getCell(6);
+          cF.fill = fill(COLOR.inputBg);
+          cF.alignment = align('center', 'middle');
+          cF.border = thinBorder('FFBB00');
+          cF.note = `Ingrese el puntaje obtenido (0 – ${criterion.maxScore})`;
+
+          const cG = row.getCell(7);
+          cG.value = { formula: `IFERROR((F${er}/E${er})*(B${secStart}/C${secStart}),0)` };
+          cG.numFmt = '0.00';
+          Object.assign(cG, { font: font(false, 11, COLOR.sectionFg), fill: fill(critBg), alignment: align('center', 'middle'), border: thinBorder() });
+
+          currentRow++;
+        });
+
+        if (count > 1) {
+          ws.mergeCells(secStart, 1, currentRow - 1, 1);
+          ws.mergeCells(secStart, 2, currentRow - 1, 2);
+          ws.mergeCells(secStart, 3, currentRow - 1, 3);
+        }
+
+        // Subtotal sección
+        const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null]);
+        stRow.height = 20;
+        stRow.getCell(7).value = { formula: `SUM(G${secStart}:G${currentRow - 1})` };
+        stRow.getCell(7).numFmt = '0.00';
+        sectionSubtotalRefs.push(`G${currentRow}`);
+        [1,2,3,4,5,6,7].forEach(col => {
+          const c = stRow.getCell(col);
+          Object.assign(c, { font: font(col === 4, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align(col === 4 ? 'right' : 'center', 'middle'), border: thinBorder() });
+        });
+        currentRow++;
+
+        // Separador
+        ws.addRow([]).height = 6;
+        currentRow++;
+      });
+
+      // Nota final
+      const totalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null]);
+      const notaFinalRow = currentRow;
+      totalRow.height = 30;
+      totalRow.getCell(7).value = { formula: `(${sectionSubtotalRefs.join('+')})/100*5` };
+      totalRow.getCell(7).numFmt = '0.0"  / 5.0"';
+      [1,2,3,4,5,6,7].forEach(col => {
+        const c = totalRow.getCell(col);
+        Object.assign(c, { font: font(true, 13, COLOR.totalFg), fill: fill(COLOR.totalBg), alignment: align(col === 6 ? 'right' : 'center', 'middle'), border: thinBorder() });
+      });
+
+      // Instrucción al pie
+      ws.addRow([]).height = 8;
+      const instr = ws.addRow(['* Complete únicamente la columna "Puntaje Obtenido" (celdas en amarillo). Los aportes y la nota final se calculan automáticamente.']);
+      ws.mergeCells(instr.number, 1, instr.number, 7);
+      instr.getCell(1).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
+      instr.getCell(1).alignment = align('left', 'middle');
+
+      return { sheetName, notaFinalRow }; // para referenciar desde el resumen
+    };
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SisTesis';
+    wb.created = new Date();
+
+    // Agregar hoja resumen PRIMERO (queda como primera hoja)
+    const summaryWs = wb.addWorksheet('Resumen Total', { views: [{}] });
+
+    // Construir hojas de rúbricas
+    const sheetRefs = {};
+    for (const rubric of rubrics) {
+      const sections = JSON.parse(rubric.sections_json);
+      const typeLabel = rubric.evaluation_type === 'document' ? 'Documento' : 'Sustentación';
+      const sheetName = `Rúbrica ${typeLabel}`.substring(0, 31);
+      const ref = buildRubricSheet(wb, sections, typeLabel, sheetName);
+      sheetRefs[rubric.evaluation_type] = ref;
+    }
+
+    // ── Construir hoja Resumen ──────────────────────────────────────────────
+    summaryWs.columns = [
+      { width: 6 }, { width: 36 }, { width: 22 }, { width: 22 }, { width: 22 },
+    ];
+
+    // Título
+    const sTitleRow = summaryWs.addRow(['', `RESUMEN DE EVALUACIÓN — ${programName}`, '', '', '']);
+    summaryWs.mergeCells(1, 2, 1, 5);
+    sTitleRow.height = 34;
+    Object.assign(sTitleRow.getCell(2), { font: font(true, 15, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center', 'middle'), border: thinBorder() });
+    summaryWs.addRow([]).height = 10;
+
+    // Instrucción
+    const instrRow = summaryWs.addRow(['', '⚙  Ajuste los porcentajes en las celdas amarillas según el reglamento del programa.', '', '', '']);
+    summaryWs.mergeCells(3, 2, 3, 5);
+    instrRow.getCell(2).font = { name: 'Calibri', italic: true, size: 10, color: { argb: 'FF555555' } };
+    instrRow.height = 18;
+    summaryWs.addRow([]).height = 6;
+
+    // Encabezado tabla
+    const sHRow = summaryWs.addRow(['', 'Componente', 'Peso (%)', 'Nota (0.0 – 5.0)', 'Aporte']);
+    sHRow.height = 26;
+    [2,3,4,5].forEach(col => {
+      Object.assign(sHRow.getCell(col), { font: font(true, 12, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('center', 'middle'), border: thinBorder() });
+    });
+
+    // Filas por rúbrica
+    const pesoDocRow = 6;   // fila excel donde va el peso del documento
+    const pesoPrRow  = 7;   // fila excel donde va el peso de sustentación
+
+    const docRef = sheetRefs['document'];
+    const presRef = sheetRefs['presentation'];
+
+    // Leer pesos configurados para este programa
+    const programWeights = db.prepare('SELECT doc_weight, presentation_weight FROM program_weights WHERE program_id = ?').get(programId);
+    const docWeight  = programWeights ? programWeights.doc_weight          : 50;
+    const presWeight = programWeights ? programWeights.presentation_weight : 50;
+
+    // Fila documento
+    const docRow = summaryWs.addRow([
+      '',
+      docRef ? 'Rúbrica de Documento' : '(sin rúbrica)',
+      docWeight, // peso real del programa
+      docRef ? { formula: `'${docRef.sheetName}'!G${docRef.notaFinalRow}` } : 0,
+      null,
+    ]);
+    docRow.height = 26;
+    docRow.getCell(2).font = font(true, 12, COLOR.summaryAccentDoc);
+    docRow.getCell(2).fill = fill('EBF3FB');
+    docRow.getCell(2).alignment = align('left', 'middle');
+    docRow.getCell(2).border = thinBorder();
+    // Peso (C) — amarillo editable
+    const dPeso = docRow.getCell(3);
+    dPeso.fill = fill(COLOR.inputBg);
+    dPeso.font = font(true, 13, '333333');
+    dPeso.alignment = align('center', 'middle');
+    dPeso.border = thinBorder('FFBB00');
+    dPeso.numFmt = '0"%"';
+    dPeso.note = 'Modifique el peso (%) de la rúbrica de Documento';
+    // Nota
+    const dNota = docRow.getCell(4);
+    dNota.numFmt = '0.0"  / 5.0"';
+    dNota.font = font(true, 13, COLOR.summaryAccentDoc);
+    dNota.fill = fill('EBF3FB');
+    dNota.alignment = align('center', 'middle');
+    dNota.border = thinBorder();
+    // Aporte = Nota * Peso / 100
+    const dAporte = docRow.getCell(5);
+    dAporte.value = { formula: `IFERROR(D${docRow.number}*C${docRow.number}/100,0)` };
+    dAporte.numFmt = '0.00"%  / 5.0"';
+    dAporte.font = font(false, 12, COLOR.summaryAccentDoc);
+    dAporte.fill = fill('EBF3FB');
+    dAporte.alignment = align('center', 'middle');
+    dAporte.border = thinBorder();
+
+    // Fila sustentación
+    const presRow = summaryWs.addRow([
+      '',
+      presRef ? 'Rúbrica de Sustentación' : '(sin rúbrica)',
+      presWeight, // peso real del programa
+      presRef ? { formula: `'${presRef.sheetName}'!G${presRef.notaFinalRow}` } : 0,
+      null,
+    ]);
+    presRow.height = 26;
+    presRow.getCell(2).font = font(true, 12, COLOR.summaryAccentPres);
+    presRow.getCell(2).fill = fill('EDF7ED');
+    presRow.getCell(2).alignment = align('left', 'middle');
+    presRow.getCell(2).border = thinBorder();
+    const pPeso = presRow.getCell(3);
+    pPeso.fill = fill(COLOR.inputBg);
+    pPeso.font = font(true, 13, '333333');
+    pPeso.alignment = align('center', 'middle');
+    pPeso.border = thinBorder('FFBB00');
+    pPeso.numFmt = '0"%"';
+    pPeso.note = 'Modifique el peso (%) de la rúbrica de Sustentación';
+    const pNota = presRow.getCell(4);
+    pNota.numFmt = '0.0"  / 5.0"';
+    pNota.font = font(true, 13, COLOR.summaryAccentPres);
+    pNota.fill = fill('EDF7ED');
+    pNota.alignment = align('center', 'middle');
+    pNota.border = thinBorder();
+    const pAporte = presRow.getCell(5);
+    pAporte.value = { formula: `IFERROR(D${presRow.number}*C${presRow.number}/100,0)` };
+    pAporte.numFmt = '0.00"%  / 5.0"';
+    pAporte.font = font(false, 12, COLOR.summaryAccentPres);
+    pAporte.fill = fill('EDF7ED');
+    pAporte.alignment = align('center', 'middle');
+    pAporte.border = thinBorder();
+
+    // Fila validación suma pesos
+    const validRow = summaryWs.addRow(['', `Suma de pesos (debe ser 100%)`, { formula: `C${docRow.number}+C${presRow.number}` }, '', '']);
+    validRow.height = 18;
+    validRow.getCell(2).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF888888' } };
+    validRow.getCell(2).alignment = align('right', 'middle');
+    const valCell = validRow.getCell(3);
+    valCell.numFmt = '0"%"';
+    valCell.font = { name: 'Calibri', bold: true, size: 10, color: { argb: 'FFCC0000' } };
+    valCell.alignment = align('center', 'middle');
+
+    summaryWs.addRow([]).height = 10;
+
+    // Fila NOTA TOTAL FINAL
+    const finalRow = summaryWs.addRow([
+      '',
+      'NOTA FINAL TOTAL',
+      { formula: `C${docRow.number}+C${presRow.number}` }, // total pesos — solo info
+      { formula: `IFERROR(E${docRow.number}+E${presRow.number},0)` },
+      '',
+    ]);
+    finalRow.height = 36;
+    [2,3,4,5].forEach(col => {
+      const c = finalRow.getCell(col);
+      Object.assign(c, { font: font(true, 16, COLOR.totalFg), fill: fill(COLOR.summaryTotal), alignment: align(col === 4 ? 'center' : 'center', 'middle'), border: thinBorder() });
+    });
+    finalRow.getCell(3).value = '';
+    finalRow.getCell(5).value = '';
+    finalRow.getCell(4).numFmt = '0.0"  / 5.0"';
+
+    // Pie resumen
+    summaryWs.addRow([]).height = 14;
+    const pie1 = summaryWs.addRow(['', '* Las notas de cada rúbrica se toman automáticamente de las hojas "Rúbrica Documento" y "Rúbrica Sustentación".']);
+    summaryWs.mergeCells(pie1.number, 2, pie1.number, 5);
+    pie1.getCell(2).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
+    const pie2 = summaryWs.addRow(['', '* Ajuste los pesos (%) en amarillo. La nota final se recalcula automáticamente.']);
+    summaryWs.mergeCells(pie2.number, 2, pie2.number, 5);
+    pie2.getCell(2).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
+
+    // Enviar
+    const filename = `Rubricas_Completas_${programName.replace(/\s+/g, '_')}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    logger.error('Error generando XLSX completo:', err);
+    res.status(500).json({ error: 'Error generando el archivo' });
+  }
 });
 
 // POST /admin/program-rubrics/:programId/initialize — cargar rúbricas por defecto

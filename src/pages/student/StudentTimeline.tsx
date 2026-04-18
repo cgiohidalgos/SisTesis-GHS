@@ -155,18 +155,46 @@ export default function StudentTimeline() {
                 {thesis.title}
               </p>
               {thesis.students && thesis.students.length > 0 && (
-                <p className="text-sm text-muted-foreground mt-2">
-                  <strong>Autor{thesis.students.length>1?'es':''}:</strong> {thesis.students.map((s:any)=>s.name).join(', ')}
-                </p>
+                <div className="mt-3">
+                  <p className="text-sm text-muted-foreground mb-2">
+                    <strong>Autor{thesis.students.length>1?'es':''}:</strong> {thesis.students.map((s:any)=>s.name).join(', ')}
+                  </p>
+                  {thesis.students.map((student: any, idx: number) => (
+                    <div key={idx} className="ml-4 text-xs text-muted-foreground space-y-0.5 mb-2">
+                      {student.student_code && (
+                        <p><strong>Código:</strong> {student.student_code}</p>
+                      )}
+                      {student.cedula && (
+                        <p><strong>Cédula:</strong> {student.cedula}</p>
+                      )}
+                      {student.institutional_email && (
+                        <p><strong>Correo institucional:</strong> {student.institutional_email}</p>
+                      )}
+                      {student.email && student.email !== student.institutional_email && (
+                        <p><strong>Correo personal:</strong> {student.email}</p>
+                      )}
+                      {student.cvlac && (
+                        <p><strong>CVLAC:</strong> {student.cvlac}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
               {thesis.directors && thesis.directors.length > 0 && (
-                <p className="text-sm text-muted-foreground mt-2">
-                  <strong>Director{thesis.directors.length>1?'es':''}:</strong>{' '}
-                  {thesis.directors
-                    .map((d: any) => (typeof d === 'string' ? d : d?.name || d?.user_id || ''))
-                    .filter(Boolean)
-                    .join(', ')}
-                </p>
+                <div className="mt-2">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Director{thesis.directors.length>1?'es':''}:</strong>{' '}
+                    {thesis.directors
+                      .map((d: any) => {
+                        if (typeof d === 'string') return d;
+                        const name = d?.name || d?.user_id || '';
+                        const email = d?.institutional_email || d?.email;
+                        return email ? `${name} (${email})` : name;
+                      })
+                      .filter(Boolean)
+                      .join(', ')}
+                  </p>
+                </div>
               )}
               {thesis.evaluators && thesis.evaluators.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-2">
@@ -192,20 +220,105 @@ export default function StudentTimeline() {
             </div>
             {thesis.files && thesis.files.length > 0 && (
               <div className="mb-6">
-                <h3 className="font-semibold mb-2">Documentos enviados</h3>
-                <ul className="space-y-1">
-                  {thesis.files.map((f:any) => (
-                    <li key={f.id}>
-                      <button
-                        type="button"
-                        className="text-accent hover:underline"
-                        onClick={() => downloadFile(f.file_url, f.file_name)}
+                <h3 className="font-heading text-lg font-bold text-foreground mb-4 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                  Documentos enviados
+                </h3>
+                <div className="grid grid-cols-1 gap-3">
+                  {thesis.files.map((f:any) => {
+                    const isUrl = f.file_url?.startsWith('http://') || f.file_url?.startsWith('https://') || 
+                                  f.file_name?.startsWith('http://') || f.file_name?.startsWith('https://');
+                    const isPdf = f.file_name?.toLowerCase().endsWith('.pdf');
+                    const isDoc = f.file_name?.toLowerCase().match(/\.(doc|docx)$/);
+                    const urlToOpen = isUrl ? (f.file_url?.startsWith('http') ? f.file_url : f.file_name) : null;
+                    
+                    return (
+                      <div
+                        key={f.id}
+                        className="group relative flex items-center gap-3 p-4 rounded-lg border border-border bg-card hover:bg-accent/5 hover:border-accent/50 transition-all duration-200 shadow-sm hover:shadow-md"
                       >
-                        {f.file_name}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                        <div className="flex-shrink-0">
+                          {isUrl ? (
+                            <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                              <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                              </svg>
+                            </div>
+                          ) : isPdf ? (
+                            <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                              <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                          ) : isDoc ? (
+                            <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                              <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </div>
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                              <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {isUrl ? (
+                            <a
+                              href={urlToOpen}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block w-full group-hover:text-accent transition-colors"
+                            >
+                              <p className="font-medium text-sm truncate">{f.file_name}</p>
+                              {urlToOpen !== f.file_name && (
+                                <p className="text-xs text-muted-foreground truncate mt-0.5">{urlToOpen}</p>
+                              )}
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              className="text-left w-full group-hover:text-accent transition-colors"
+                              onClick={() => downloadFile(f.file_url, f.file_name)}
+                            >
+                              <p className="font-medium text-sm truncate">{f.file_name}</p>
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex-shrink-0">
+                          {isUrl ? (
+                            <a
+                              href={urlToOpen}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-2 rounded-full hover:bg-accent/10 transition-colors inline-block"
+                              title="Abrir enlace en nueva pestaña"
+                            >
+                              <svg className="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                              </svg>
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => downloadFile(f.file_url, f.file_name)}
+                              className="p-2 rounded-full hover:bg-accent/10 transition-colors"
+                              title="Descargar"
+                            >
+                              <svg className="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
             <ThesisTimeline

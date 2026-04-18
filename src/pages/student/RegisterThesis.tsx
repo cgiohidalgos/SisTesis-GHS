@@ -68,13 +68,16 @@ export default function RegisterThesis() {
     { id: 'sim-10', full_name: 'Laura Valentina Herrera', institutional_email: 'laura.herrera@usbcali.edu.co' },
   ];
 
+  const [cvlac, setCvlac] = useState("");
+
   // companion information
   const [hasCompanion, setHasCompanion] = useState(false);
-  const [companion, setCompanion] = useState<{ full_name: string; student_code: string; cedula: string; institutional_email: string }>({
+  const [companion, setCompanion] = useState<{ full_name: string; student_code: string; cedula: string; institutional_email: string; cvlac: string }>({
     full_name: "",
     student_code: "",
     cedula: "",
     institutional_email: "",
+    cvlac: "",
   });
 
   // programs
@@ -137,6 +140,10 @@ export default function RegisterThesis() {
           setKeywords(t.keywords || "");
           setSelectedPrograms(t.programs ? t.programs.map((p: any) => p.id) : []);
 
+          // pre-load own cvlac
+          const me = t.students?.find((s: any) => s.id === user?.id);
+          if (me?.cvlac) setCvlac(me.cvlac);
+
           // companion
           const other = t.students?.find((s: any) => s.id !== user?.id);
           if (other) {
@@ -146,6 +153,7 @@ export default function RegisterThesis() {
               student_code: other.student_code || "",
               cedula: other.cedula || "",
               institutional_email: other.institutional_email || "",
+              cvlac: other.cvlac || "",
             });
           }
 
@@ -167,6 +175,10 @@ export default function RegisterThesis() {
     loadExistingThesis();
 
     if (existing) {
+      // pre-load own cvlac
+      const me = existing.students?.find((s: any) => s.id === user?.id);
+      if (me?.cvlac) setCvlac(me.cvlac);
+
       // if editing and there is a second student (companion)
       const other = existing.students?.find((s: any) => s.id !== user?.id);
       if (other) {
@@ -176,6 +188,7 @@ export default function RegisterThesis() {
           student_code: other.student_code || "",
           cedula: other.cedula || "",
           institutional_email: other.institutional_email || "",
+          cvlac: other.cvlac || "",
         });
       }
       // load existing files
@@ -246,22 +259,31 @@ export default function RegisterThesis() {
         return;
       }
     }
+    if (!cvlac.trim()) {
+      toast.error("El enlace CvLAC es obligatorio");
+      return;
+    }
     if (hasCompanion && (!companion.full_name || !companion.student_code || !companion.cedula)) {
       toast.error("Los datos del compañero (nombre, código y cédula) son obligatorios");
+      return;
+    }
+    if (hasCompanion && !companion.cvlac.trim()) {
+      toast.error("El enlace CvLAC del compañero es obligatorio");
       return;
     }
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
       let thesis;
-      const body: any = { title: projectName, abstract };
+      const body: any = { title: projectName, abstract, cvlac: cvlac.trim() };
       if (keywords.trim()) body.keywords = keywords.trim();
-      if (!existing && hasCompanion && companion.full_name && companion.student_code) {
+      if (hasCompanion && companion.full_name && companion.student_code) {
         body.companion = {
           full_name: companion.full_name,
           student_code: companion.student_code,
           cedula: companion.cedula || undefined,
           institutional_email: companion.institutional_email || undefined,
+          cvlac: companion.cvlac || undefined,
         } as any;
       }      if (selectedDirectorIds.length) {
         body.director_ids = selectedDirectorIds;
@@ -296,12 +318,14 @@ export default function RegisterThesis() {
             .filter(Boolean);
           newForm.append("directors", JSON.stringify(selectedDirectorNames));
         }
+        if (cvlac.trim()) newForm.append("cvlac", cvlac.trim());
         if (hasCompanion && companion.full_name && companion.student_code && companion.cedula) {
           newForm.append("companion", JSON.stringify({
             full_name: companion.full_name,
             student_code: companion.student_code,
             cedula: companion.cedula,
             institutional_email: companion.institutional_email || undefined,
+            cvlac: companion.cvlac || undefined,
           }));
         }
         if (projectDocument) newForm.append("document", projectDocument);
@@ -378,7 +402,7 @@ export default function RegisterThesis() {
       )}
       <form onSubmit={handleSubmit} className="space-y-4 bg-card border rounded-xl shadow-card p-4 sm:p-6">
         <div>
-          <Label>Nombre del Proyecto</Label>
+          <Label>Nombre/Título del Proyecto/Tesis</Label>
           <Input value={projectName} onChange={(e) => setProjectName(e.target.value)} required disabled={!isEditable} />
         </div>
         <div>
@@ -393,6 +417,27 @@ export default function RegisterThesis() {
             placeholder="Machine learning, Deep Learning, Gestión de Procesos"
             disabled={!isEditable}
           />
+        </div>
+        <div>
+          <Label>Enlace CvLAC <span className="text-red-500">*</span></Label>
+          <Input
+            value={cvlac}
+            onChange={(e) => setCvlac(e.target.value)}
+            placeholder="https://scienti.minciencias.gov.co/cvlac/visualizador/..."
+            disabled={!isEditable}
+            required
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Si no tienes CvLAC, regístrate en{" "}
+            <a
+              href="https://scienti.minciencias.gov.co/cvlac/Login/pre_s_login.do"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 underline"
+            >
+              scienti.minciencias.gov.co
+            </a>
+          </p>
         </div>
         {/* companion section */}
         <div>
@@ -421,7 +466,7 @@ export default function RegisterThesis() {
               <Label>Nombre del compañero</Label>
               <Input
                 value={companion.full_name}
-                onChange={(e) => setCompanion((c) => ({ ...c, full_name: e.target.value }))}
+                onChange={(e) => setCompanion((c) => ({ ...c, full_name: e.target.value.toUpperCase() }))}
                 required={isEditable && !existing}
                 disabled={!isEditable || !!existing}
               />
@@ -453,6 +498,26 @@ export default function RegisterThesis() {
                 onChange={(e) => setCompanion((c) => ({ ...c, institutional_email: e.target.value }))}
                 disabled={!isEditable || !!existing}
               />
+            </div>
+            <div>
+              <Label>Enlace CvLAC del compañero</Label>
+              <Input
+                placeholder="https://scienti.minciencias.gov.co/cvlac/visualizador/..."
+                value={companion.cvlac}
+                onChange={(e) => setCompanion((c) => ({ ...c, cvlac: e.target.value }))}
+                disabled={!isEditable}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Si no tiene CvLAC, debe registrarse en{" "}
+                <a
+                  href="https://scienti.minciencias.gov.co/cvlac/Login/pre_s_login.do"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 underline"
+                >
+                  scienti.minciencias.gov.co
+                </a>
+              </p>
             </div>
           </div>
         )}
@@ -502,6 +567,27 @@ export default function RegisterThesis() {
           <div className="text-sm text-muted-foreground mb-2">
             Selecciona uno o más directores de la lista (evaluadores registrados).
           </div>
+          {selectedDirectorIds.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {selectedDirectorIds.map((id) => {
+                const ev = evaluators.find((e) => e.id === id);
+                return ev ? (
+                  <span key={id} className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded-full">
+                    {ev.full_name}
+                    {isEditable && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDirectorIds((prev) => prev.filter((d) => d !== id))}
+                        className="ml-1 hover:text-blue-600"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
+                ) : null;
+              })}
+            </div>
+          )}
           {evaluatorsError ? (
             <p className="text-sm text-red-500">{evaluatorsError}</p>
           ) : evaluators.length === 0 ? (
@@ -551,7 +637,14 @@ export default function RegisterThesis() {
               📄 Archivo actual: <button type="button" className="underline text-left p-0" onClick={() => downloadFile(existingDoc.file_url, existingDoc.file_name)}>{existingDoc.file_name}</button>
             </p>
           ) : null}
-          <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => setProjectDocument(e.target.files?.[0] || null)} required={!existing && !existingDoc} disabled={!isEditable} />
+          <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => {
+            const file = e.target.files?.[0] || null;
+            setProjectDocument(file);
+            if (file) {
+              // Ocultar el archivo existente cuando se selecciona uno nuevo
+              setExistingDoc(null);
+            }
+          }} required={!existing && !existingDoc} disabled={!isEditable} />
         </div>
         <div>
           <Label>Carta de Aval (PDF/DOCX)</Label>
@@ -562,7 +655,14 @@ export default function RegisterThesis() {
               📄 Archivo actual: <button type="button" className="underline text-left p-0" onClick={() => downloadFile(existingEndorsement.file_url, existingEndorsement.file_name)}>{existingEndorsement.file_name}</button>
             </p>
           ) : null}
-          <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => setEndorsement(e.target.files?.[0] || null)} disabled={!isEditable} />
+          <Input type="file" accept=".pdf,.docx,.doc" onChange={(e) => {
+            const file = e.target.files?.[0] || null;
+            setEndorsement(file);
+            if (file) {
+              // Ocultar el archivo existente cuando se selecciona uno nuevo
+              setExistingEndorsement(null);
+            }
+          }} disabled={!isEditable} />
         </div>
         <div>
           <Label>Enlace URL (opcional)</Label>

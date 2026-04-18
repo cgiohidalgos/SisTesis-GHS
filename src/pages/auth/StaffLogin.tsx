@@ -82,7 +82,7 @@ export default function StaffLogin() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="usuario@universidad.edu"
+              placeholder="usuario@usbcali.edu.co"
             />
           </div>
           <div>

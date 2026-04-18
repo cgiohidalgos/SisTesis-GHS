@@ -278,7 +278,7 @@ export default function AdminUsers() {
               <div className="space-y-4 mt-4">
                 <div>
                   <Label>Nombre Completo</Label>
-                  <Input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="Juan Pérez" />
+                  <Input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value.toUpperCase() })} placeholder="JUAN PÉREZ" />
                 </div>
                 <div>
                   <Label>Correo Institucional</Label>

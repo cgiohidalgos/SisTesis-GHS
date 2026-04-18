@@ -527,56 +527,56 @@ if (rulesCount === 0) {
     { event_type: 'submitted',            role: 'admin',     enabled: 1 },
     { event_type: 'submitted',            role: 'evaluator', enabled: 1 },
     { event_type: 'submitted',            role: 'director',  enabled: 1 },
-    // admin_feedback: solo estudiantes y directores
+    // admin_feedback: solo estudiantes
     { event_type: 'admin_feedback',       role: 'student',   enabled: 1 },
     { event_type: 'admin_feedback',       role: 'admin',     enabled: 0 },
     { event_type: 'admin_feedback',       role: 'evaluator', enabled: 0 },
-    { event_type: 'admin_feedback',       role: 'director',  enabled: 1 },
-    // admin_decision: solo estudiantes y directores
+    { event_type: 'admin_feedback',       role: 'director',  enabled: 0 },
+    // admin_decision: estudiantes y directores
     { event_type: 'admin_decision',       role: 'student',   enabled: 1 },
     { event_type: 'admin_decision',       role: 'admin',     enabled: 0 },
     { event_type: 'admin_decision',       role: 'evaluator', enabled: 0 },
     { event_type: 'admin_decision',       role: 'director',  enabled: 1 },
-    // evaluators_assigned: solo estudiantes y directores
+    // evaluators_assigned: solo estudiantes
     { event_type: 'evaluators_assigned',  role: 'student',   enabled: 1 },
     { event_type: 'evaluators_assigned',  role: 'admin',     enabled: 0 },
     { event_type: 'evaluators_assigned',  role: 'evaluator', enabled: 0 },
-    { event_type: 'evaluators_assigned',  role: 'director',  enabled: 1 },
-    // review_ok: solo estudiantes y directores
+    { event_type: 'evaluators_assigned',  role: 'director',  enabled: 0 },
+    // review_ok: solo estudiantes
     { event_type: 'review_ok',            role: 'student',   enabled: 1 },
     { event_type: 'review_ok',            role: 'admin',     enabled: 0 },
     { event_type: 'review_ok',            role: 'evaluator', enabled: 0 },
-    { event_type: 'review_ok',            role: 'director',  enabled: 1 },
-    // review_fail: solo estudiantes y directores
+    { event_type: 'review_ok',            role: 'director',  enabled: 0 },
+    // review_fail: solo estudiantes
     { event_type: 'review_fail',          role: 'student',   enabled: 1 },
     { event_type: 'review_fail',          role: 'admin',     enabled: 0 },
     { event_type: 'review_fail',          role: 'evaluator', enabled: 0 },
-    { event_type: 'review_fail',          role: 'director',  enabled: 1 },
-    // revision_submitted: solo admins y directores
+    { event_type: 'review_fail',          role: 'director',  enabled: 0 },
+    // revision_submitted: admins y directores
     { event_type: 'revision_submitted',   role: 'student',   enabled: 0 },
     { event_type: 'revision_submitted',   role: 'admin',     enabled: 1 },
     { event_type: 'revision_submitted',   role: 'evaluator', enabled: 0 },
     { event_type: 'revision_submitted',   role: 'director',  enabled: 1 },
-    // evaluation_submitted: solo admins y directores
+    // evaluation_submitted: solo admins
     { event_type: 'evaluation_submitted', role: 'student',   enabled: 0 },
     { event_type: 'evaluation_submitted', role: 'admin',     enabled: 1 },
     { event_type: 'evaluation_submitted', role: 'evaluator', enabled: 0 },
-    { event_type: 'evaluation_submitted', role: 'director',  enabled: 1 },
+    { event_type: 'evaluation_submitted', role: 'director',  enabled: 0 },
     // defense_scheduled: estudiantes, admins, evaluadores y directores
     { event_type: 'defense_scheduled',    role: 'student',   enabled: 1 },
     { event_type: 'defense_scheduled',    role: 'admin',     enabled: 1 },
     { event_type: 'defense_scheduled',    role: 'evaluator', enabled: 1 },
     { event_type: 'defense_scheduled',    role: 'director',  enabled: 1 },
-    // act_signature: solo admins y directores
+    // act_signature: admins y directores
     { event_type: 'act_signature',        role: 'student',   enabled: 0 },
     { event_type: 'act_signature',        role: 'admin',     enabled: 1 },
     { event_type: 'act_signature',        role: 'evaluator', enabled: 0 },
     { event_type: 'act_signature',        role: 'director',  enabled: 1 },
-    // status_changed: estudiantes, admins y directores
+    // status_changed: estudiantes y admins
     { event_type: 'status_changed',       role: 'student',   enabled: 1 },
     { event_type: 'status_changed',       role: 'admin',     enabled: 1 },
     { event_type: 'status_changed',       role: 'evaluator', enabled: 0 },
-    { event_type: 'status_changed',       role: 'director',  enabled: 1 },
+    { event_type: 'status_changed',       role: 'director',  enabled: 0 },
     // evaluator_removed: admins, evaluadores y directores
     { event_type: 'evaluator_removed',    role: 'student',   enabled: 0 },
     { event_type: 'evaluator_removed',    role: 'admin',     enabled: 1 },
@@ -601,6 +601,16 @@ try {
   db.prepare('INSERT OR IGNORE INTO notification_rules (event_type, role, enabled) VALUES (?, ?, ?)').run('submitted', 'director', 1);
 } catch (e) {
   console.warn('migration: could not ensure submitted/director rule', e);
+}
+
+// Ajustar reglas del director: solo recibe los eventos relevantes
+try {
+  const directorOff = ['admin_feedback', 'evaluators_assigned', 'review_ok', 'review_fail', 'evaluation_submitted', 'status_changed'];
+  const upsert = db.prepare('INSERT INTO notification_rules (event_type, role, enabled) VALUES (?, ?, ?) ON CONFLICT(event_type, role) DO UPDATE SET enabled = excluded.enabled');
+  const tx = db.transaction(() => { for (const et of directorOff) upsert.run(et, 'director', 0); });
+  tx();
+} catch (e) {
+  console.warn('migration: could not update director notification rules', e);
 }
 
 // Backfill user_id in thesis_directors where missing by matching name to users.full_name

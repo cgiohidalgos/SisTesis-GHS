@@ -61,7 +61,7 @@ async function sendWelcomeEmail(db, toEmail, fullName, username, password, smtpO
       <p>Tu cuenta ha sido creada en el sistema <strong>SisTesis</strong>.</p>
       <h3 style="margin-top:20px;color:#1a1a2e;">Datos de acceso</h3>
       <ul style="padding-left:18px;">
-        <li><strong>URL:</strong> <a href="https://lidis.usbcali.edu.co/sistesis/">https://lidis.usbcali.edu.co/sistesis/</a></li>
+        <li><strong>URL:</strong> <a href="https://sistesis.site/">https://sistesis.site/</a></li>
         <li><strong>Usuario:</strong> ${username}</li>
         <li><strong>Contraseña:</strong> ${password}</li>
       </ul>
@@ -90,9 +90,9 @@ async function notifyEvaluatorRemoved(db, thesisId, evaluatorId, triggeredBy) {
   const subject = `[SisTesis] Ya no eres evaluador de la tesis: ${thesis.title}`;
   const body = `
     <div style="font-family:sans-serif;max-width:600px">
-      <h2 style="color:#1a1a2e">Cambio de asignación de evaluador</h2>
+      <h2 style="color:#1a1a2e">Retiro de asignación como evaluador</h2>
       <p>Hola <strong>${evaluator.full_name || 'Evaluador'}</strong>,</p>
-      <p>Ya no estás asignado como evaluador para la siguiente tesis:</p>
+      <p>Has sido retirado de la asignación como evaluador de la siguiente tesis:</p>
       <p><strong>Tesis:</strong> ${thesis.title}</p>
       <p><strong>Estudiantes:</strong><br />${studentList}</p>
       <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
@@ -137,7 +137,7 @@ async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy) {
       </div>
       <h3 style="margin-top:24px;color:#1a1a2e">Datos de acceso al sistema</h3>
       <ul style="padding-left:18px;">
-        <li><strong>URL:</strong> <a href="https://lidis.usbcali.edu.co/sistesis/">https://lidis.usbcali.edu.co/sistesis/</a></li>
+        <li><strong>URL:</strong> <a href="https://sistesis.site/">https://sistesis.site/</a></li>
         <li><strong>Usuario:</strong> ${evaluator.institutional_email}</li>
         ${evalPassword ? `<li><strong>Contraseña:</strong> ${evalPassword}</li>` : '<li><em>Usa la contraseña proporcionada al crear tu cuenta.</em></li>'}
       </ul>
@@ -175,6 +175,48 @@ function renderTemplate(template, ctx) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => (ctx[key] !== undefined && ctx[key] !== null) ? ctx[key] : '');
 }
 
+function buildDirectorStudentTable(studentDetails) {
+  if (!studentDetails.length) return '<p><em>Sin estudiantes registrados.</em></p>';
+  const rows = studentDetails.map(s => `
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${s.full_name || '—'}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${s.institutional_email || '—'}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${s.cedula || '—'}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${s.student_code || '—'}</td>
+    </tr>`).join('');
+  return `
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px">
+      <thead>
+        <tr style="background:#f0f0f0">
+          <th style="padding:6px 10px;text-align:left">Nombre</th>
+          <th style="padding:6px 10px;text-align:left">Correo institucional</th>
+          <th style="padding:6px 10px;text-align:left">Cédula</th>
+          <th style="padding:6px 10px;text-align:left">Código</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function buildDirectorBody(recipientName, label, description, thesis, studentDetails, programa) {
+  const studentTable = buildDirectorStudentTable(studentDetails);
+  return `
+    <div style="font-family:sans-serif;max-width:640px">
+      <h2 style="color:#1a1a2e;margin-bottom:4px">${label}</h2>
+      <p>Hola <strong>${recipientName}</strong>,</p>
+      <p>Le informamos sobre una novedad en el proyecto de grado que usted dirige:</p>
+      <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px">
+        <p style="margin:4px 0"><strong>Proyecto:</strong> ${thesis.title || '—'}</p>
+        ${programa ? `<p style="margin:4px 0"><strong>Programa:</strong> ${programa}</p>` : ''}
+        <p style="margin:4px 0"><strong>Novedad:</strong> ${description || '—'}</p>
+      </div>
+      <p style="margin-bottom:6px"><strong>Sus estudiantes:</strong></p>
+      ${studentTable}
+      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+      <p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p>
+    </div>`;
+}
+
 async function notifyTimeline(db, thesisId, eventType, description, triggeredBy) {
   try {
     const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesisId);
@@ -182,8 +224,10 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
 
     // Datos de contexto compartido para plantillas
     const studentRows   = db.prepare(`SELECT u.full_name, u.institutional_email FROM users u JOIN thesis_students ts ON u.id = ts.student_id WHERE ts.thesis_id = ?`).all(thesisId);
+    const studentDetails = db.prepare(`SELECT u.full_name, u.institutional_email, u.cedula, u.student_code FROM users u JOIN thesis_students ts ON u.id = ts.student_id WHERE ts.thesis_id = ?`).all(thesisId);
     const evaluatorRows = db.prepare(`SELECT u.full_name, te.is_blind FROM users u JOIN thesis_evaluators te ON u.id = te.evaluator_id WHERE te.thesis_id = ?`).all(thesisId);
     const programRows   = db.prepare(`SELECT p.name FROM programs p JOIN thesis_programs tp ON p.id = tp.program_id WHERE tp.thesis_id = ?`).all(thesisId);
+    const programaStr   = programRows.map(p => p.name).join(', ');
 
     const defenseDateStr = thesis.defense_date
       ? new Date(thesis.defense_date * 1000).toLocaleDateString('es-CO', { timeZone: 'America/Bogota', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -195,7 +239,7 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
       nombres_estudiantes:  studentRows.map(s => s.full_name || '').join(', '),
       correos_estudiantes:  studentRows.map(s => s.institutional_email || '').join(', '),
       nombres_evaluadores:  evaluatorRows.some(e => e.is_blind) ? 'pares ciegos' : evaluatorRows.map(e => e.full_name || '').join(', '),
-      programa:             programRows.map(p => p.name).join(', '),
+      programa:             programaStr,
       fecha:                new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }),
       fecha_sustentacion:   defenseDateStr,
       lugar_sustentacion:   thesis.defense_location || '',
@@ -226,6 +270,7 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
     const superAdminIds = db.prepare("SELECT DISTINCT user_id FROM user_roles WHERE role = 'superadmin'").all().map(r => r.user_id);
     const adminIds = [...new Set([...programAdminIds, ...superAdminIds])];
     const directorIds  = db.prepare('SELECT user_id FROM thesis_directors WHERE thesis_id = ? AND user_id IS NOT NULL').all(thesisId).map(r => r.user_id);
+    const directorIdSet = new Set(directorIds);
 
     // Leer reglas configurables de la BD
     const rules = db.prepare('SELECT role, enabled FROM notification_rules WHERE event_type = ?').all(eventType);
@@ -251,10 +296,18 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
       const user = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(recipientId);
       if (!user || !user.institutional_email) continue;
 
-      // Contexto personalizado por destinatario
-      const ctx = { ...baseCtx, destinatario_nombre: user.full_name || 'Usuario' };
-      const renderedSubject = renderTemplate(subjectTpl, ctx);
-      const renderedBody    = renderTemplate(bodyTpl, ctx);
+      const recipientName = user.full_name || 'Usuario';
+      let renderedSubject, renderedBody;
+
+      if (directorIdSet.has(recipientId) && !tpl) {
+        // Email enriquecido para directores (sin plantilla personalizada configurada)
+        renderedSubject = `[SisTesis] ${label}: ${thesis.title || ''}`;
+        renderedBody = buildDirectorBody(recipientName, label, description, thesis, studentDetails, programaStr);
+      } else {
+        const ctx = { ...baseCtx, destinatario_nombre: recipientName };
+        renderedSubject = renderTemplate(subjectTpl, ctx);
+        renderedBody    = renderTemplate(bodyTpl, ctx);
+      }
 
       const success = await sendEmail(db, user.institutional_email, renderedSubject, renderedBody, smtpOwnerId);
       logNotification(db, recipientId, eventType, renderedSubject, renderedBody, thesisId, success ? null : 'failed');
@@ -313,14 +366,18 @@ function startReminderCron(db) {
         `).get(row.evaluator_id, row.thesis_id, nowSec - daySec);
         if (alreadySent) continue;
 
-        const subject = `[SisTesis] Recordatorio: evaluación vence ${label}`;
+        const subject = `[SisTesis] Recordatorio: el plazo de tu evaluación vence ${label}`;
         const body = `
           <div style="font-family:sans-serif;max-width:600px">
-            <h2 style="color:#1a1a2e">Recordatorio de evaluación pendiente</h2>
+            <h2 style="color:#1a1a2e">Recordatorio: evaluación pendiente de entrega</h2>
             <p>Hola <strong>${row.full_name || 'Evaluador'}</strong>,</p>
-            <p>Tienes una evaluación pendiente que vence <strong>${label}</strong>:</p>
-            <p style="font-size:16px;font-weight:bold">${row.title}</p>
-            <p>Fecha límite: <strong>${new Date(row.due_date * 1000).toLocaleDateString('es-CO')}</strong></p>
+            <p>Tienes pendiente una evaluación cuyo plazo de entrega vence <strong>${label}</strong>:</p>
+            <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px">
+              <p style="margin:4px 0;font-size:16px;font-weight:bold">${row.title}</p>
+              <p style="margin:4px 0">Fecha límite: <strong>${new Date(row.due_date * 1000).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}</strong></p>
+            </div>
+            <p>Por favor ingresa al sistema y completa tu evaluación antes de que venza el plazo.</p>
+            <p><a href="https://sistesis.site/" style="color:#1a1a2e">Ingresar a SisTesis</a></p>
             <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
             <p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p>
           </div>

@@ -153,7 +153,7 @@ export default function Index() {
       </div>
 
       <footer className="py-6 text-center text-xs text-muted-foreground">
-        SisTesis © 2025 — Sistema integrado de proyectos de grado de la Facultad de Ingeniería - USB Cali
+        SisTesis © 2026 — Sistema integrado de proyectos de grado - USB Cali - By GHS
       </footer>
     </div>
   );

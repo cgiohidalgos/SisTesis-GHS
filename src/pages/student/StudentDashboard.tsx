@@ -55,7 +55,13 @@ export default function StudentDashboard() {
           <>
             <ThesisCard thesis={theses[0]} linkTo="/student/timeline" />
             {theses[0].status === "draft" && (
-              <div className="flex flex-wrap gap-3 mt-4">
+              <div className="mt-4 p-3 rounded-lg border border-yellow-300 bg-yellow-50 text-yellow-800 text-sm flex gap-2 items-start">
+                <span className="text-lg leading-none">⚠️</span>
+                <span>Tu proyecto de grado está en <strong>borrador</strong>. Para enviarlo a evaluación debes presionar el botón <strong>"Enviar a evaluar"</strong>; de lo contrario permanecerá en borrador y no será revisado.</span>
+              </div>
+            )}
+            {theses[0].status === "draft" && (
+              <div className="flex flex-wrap gap-3 mt-3">
                 <Button
                   variant="default"
                   className="bg-green-600 hover:bg-green-700 text-white font-semibold"

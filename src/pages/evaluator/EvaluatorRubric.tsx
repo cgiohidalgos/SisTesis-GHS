@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { defaultRubric, presentationRubric } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/useAuth";
 import { getApiBase } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 const API_BASE = getApiBase();
 
@@ -183,6 +184,31 @@ export default function EvaluatorRubric() {
     if (r2.ok) setThesis(await r2.json());
   };
 
+  const [downloadingRubric, setDownloadingRubric] = useState<string>("");
+  const handleDownloadRubric = async (evaluationType: string) => {
+    if (!thesis?.id) return;
+    setDownloadingRubric(evaluationType);
+    try {
+      const token = localStorage.getItem("token");
+      const resp = await fetch(
+        `${API_BASE}/evaluations/rubric-xlsx?thesis_id=${thesis.id}&evaluation_type=${evaluationType}`,
+        { headers: { Authorization: token ? "Bearer " + token : "" } }
+      );
+      if (!resp.ok) throw new Error("Error generando el archivo");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Rubrica_${evaluationType === "document" ? "Documento" : "Sustentacion"}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      toast.error(e.message || "Error al descargar");
+    } finally {
+      setDownloadingRubric("");
+    }
+  };
+
   const docScore = docEval?.final_score ?? 0;
   const presScore = presEval?.final_score ?? 0;
   const finalWeightedScore = wantPresentation 
@@ -293,6 +319,19 @@ export default function EvaluatorRubric() {
                 </div>
                 </AccordionTrigger>
               <AccordionContent className="pb-6">
+                <div className="flex justify-end mb-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleDownloadRubric("document")}
+                    disabled={downloadingRubric === "document"}
+                    className="text-green-700 border-green-400 hover:bg-green-50 text-xs"
+                  >
+                    {downloadingRubric === "document"
+                      ? "⏳ Descargando..."
+                      : docEval ? "📥 Descargar mi evaluación (XLSX)" : "📥 Descargar rúbrica en blanco (XLSX)"}
+                  </Button>
+                </div>
                 {previousDocEval && (
                   <div className="mb-4 rounded-lg border border-border bg-secondary/20 px-4 py-3 text-sm text-muted-foreground">
                     Existe una evaluación cerrada de una ronda anterior. Esta ronda genera una nueva evaluación sin sobrescribir la anterior.
@@ -339,6 +378,19 @@ export default function EvaluatorRubric() {
                   </div>
                 </AccordionTrigger>
                 <AccordionContent className="pb-6">
+                  <div className="flex justify-end mb-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDownloadRubric("presentation")}
+                      disabled={downloadingRubric === "presentation"}
+                      className="text-green-700 border-green-400 hover:bg-green-50 text-xs"
+                    >
+                      {downloadingRubric === "presentation"
+                        ? "⏳ Descargando..."
+                        : presEval ? "📥 Descargar mi evaluación (XLSX)" : "📥 Descargar rúbrica en blanco (XLSX)"}
+                    </Button>
+                  </div>
                   <RubricEvaluation
                     thesis={thesis}
                     onSubmit={(data) => submitEvaluation(data, 'presentation')}

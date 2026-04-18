@@ -91,7 +91,7 @@ export default function StudentRegister() {
       const { user, token } = await resp.json();
       if (token) localStorage.setItem('token', token);
       toast.success("Registro exitoso. Bienvenido(a).");
-      navigate("/student");
+      window.location.href = '/';
     } catch (error: any) {
       toast.error(error.message || "Error al registrarse");
     } finally {
@@ -116,16 +116,16 @@ export default function StudentRegister() {
 
         <form onSubmit={handleRegister} className="bg-card border rounded-xl shadow-card p-6 space-y-4">
           <div>
-            <Label htmlFor="fullName">Nombre Completo</Label>
+            <Label htmlFor="fullName">Nombre y Apellidos <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-semibold">Completo</span></Label>
             <Input
               id="fullName"
               value={form.fullName}
-              onChange={(e) => setForm({ ...form, fullName: e.target.value })}
-              placeholder="Juan David Martínez López"
+              onChange={(e) => setForm({ ...form, fullName: e.target.value.toUpperCase() })}
+              placeholder="NOMBRE1 NOMBRE2 APELLIDO1 APELLIDO2"
             />
           </div>
           <div>
-            <Label htmlFor="studentCode">Código Estudiantil</Label>
+            <Label htmlFor="studentCode">Código Estudiantil <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-semibold">Completo</span></Label>
             <Input
               id="studentCode"
               value={form.studentCode}
@@ -135,7 +135,7 @@ export default function StudentRegister() {
                 if (debounceTimer.current) clearTimeout(debounceTimer.current);
                 debounceTimer.current = setTimeout(() => checkUnique('studentCode', val), 500);
               }}
-              placeholder="2020134567"
+              placeholder="30000088712"
             />
             {errors.studentCode && (
               <p className="text-red-500 text-sm mt-1">{errors.studentCode}</p>
@@ -170,7 +170,7 @@ export default function StudentRegister() {
                 if (debounceTimer.current) clearTimeout(debounceTimer.current);
                 debounceTimer.current = setTimeout(() => checkUnique('institutionalEmail', val), 500);
               }}
-              placeholder="nombre@universidad.edu"
+              placeholder="nombre@correo.usbcali.edu.co"
             />
             <p className="text-xs text-muted-foreground mt-2">
               La contraseña se enviará automáticamente a tu correo institucional.
