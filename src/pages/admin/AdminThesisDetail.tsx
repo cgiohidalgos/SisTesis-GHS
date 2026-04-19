@@ -62,7 +62,11 @@ export default function AdminThesisDetail() {
   const [digitalSignerName, setDigitalSignerName] = useState<string>("");
   const [digitalSignerTitle, setDigitalSignerTitle] = useState<string>("");
   const [loadingDigitalSign, setLoadingDigitalSign] = useState(false);
-  const [digitalProgDirectorName, setDigitalProgDirectorName] = useState<string>("");
+  const [digitalProgDirectorName, setDigitalProgDirectorName] = useState<string>(() =>
+    id ? (localStorage.getItem(`acta_progdir_${id}`) || '') : ''
+  );
+  const [manualSignFile, setManualSignFile] = useState<File | null>(null);
+  const [uploadingManual, setUploadingManual] = useState(false);
 
   // Estado para carta meritoria
   const [meritoriaStatus, setMeritoriaStatus] = useState<any>(null);
@@ -80,8 +84,10 @@ export default function AdminThesisDetail() {
 
   // Estado para enlaces de firma compartibles
   const [generatedSigningLinks, setGeneratedSigningLinks] = useState<Record<string, {url: string; copied: boolean}>>({});
-  // Títulos académicos por firmante (key = normalizePersonKey)
-  const [signerTitles, setSignerTitles] = useState<Record<string, string>>({});
+  // Títulos académicos por firmante (key = normalizePersonKey) — persistido en localStorage
+  const [signerTitles, setSignerTitles] = useState<Record<string, string>>(() => {
+    try { return id ? JSON.parse(localStorage.getItem(`acta_titles_${id}`) || '{}') : {}; } catch { return {}; }
+  });
 
   // compute consolidated averages and breakdown for display
   const consolidated = (() => {
@@ -1212,7 +1218,7 @@ export default function AdminThesisDetail() {
                           headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
                           body: JSON.stringify({ signer_name: sig.signer_name, signer_role: sig.signer_role }),
                         });
-                        loadData();
+                        fetchThesis();
                       }}
                     >
                       🗑
@@ -1223,86 +1229,9 @@ export default function AdminThesisDetail() {
                 <p className="text-xs text-muted-foreground">No hay firmas digitales registradas aún.</p>
               )}
               {!digitalSignStatus?.allSigned && digitalSignStatus?.pendingSigners?.length > 0 && (
-                <div>
-                  <p className="text-xs text-orange-600 mt-1 mb-3">
-                    Pendientes: {digitalSignStatus.pendingSigners.map((p: any) => normalizePersonName(p)).join(', ')}
-                  </p>
-
-                  {/* Sección de enlaces compartibles */}
-                  <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
-                    <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
-                    {(() => {
-                      const anyLinkGenerated = Object.keys(generatedSigningLinks).length > 0;
-                      const progDirPending = digitalSignStatus.pendingSigners.find((p: any) => (typeof p === 'string' ? 'director' : p?.role) === 'program_director');
-                      const progDirNameMissing = progDirPending && !digitalProgDirectorName.trim();
-                      return digitalSignStatus.pendingSigners.map((pending: any, idx: number) => {
-                      const name = normalizePersonName(pending);
-                      const key = normalizePersonKey(pending);
-                      const role = typeof pending === 'string' ? 'director' : (pending?.role || 'director');
-                      const isProgDir = role === 'program_director';
-                      const displayName = isProgDir && digitalProgDirectorName.trim() ? digitalProgDirectorName.trim() : name;
-                      const selectedTitle = signerTitles[key] || '';
-                      const fullName = selectedTitle ? `${selectedTitle} ${displayName}` : displayName;
-                      return (
-                        <div key={`${key}-${idx}`}>
-                          {isProgDir && (
-                            <div className="mb-1">
-                              <input
-                                className="border rounded px-2 py-1 text-xs w-full"
-                                placeholder="Nombre del Director del Programa (obligatorio)"
-                                value={digitalProgDirectorName}
-                                onChange={(e) => setDigitalProgDirectorName(e.target.value)}
-                                disabled={anyLinkGenerated}
-                              />
-                            </div>
-                          )}
-                          <div className="flex items-center gap-2">
-                          <div className="flex-1 min-w-0 text-xs space-y-1">
-                            <div className="flex items-center gap-2">
-                              <select
-                                className="border rounded px-1 py-0.5 text-xs w-28"
-                                value={selectedTitle}
-                                onChange={(e) => setSignerTitles(prev => ({ ...prev, [key]: e.target.value }))}
-                              >
-                                <option value="">Título...</option>
-                                <option value="Profesional">Profesional</option>
-                                <option value="Esp.">Especialista</option>
-                                <option value="Mg.">Magíster</option>
-                                <option value="PhD.">PhD</option>
-                                <option value="Dr.">Doctor</option>
-                              </select>
-                              <p className="font-medium">{fullName}</p>
-                            </div>
-                            <p className="text-muted-foreground">{role === 'evaluator' ? 'Evaluador' : role === 'director' ? 'Director' : 'Director del Programa'}</p>
-                          </div>
-                          {generatedSigningLinks[key]?.url ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleCopyLink(key)}
-                              className="whitespace-nowrap"
-                            >
-                              {generatedSigningLinks[key].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={!selectedTitle || progDirNameMissing}
-                              onClick={() => handleGenerateSigningLink(key, fullName, role)}
-                              className="whitespace-nowrap"
-                              title={progDirNameMissing ? 'Ingrese el nombre del Director del Programa' : !selectedTitle ? 'Seleccione un título académico' : ''}
-                            >
-                              🔗 Generar enlace
-                            </Button>
-                          )}
-                          </div>
-                        </div>
-                      );
-                    });
-                    })()}
-                  </div>
-                </div>
+                <p className="text-xs text-orange-600 mt-1">
+                  Pendientes: {digitalSignStatus.pendingSigners.map((p: any) => normalizePersonName(p)).join(', ')}
+                </p>
               )}
             </div>
 
@@ -1355,159 +1284,212 @@ export default function AdminThesisDetail() {
               </div>
             )}
 
-            {!digitalSignStatus?.allSigned && <div>
-              <p className="text-xs text-muted-foreground mb-3">
-                Descargue el PDF, fírmelo con Adobe Acrobat usando su certificado digital y súbalo de vuelta.
-              </p>
-
-              {/* Descargar PDF para firmar */}
-              <div className="mb-3 space-y-2">
-                <label className="text-xs font-medium block">Director del Programa (para incluir en el acta):</label>
-                <input
-                  type="text"
-                  className="border rounded px-2 py-1 text-sm w-full"
-                  placeholder="Nombre del Director del Programa"
-                  value={digitalProgDirectorName}
-                  onChange={(e) => setDigitalProgDirectorName(e.target.value)}
-                />
+            {digitalSignStatus?.allSigned && (
+              <div className="border rounded-xl p-6 bg-gradient-to-br from-green-50 to-blue-50 dark:from-green-950/20 dark:to-blue-950/20 mb-3">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-12 h-12 rounded-full bg-green-500 flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-lg font-bold text-green-900 dark:text-green-100 mb-2">
+                      ¡Proceso de sustentación completado!
+                    </h3>
+                    <p className="text-sm text-green-800 dark:text-green-200 mb-4">
+                      Todas las firmas han sido registradas y el proceso ha concluido exitosamente. 
+                      A continuación puede descargar todos los documentos relacionados con esta tesis en un solo archivo.
+                    </p>
+                    <button
+                      className="px-6 py-3 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium flex items-center gap-2 transition-colors shadow-md"
+                      onClick={async () => {
+                        try {
+                          const token = localStorage.getItem('token');
+                          const resp = await fetch(`${API_BASE}/theses/${thesis.id}/download-complete-package`, {
+                            headers: { Authorization: token ? 'Bearer ' + token : '' },
+                          });
+                          if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({ error: 'Error al descargar' }));
+                            throw new Error(err.error || 'Error al descargar');
+                          }
+                          const disposition = resp.headers.get('Content-Disposition') || '';
+                          const match = disposition.match(/filename="?([^"]+)"?/);
+                          const filename = match ? match[1] : 'Tesis_Completa.zip';
+                          const blob = await resp.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = decodeURIComponent(filename);
+                          document.body.appendChild(a);
+                          a.click();
+                          a.remove();
+                          URL.revokeObjectURL(url);
+                          toast.success('Paquete completo descargado');
+                        } catch (e: any) {
+                          toast.error(e.message || 'Error al descargar el paquete completo');
+                        }
+                      }}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                      </svg>
+                      Descargar Paquete Completo (.zip)
+                    </button>
+                    <p className="text-xs text-green-700 dark:text-green-300 mt-3">
+                      El archivo incluye: todos los documentos enviados, acta de sustentación (PDF y Word), y rúbricas completas (XLSX) de todos los evaluadores.
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="flex gap-2 flex-wrap mb-3">
-                <Button variant="outline" size="sm" onClick={async () => {
-                  try {
-                    const token = localStorage.getItem('token');
-                    const url = new URL(`${API_BASE}/theses/${thesis.id}/acta/download-for-signing`);
-                    if (digitalProgDirectorName) {
-                      url.searchParams.set('prog_director_name', digitalProgDirectorName);
-                    }
-                    const resp = await fetch(url.toString(), {
-                      headers: { Authorization: token ? `Bearer ${token}` : '' },
-                    });
-                    if (!resp.ok) throw new Error('No se pudo descargar');
-                    const blob = await resp.blob();
-                    const dlUrl = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = dlUrl;
-                    a.download = `acta-${thesis.id}-para-firmar.pdf`;
-                    a.click();
-                    window.URL.revokeObjectURL(dlUrl);
-                  } catch (e: any) {
-                    toast.error(e.message || 'Error al descargar');
-                  }
-                }}>
-                  📥 Descargar PDF para firmar
-                </Button>
-              </div>
+            )}
 
-              {/* Subir PDF firmado */}
-              <div className="space-y-2">
-                <p className="text-xs font-medium">Subir PDF firmado:</p>
-                <select
-                  className="border rounded px-2 py-1 text-sm w-full"
-                  value={digitalSignerRole}
-                  onChange={(e) => {
-                    setDigitalSignerRole(e.target.value);
-                    setDigitalSignerTitle("");
-                    if (e.target.value === 'director' && actaStatus?.directors?.length) {
-                      setDigitalSignerName(normalizePersonName(actaStatus.directors[0]));
-                    } else {
-                      setDigitalSignerName("");
-                    }
-                  }}
-                >
-                  <option value="">Seleccione su rol...</option>
-                  <option value="director">Director de tesis</option>
-                  <option value="program_director">Director del programa</option>
-                </select>
-
-                {digitalSignerRole && (
-                  <select
-                    className="border rounded px-2 py-1 text-sm w-full"
-                    value={digitalSignerTitle}
-                    onChange={(e) => setDigitalSignerTitle(e.target.value)}
-                  >
-                    <option value="">Título académico...</option>
-                    <option value="Profesional">Profesional</option>
-                    <option value="Esp.">Especialista</option>
-                    <option value="Mg.">Magíster</option>
-                    <option value="PhD.">PhD</option>
-                    <option value="Dr.">Doctor</option>
-                  </select>
-                )}
-
-                {digitalSignerRole === 'director' && actaStatus?.directors?.length > 1 && (
-                  <select
-                    className="border rounded px-2 py-1 text-sm w-full"
-                    value={digitalSignerName}
-                    onChange={(e) => setDigitalSignerName(e.target.value)}
-                  >
-                    {actaStatus.directors.map((d: any, idx: number) => {
-                      const name = normalizePersonName(d);
-                      const key = normalizePersonKey(d);
-                      return (
-                        <option key={`${key}-${idx}`} value={name}>
-                          {name}
-                        </option>
-                      );
-                    })}
-                  </select>
-                )}
-
-                {digitalSignerRole === 'program_director' && (
-                  <input
-                    className="border rounded px-2 py-1 text-sm w-full"
-                    placeholder="Nombre del director del programa"
-                    value={digitalSignerName}
-                    onChange={(e) => setDigitalSignerName(e.target.value)}
-                  />
-                )}
-
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  onChange={(e) => setDigitalSignFile(e.target.files?.[0] || null)}
-                  className="text-sm"
-                />
-
-                <Button
-                  size="sm"
-                  disabled={!digitalSignFile || !digitalSignerRole || loadingDigitalSign}
-                  onClick={async () => {
-                    if (!digitalSignFile || !digitalSignerRole) return;
-                    setLoadingDigitalSign(true);
+            {!digitalSignStatus?.allSigned && <div className="space-y-4">
+              {/* Opción 1: Firmar manualmente y subir */}
+              <div className="border rounded-lg p-4 space-y-3">
+                <p className="text-sm font-medium">Opción 1: Firma manual</p>
+                <p className="text-xs text-muted-foreground">
+                  Descargue el acta, recoja las firmas físicas o con Adobe Acrobat y súbala de vuelta. Al subir el PDF firmado quedará completo el proceso.
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <Button variant="outline" size="sm" onClick={async () => {
                     try {
                       const token = localStorage.getItem('token');
-                      const form = new FormData();
-                      form.append('signed_pdf', digitalSignFile);
-                      form.append('signer_role', digitalSignerRole);
-                      const fullSignerName = digitalSignerTitle && digitalSignerName
-                        ? `${digitalSignerTitle} ${digitalSignerName}`
-                        : digitalSignerName;
-                      if (fullSignerName) form.append('signer_name', fullSignerName);
-
-                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/upload-signed`, {
-                        method: 'POST',
+                      const url = new URL(`${API_BASE}/theses/${thesis.id}/acta/download-for-signing`);
+                      const resp = await fetch(url.toString(), {
                         headers: { Authorization: token ? `Bearer ${token}` : '' },
-                        body: form,
                       });
-                      const data = await resp.json();
-                      if (!resp.ok) throw new Error(data.error || 'No se pudo subir');
-
-                      toast.success('Firma digital registrada correctamente');
-                      setDigitalSignFile(null);
-                      setDigitalSignerRole("");
-                      setDigitalSignerName("");
-                      setDigitalSignerTitle("");
-                      fetchThesis();
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const dlUrl = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = dlUrl;
+                      a.download = `acta-${thesis.id}-para-firmar.pdf`;
+                      a.click();
+                      window.URL.revokeObjectURL(dlUrl);
                     } catch (e: any) {
-                      toast.error(e.message || 'Error al subir PDF firmado');
-                    } finally {
-                      setLoadingDigitalSign(false);
+                      toast.error(e.message || 'Error al descargar');
                     }
-                  }}
-                >
-                  {loadingDigitalSign ? 'Subiendo...' : '📤 Subir PDF firmado'}
-                </Button>
+                  }}>
+                    📥 Descargar PDF para firmar
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e) => setManualSignFile(e.target.files?.[0] || null)}
+                    className="text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!manualSignFile || uploadingManual}
+                    onClick={async () => {
+                      if (!manualSignFile) return;
+                      setUploadingManual(true);
+                      try {
+                        const token = localStorage.getItem('token');
+                        const form = new FormData();
+                        form.append('signed_pdf', manualSignFile);
+                        const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/upload-manual-signed`, {
+                          method: 'POST',
+                          headers: { Authorization: token ? `Bearer ${token}` : '' },
+                          body: form,
+                        });
+                        const data = await resp.json();
+                        if (!resp.ok) throw new Error(data.error || 'No se pudo subir');
+                        toast.success('Acta firmada subida correctamente');
+                        setManualSignFile(null);
+                        fetchThesis();
+                      } catch (e: any) {
+                        toast.error(e.message || 'Error al subir');
+                      } finally {
+                        setUploadingManual(false);
+                      }
+                    }}
+                  >
+                    {uploadingManual ? 'Subiendo...' : '📤 Subir acta firmada'}
+                  </Button>
+                </div>
               </div>
+
+              {/* Opción 2: Firma digital con enlaces */}
+              {digitalSignStatus?.pendingSigners?.length > 0 && (
+              <div className="border rounded-lg p-4">
+                <p className="text-sm font-medium mb-1">Opción 2: Firma digital sin login</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Genere enlaces para que cada firmante firme digitalmente desde su dispositivo sin necesidad de iniciar sesión.
+                </p>
+                <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
+                  <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
+                  {(() => {
+                    const anyLinkGenerated = Object.keys(generatedSigningLinks).length > 0;
+                    const progDirPending = digitalSignStatus.pendingSigners.find((p: any) => (typeof p === 'string' ? 'director' : p?.role) === 'program_director');
+                    const progDirNameMissing = progDirPending && !digitalProgDirectorName.trim();
+                    return digitalSignStatus.pendingSigners.map((pending: any, idx: number) => {
+                      const name = normalizePersonName(pending);
+                      const key = normalizePersonKey(pending);
+                      const role = typeof pending === 'string' ? 'director' : (pending?.role || 'director');
+                      const isProgDir = role === 'program_director';
+                      const displayName = isProgDir && digitalProgDirectorName.trim() ? digitalProgDirectorName.trim() : name;
+                      const selectedTitle = signerTitles[key] || '';
+                      const fullName = selectedTitle ? `${selectedTitle} ${displayName}` : displayName;
+                      return (
+                        <div key={`${key}-${idx}`}>
+                          {isProgDir && (
+                            <div className="mb-1">
+                              <input
+                                className="border rounded px-2 py-1 text-xs w-full"
+                                placeholder="Nombre del Director del Programa (obligatorio)"
+                                value={digitalProgDirectorName}
+                                onChange={(e) => { const v = e.target.value.toUpperCase(); setDigitalProgDirectorName(v); if (id) localStorage.setItem(`acta_progdir_${id}`, v); }}
+                                disabled={anyLinkGenerated}
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 min-w-0 text-xs space-y-1">
+                              <div className="flex items-center gap-2">
+                                <select
+                                  className="border rounded px-1 py-0.5 text-xs w-28"
+                                  value={selectedTitle}
+                                  onChange={(e) => { const next = { ...signerTitles, [key]: e.target.value }; setSignerTitles(next); if (id) localStorage.setItem(`acta_titles_${id}`, JSON.stringify(next)); }}
+                                >
+                                  <option value="">Título...</option>
+                                  <option value="Profesional">Profesional</option>
+                                  <option value="Esp.">Especialista</option>
+                                  <option value="Mg.">Magíster</option>
+                                  <option value="PhD.">PhD</option>
+                                  <option value="Dr.">Doctor</option>
+                                </select>
+                                <p className="font-medium">{fullName}</p>
+                              </div>
+                              <p className="text-muted-foreground">{role === 'evaluator' ? 'Evaluador' : role === 'director' ? 'Director' : 'Director del Programa'}</p>
+                            </div>
+                            {generatedSigningLinks[key]?.url ? (
+                              <Button variant="outline" size="sm" onClick={() => handleCopyLink(key)} className="whitespace-nowrap">
+                                {generatedSigningLinks[key].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline" size="sm"
+                                disabled={!selectedTitle || progDirNameMissing}
+                                onClick={() => handleGenerateSigningLink(key, fullName, role)}
+                                className="whitespace-nowrap"
+                                title={progDirNameMissing ? 'Ingrese el nombre del Director del Programa' : !selectedTitle ? 'Seleccione un título académico' : ''}
+                              >
+                                🔗 Generar enlace
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+              )}
             </div>}
           </div>
         )}

@@ -48,7 +48,7 @@ export default function EvaluatorMyStudents() {
                 <button
                   key={thesis.id}
                   className="w-full text-left border rounded-xl p-4 bg-white dark:bg-slate-950 hover:border-primary/60 hover:shadow-sm transition-all"
-                  onClick={() => navigate(`/evaluator/student/${thesis.id}`)}
+                  onClick={() => navigate(`/evaluator/directed-thesis/${thesis.id}`)}
                 >
                   <div className="flex flex-wrap items-start gap-2 mb-1">
                     <p className="font-semibold text-sm line-clamp-2 flex-1">{thesis.title}</p>

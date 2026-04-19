@@ -42,6 +42,13 @@ function getSMTPConfig(db, userId) {
 async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
   const config = getSMTPConfig(db, smtpOwnerId);
   if (!config) { console.error('[notify] Sin config SMTP'); return false; }
+  
+  // Verificar si las notificaciones están habilitadas
+  if (config.notifications_enabled === 0 || config.notifications_enabled === false) {
+    console.log('[notify] Notificaciones deshabilitadas, email no enviado');
+    return false;
+  }
+  
   try {
     const transporter = createTransport(config);
     const info = await transporter.sendMail({ from: config.username, to: toEmail, subject, html: body });

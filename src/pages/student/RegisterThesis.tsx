@@ -629,7 +629,7 @@ export default function RegisterThesis() {
           )}
         </div>
         <div>
-          <Label>Documento del proyecto de grado (PDF/DOCX)</Label>
+          <Label>Documento del proyecto de grado (PDF)</Label>
           {projectDocument ? (
             <p className="text-sm text-blue-600 mb-1">📄 Archivo seleccionado: {projectDocument.name}</p>
           ) : existingDoc ? (
@@ -647,7 +647,7 @@ export default function RegisterThesis() {
           }} required={!existing && !existingDoc} disabled={!isEditable} />
         </div>
         <div>
-          <Label>Carta de Aval (PDF/DOCX)</Label>
+          <Label>Carta de Aval (PDF)</Label>
           {endorsement ? (
             <p className="text-sm text-blue-600 mb-1">📄 Archivo seleccionado: {endorsement.name}</p>
           ) : existingEndorsement ? (
@@ -665,7 +665,7 @@ export default function RegisterThesis() {
           }} disabled={!isEditable} />
         </div>
         <div>
-          <Label>Enlace URL (opcional)</Label>
+          <Label>Enlace URL (opcional -- <span className="text-muted-foreground">(podría ser el enlace de la herramienta)</span></Label>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://drive.google.com/..." disabled={!isEditable} />
         </div>
         <Button type="submit" className="w-full" disabled={loading || !isEditable}>

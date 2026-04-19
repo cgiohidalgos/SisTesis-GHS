@@ -180,6 +180,10 @@ export default function AdminEvaluators() {
       toast.error("Debe seleccionar exactamente 2 evaluadores");
       return;
     }
+    if (!dueDate) {
+      toast.error("La fecha límite es obligatoria");
+      return;
+    }
     if (thesisId) {
       // use batch assignment endpoint
       try {
@@ -388,8 +392,8 @@ export default function AdminEvaluators() {
                   <div className="space-y-2 max-h-60 overflow-y-auto">
                     {filteredEvaluators.map((ev) => {
                       const isSelected = selectedEvaluators.includes(ev.id);
-                      const directorNamesUpper = (thesisInfo?.directors || []).map((d: string) => d.toUpperCase());
-                      const isDirector = directorNamesUpper.includes(ev.name.toUpperCase());
+                      const directorNamesUpper = (thesisInfo?.directors || []).map((d: any) => (typeof d === 'string' ? d : d?.name || '').toUpperCase());
+                      const isDirector = directorNamesUpper.includes((ev.name || '').toUpperCase());
                       return (
                         <button
                           key={ev.id}
@@ -424,8 +428,8 @@ export default function AdminEvaluators() {
                   {/* Due date and blind review toggle */}
                   <div className="flex items-center gap-4">
                     <div>
-                      <Label>Fecha límite</Label>
-                      <input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} className="border px-2 py-1 rounded" />
+                      <Label>Fecha límite <span className="text-destructive">*</span></Label>
+                      <input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} className={`border px-2 py-1 rounded ${!dueDate ? 'border-destructive' : ''}`} />
                     </div>
                   </div>
                   <div className="flex items-center justify-between bg-secondary/50 rounded-lg p-3 mt-2">
@@ -442,7 +446,7 @@ export default function AdminEvaluators() {
                   <Button
                     onClick={handleAssign}
                     className="w-full"
-                    disabled={selectedEvaluators.length !== 2}
+                    disabled={selectedEvaluators.length !== 2 || !dueDate}
                   >
                     Asignar Evaluadores
                   </Button>

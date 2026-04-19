@@ -486,10 +486,19 @@ db.prepare(`CREATE TABLE IF NOT EXISTS smtp_config (
   password TEXT NOT NULL,
   encryption TEXT NOT NULL DEFAULT 'TLS',
   is_default BOOLEAN DEFAULT 0,
+  notifications_enabled BOOLEAN DEFAULT 1,
   created_at INTEGER DEFAULT (strftime('%s','now')),
   updated_at INTEGER DEFAULT (strftime('%s','now')),
   FOREIGN KEY(user_id) REFERENCES users(id)
 )`).run();
+
+// Migración: agregar campo notifications_enabled si no existe
+try {
+  db.prepare('ALTER TABLE smtp_config ADD COLUMN notifications_enabled BOOLEAN DEFAULT 1').run();
+  console.log('[DB] Campo notifications_enabled agregado a smtp_config');
+} catch (err) {
+  // Columna ya existe, ignorar
+}
 
 // Tabla de notificaciones
 db.prepare(`CREATE TABLE IF NOT EXISTS notifications (

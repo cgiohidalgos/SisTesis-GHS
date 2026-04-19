@@ -16,6 +16,7 @@ export default function AdminSMTPConfig() {
     password: '',
     encryption: 'TLS',
     is_default: false,
+    notifications_enabled: true,
   });
 
   const [loading, setLoading] = useState(false);
@@ -34,7 +35,13 @@ export default function AdminSMTPConfig() {
       });
       if (res.ok) {
         const data = await res.json();
-        setConfig(prev => ({ ...prev, ...data, port: data.port || prev.port, is_default: !!data.is_default }));
+        setConfig(prev => ({ 
+          ...prev, 
+          ...data, 
+          port: data.port || prev.port, 
+          is_default: !!data.is_default,
+          notifications_enabled: data.notifications_enabled === undefined ? true : !!data.notifications_enabled
+        }));
       }
     } catch (error) {
       console.error('Error loading config:', error);
@@ -193,6 +200,27 @@ export default function AdminSMTPConfig() {
           <label htmlFor="is_default" className="text-sm">
             Usar como configuración del sistema (para enviar notificaciones a todos los usuarios)
           </label>
+        </div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <input
+            type="checkbox"
+            id="notifications_enabled"
+            checked={!!config.notifications_enabled}
+            onChange={(e) => setConfig({ ...config, notifications_enabled: e.target.checked })}
+            className="w-4 h-4"
+          />
+          <label htmlFor="notifications_enabled" className="text-sm font-medium">
+            🔔 Notificaciones de correo habilitadas
+          </label>
+        </div>
+
+        <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded p-3 text-sm">
+          <p className="font-medium mb-1">⚠️ Desactivar notificaciones</p>
+          <p className="text-xs text-muted-foreground">
+            Si desactivas las notificaciones, ningún correo será enviado a los usuarios. 
+            Útil para realizar modificaciones en el sistema sin alertar a los usuarios reales.
+          </p>
         </div>
 
         <div className="pt-4 flex flex-wrap gap-2">

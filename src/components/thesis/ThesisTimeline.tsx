@@ -6,6 +6,25 @@ import { defaultRubric, presentationRubric, type TimelineEvent } from "@/lib/moc
 import { getApiBase } from "@/lib/utils";
 const API_BASE = getApiBase();
 
+async function downloadFile(url: string, fileName: string) {
+  try {
+    const token = localStorage.getItem('token');
+    const resp = await fetch(`${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!resp.ok) throw new Error(`Error ${resp.status}`);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err: any) {
+    alert(err.message || 'No se pudo descargar el archivo');
+  }
+}
+
 // Build lookup maps from rubric definitions
 const allRubrics = [...defaultRubric, ...presentationRubric];
 const sectionMap: Record<string, string> = {};
@@ -172,7 +191,6 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                   )}
                   {event.defense_info && (
                     <p className="text-sm">
-                      <strong>Info adicional:</strong>{' '}
                       <span className="font-medium">{safeRender(event.defense_info)}</span>
                     </p>
                   )}
@@ -196,21 +214,32 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                     </div>
                   )}
                   {(event.evaluatorFiles?.length > 0 || (evaluatorFiles && evaluatorFiles.length > 0)) && (
-                    <div className="bg-secondary/50 rounded-md p-3">
-                      <p className="text-xs font-medium text-foreground mb-2">Archivos del Evaluador</p>
-                      <div className="space-y-1.5">
-                        {(event.evaluatorFiles || evaluatorFiles || []).map((file, i) => (
-                          <a
-                            key={i}
-                            href={`${API_BASE}${file.url.startsWith('/') ? '' : '/'}${file.url}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 text-sm text-accent hover:underline"
-                          >
-                            <Download className="w-3 h-3" />
-                            {file.name}
-                          </a>
-                        ))}
+                    <div className="border border-border rounded-md p-3 bg-card">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-2.5">
+                        <Download className="w-3.5 h-3.5" />
+                        Archivos del Evaluador
+                      </div>
+                      <div className="space-y-2">
+                        {(event.evaluatorFiles || evaluatorFiles || []).map((file, i) => {
+                          const isPdf = file.name?.toLowerCase().endsWith('.pdf');
+                          const isDoc = file.name?.toLowerCase().match(/\.(doc|docx)$/);
+                          return (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => downloadFile(file.url, file.name)}
+                              className="flex items-center gap-2.5 p-2 rounded-md border border-border bg-secondary/30 hover:bg-accent/10 hover:border-accent/40 transition-all group w-full text-left"
+                            >
+                              <div className={`w-7 h-7 rounded flex items-center justify-center flex-shrink-0 ${isPdf ? 'bg-red-100 dark:bg-red-900/30' : isDoc ? 'bg-blue-100 dark:bg-blue-900/30' : 'bg-gray-100 dark:bg-gray-800'}`}>
+                                <svg className={`w-3.5 h-3.5 ${isPdf ? 'text-red-600 dark:text-red-400' : isDoc ? 'text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                </svg>
+                              </div>
+                              <span className="text-sm font-medium text-foreground group-hover:text-accent transition-colors truncate flex-1">{file.name}</span>
+                              <Download className="w-3.5 h-3.5 text-muted-foreground group-hover:text-accent flex-shrink-0 transition-colors" />
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -236,20 +265,27 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                 </div>
               )}
                   {event.revisionFiles && event.revisionFiles.length > 0 && (
-                    <div className="bg-secondary/50 rounded-md p-3">
-                      <p className="text-xs font-medium text-foreground mb-2">Archivos de la revisión</p>
-                      <div className="space-y-1.5">
+                    <div className="border border-border rounded-md p-3 bg-card">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-2.5">
+                        <Download className="w-3.5 h-3.5" />
+                        Archivos de la revisión
+                      </div>
+                      <div className="space-y-2">
                         {event.revisionFiles.map((file, i) => (
-                          <a
+                          <button
                             key={i}
-                            href={`${API_BASE}${file.url.startsWith('/') ? '' : '/'}${file.url}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 text-sm text-accent hover:underline"
+                            type="button"
+                            onClick={() => downloadFile(file.url, file.name)}
+                            className="flex items-center gap-2.5 p-2 rounded-md border border-border bg-secondary/30 hover:bg-accent/10 hover:border-accent/40 transition-all group w-full text-left"
                           >
-                            <Download className="w-3 h-3" />
-                            {file.name}
-                          </a>
+                            <div className="w-7 h-7 rounded flex items-center justify-center flex-shrink-0 bg-gray-100 dark:bg-gray-800">
+                              <svg className="w-3.5 h-3.5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                            <span className="text-sm font-medium text-foreground group-hover:text-accent transition-colors truncate flex-1">{file.name}</span>
+                            <Download className="w-3.5 h-3.5 text-muted-foreground group-hover:text-accent flex-shrink-0 transition-colors" />
+                          </button>
                         ))}
                       </div>
                     </div>

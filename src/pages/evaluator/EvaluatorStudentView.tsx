@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { getApiBase } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import DigitalSignSection from "@/components/thesis/DigitalSignSection";
 
 const API_BASE = getApiBase();
 
@@ -20,6 +22,7 @@ function ScoreCard({ label, children }: { label: string; children: React.ReactNo
 export default function EvaluatorStudentView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { profile, user } = useAuth();
   const [thesis, setThesis] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [weights, setWeights] = useState<{ doc: number; presentation: number }>({ doc: 70, presentation: 30 });
@@ -193,7 +196,12 @@ export default function EvaluatorStudentView() {
             {/* Score summaries */}
             {(() => {
               const evals: any[] = thesis.evaluations || [];
-              const isBlind = thesis.evaluators?.some((e: any) => e.is_blind);
+              const isDirectorViewing = (thesis.directors || []).some((d: any) => {
+                const dName = (typeof d === 'string' ? d : d?.name || '').toLowerCase().trim();
+                const uName = (profile?.full_name || '').toLowerCase().trim();
+                return dName && uName && dName === uName;
+              });
+              const isBlind = !isDirectorViewing && thesis.evaluators?.some((e: any) => e.is_blind);
               const docEvals = evals.filter(
                 (e: any) => e.evaluation_type !== "presentation" && e.final_score != null
               );
@@ -336,6 +344,15 @@ export default function EvaluatorStudentView() {
                 </div>
               );
             })()}
+
+            {id && profile && (
+              <DigitalSignSection
+                thesisId={id}
+                userName={profile.full_name || user?.full_name || ""}
+                myRole="evaluator"
+                myUserId={profile.id ?? user?.id}
+              />
+            )}
           </>
         )}
       </div>

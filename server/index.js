@@ -121,6 +121,10 @@ const upload = multer({
       'application/pdf',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/csv',
+      'text/plain',
       'image/jpeg',
       'image/png',
       'image/gif'
@@ -680,7 +684,7 @@ function getActaContext(thesisId) {
      JOIN thesis_evaluators te ON te.evaluator_id = u.id
      WHERE te.thesis_id = ?`
   ).all(thesisId);
-  const directors = db.prepare('SELECT name FROM thesis_directors WHERE thesis_id = ?').all(thesisId).map(r => r.name);
+  const directors = db.prepare('SELECT name FROM thesis_directors WHERE thesis_id = ?').all(thesisId).map(r => r.name || '');
   const signatures = db.prepare('SELECT * FROM acta_signatures WHERE thesis_id = ? ORDER BY created_at ASC').all(thesisId)
     .map(s => ({ ...s, file_url: `/uploads/${path.basename(s.file_url)}` }));
   const weighted = computeFinalWeightedForThesis(thesisId);
@@ -2435,6 +2439,17 @@ app.delete('/admin/program-review-items/:programId/:itemId', authMiddleware, (re
   res.json({ ok: true });
 });
 
+// Alias for /super/weights readable by any authenticated user
+app.get('/admin/weights', authMiddleware, (req, res) => {
+  const rows = db.prepare('SELECT key, value FROM settings WHERE key IN (?,?)').all('doc_weight','presentation_weight');
+  const result = { doc: 70, presentation: 30 };
+  rows.forEach(r => {
+    if (r.key === 'doc_weight') result.doc = Number(r.value);
+    if (r.key === 'presentation_weight') result.presentation = Number(r.value);
+  });
+  res.json(result);
+});
+
 // Admin endpoints for per-program weights
 app.get('/admin/program-weights/:programId', authMiddleware, (req, res) => {
   const { programId } = req.params;
@@ -2547,6 +2562,8 @@ app.post('/users', authMiddleware, requireRole('admin'), async (req, res) => {
     if (specialty) {
       db.prepare('UPDATE profiles SET specialty = ? WHERE id = ?').run(specialty, id);
     }
+    // Enviar correo de bienvenida con credenciales
+    sendWelcomeEmail(db, institutional_email, full_name || '', institutional_email, password, req.user?.id).catch(console.error);
     res.json({ id, institutional_email, full_name, specialty, cedula, roles: ['evaluator'], generatedPassword: password });
   } catch (err) {
     const msg = String(err);
@@ -2994,10 +3011,13 @@ app.get('/theses', authMiddleware, (req, res) => {
     ).all(t.id);
     // Hide signature events from students
     const isStudentRole = !roles.includes('admin') && !roles.includes('superadmin') && !roles.includes('evaluator');
+    const isDirectorOfT = db.prepare('SELECT id FROM thesis_directors WHERE thesis_id = ? AND user_id = ?').get(t.id, req.user.id);
     if (isStudentRole) {
       timeline = timeline.filter(ev => ev.status !== 'act_signature');
-      // Hide evaluator names for blind review from students
-      evaluators.forEach(ev => { if (ev.is_blind) ev.name = null; });
+      // Hide evaluator names for blind review from students (not from directors)
+      if (!isDirectorOfT) {
+        evaluators.forEach(ev => { if (ev.is_blind) ev.name = null; });
+      }
     }
     // enrich assignment/defense entries and prepare evaluator submission events
     let enrichedTimeline = timeline || [];
@@ -3060,12 +3080,13 @@ app.get('/theses', authMiddleware, (req, res) => {
       ev.scores = scores;
     }
     const isBlindReview = evaluators && evaluators.some(e => e.is_blind);
+    const hideBlindInList = isBlindReview && isStudentRole && !isDirectorOfT;
     // after loading individual evaluations we can add detailed submission events
     if (evaluations && Array.isArray(evaluations)) {
       const evalEvents = evaluations.map((ev, index) => {
         const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
-        const displayName = isBlindReview ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
-        const actorName = isBlindReview ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
+        const displayName = hideBlindInList ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
+        const actorName = hideBlindInList ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
         const event = {
           id: uuidv4(),
           status: 'evaluation_submitted',
@@ -3093,7 +3114,7 @@ app.get('/theses', authMiddleware, (req, res) => {
 
           const revFiles = db.prepare('SELECT file_name, file_url FROM thesis_files WHERE timeline_event_id = ?').all(ev.id);
           if (revFiles && revFiles.length) {
-            ev.revisionFiles = revFiles.map(f => ({ name: f.file_name, url: f.file_url }));
+            ev.revisionFiles = revFiles.map(f => ({ name: f.file_name, url: `/uploads/${path.basename(f.file_url)}` }));
           }
         }
         return ev;
@@ -3102,7 +3123,7 @@ app.get('/theses', authMiddleware, (req, res) => {
     // if every assigned evaluator has provided an evaluation, add a timeline summary event
     if (evaluations && evaluations.length && evaluators && evaluations.length === evaluators.length) {
       const recs = evaluations.map((ev, index) => {
-        let text = isBlindReview ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
+        let text = hideBlindInList ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
         if (ev.general_observations) text += `: ${ev.general_observations}`;
         if (ev.concept) text += ` (concepto: ${ev.concept})`;
         return text;
@@ -3207,7 +3228,11 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   ).all(id);
   // Hide signature events from students
   const rolesForFilter = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
-  const isStudentRole2 = !rolesForFilter.includes('admin') && !rolesForFilter.includes('superadmin') && !rolesForFilter.includes('evaluator');
+  const isAdminRole2 = rolesForFilter.includes('admin') || rolesForFilter.includes('superadmin');
+  const isStudentRole2 = !isAdminRole2 && !rolesForFilter.includes('evaluator');
+  const isDirectorOfThesis = db.prepare('SELECT id FROM thesis_directors WHERE thesis_id = ? AND user_id = ?').get(id, req.user.id);
+  // Only hide blind evaluator identities from students (not from directors or admins)
+  const shouldHideBlind = isStudentRole2 && !isDirectorOfThesis;
   if (isStudentRole2) {
     timeline = timeline.filter(ev => ev.status !== 'act_signature');
   }
@@ -3241,12 +3266,17 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
     timeline = timeline.filter(ev => ev.status !== 'evaluation_submitted');
   }
   const isBlindReview = evaluators && evaluators.some(e => e.is_blind);
+  // Hide evaluator identities from students and directors when blind review is active
+  if (shouldHideBlind && isBlindReview) {
+    evaluators.forEach(ev => { ev.name = null; ev.institutional_email = null; });
+  }
   // add detailed evaluation_submitted events using actual evaluations
   if (evaluations && Array.isArray(evaluations)) {
     const evalEvents = evaluations.map((ev, index) => {
       const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
-      const displayName = isBlindReview ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
-      const actorName = isBlindReview ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
+      const hideNames = shouldHideBlind && isBlindReview;
+      const displayName = hideNames ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
+      const actorName = hideNames ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
       const event = {
         id: uuidv4(),
         status: 'evaluation_submitted',
@@ -3278,7 +3308,7 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
 
       const revFiles = db.prepare('SELECT file_name, file_url FROM thesis_files WHERE timeline_event_id = ?').all(ev.id);
       if (revFiles && revFiles.length) {
-        ev.revisionFiles = revFiles.map(f => ({ name: f.file_name, url: f.file_url }));
+        ev.revisionFiles = revFiles.map(f => ({ name: f.file_name, url: `/uploads/${path.basename(f.file_url)}` }));
       }
     }
     return ev;
@@ -3296,7 +3326,7 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
     const uniqueEvals = new Set(evaluations.map(ev => ev.evaluator_id));
     if (uniqueEvals.size === evaluators.length) {
       const recs = evaluations.map((ev, index) => {
-        let text = isBlindReview ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
+        let text = (shouldHideBlind && isBlindReview) ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
         if (ev.general_observations) text += `: ${ev.general_observations}`;
         if (ev.concept) text += ` (concepto: ${ev.concept})`;
         return text;
@@ -3636,6 +3666,8 @@ app.post('/theses/:id/acta/delete-signature', authMiddleware, requireRole('admin
     .run(thesisId, signer_name, signer_role);
   db.prepare('UPDATE signing_tokens SET used_at = NULL WHERE thesis_id = ? AND signer_name = ?')
     .run(thesisId, signer_name);
+  // Invalidate stored PDF so next download regenerates with current signatures
+  db.prepare('DELETE FROM signed_actas WHERE thesis_id = ?').run(thesisId);
   res.json({ ok: true });
 });
 
@@ -3708,7 +3740,8 @@ app.get('/theses/:id/acta/digital-signature-status', authMiddleware, (req, res) 
     }
   });
 
-  const allSigned = pendingSigners.length === 0 && requiredSigners.length > 0;
+  const hasManualSig = digitalSigs.some(ds => ds.signer_role === 'manual');
+  const allSigned = hasManualSig || (pendingSigners.length === 0 && requiredSigners.length > 0);
   console.log('  pendingSigners:', pendingSigners);
   console.log('  allSigned:', allSigned);
 
@@ -3750,26 +3783,27 @@ app.get('/theses/:id/acta/download-for-signing', authMiddleware, async (req, res
   const evalNames = evaluators.map(e => e.name).join(', ');
   const directorNames = directors.join(', ');
 
-  const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date)) : new Date();
+  const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date) * 1000) : new Date();
+  const defenseDateBogota = new Date(defenseDate.getTime() - 5 * 3600 * 1000);
   const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-  const dateText = `${defenseDate.getDate()} de ${months[defenseDate.getMonth()]} de ${defenseDate.getFullYear()}`;
-  const timeText = defenseDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+  const dateText = `${defenseDateBogota.getDate()} de ${months[defenseDateBogota.getMonth()]} de ${defenseDateBogota.getFullYear()}`;
+  const timeText = defenseDate.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' });
 
   try {
     let pdfBuffer;
 
     {
       // Calcular año, período y consecutivo
-      const defenseYear = defenseDate.getFullYear();
-      const defenseMonth = defenseDate.getMonth() + 1;
+      const defenseYear = defenseDateBogota.getFullYear();
+      const defenseMonth = defenseDateBogota.getMonth() + 1;
       const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
 
-      const periodStart = defensePeriod === 'I'
+      const periodStart = Math.floor((defensePeriod === 'I'
         ? new Date(defenseYear, 0, 1).getTime()
-        : new Date(defenseYear, 6, 1).getTime();
-      const periodEnd = defensePeriod === 'I'
+        : new Date(defenseYear, 6, 1).getTime()) / 1000);
+      const periodEnd = Math.floor((defensePeriod === 'I'
         ? new Date(defenseYear, 6, 1).getTime()
-        : new Date(defenseYear + 1, 0, 1).getTime();
+        : new Date(defenseYear + 1, 0, 1).getTime()) / 1000);
       const thesesInPeriod = db.prepare(
         `SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`
       ).all(periodStart, periodEnd);
@@ -3793,7 +3827,13 @@ app.get('/theses/:id/acta/download-for-signing', authMiddleware, async (req, res
         if (n < 1000) return numToText(n);
         const th = Math.floor(n / 1000), rest = n % 1000;
         const thW = th === 1 ? 'mil' : numToText(th) + ' mil';
-        return rest === 0 ? thW : thW + ' ' + numToText(rest);
+        if (rest === 0) return thW;
+        const hundreds = Math.floor(rest / 100);
+        const rem = rest % 100;
+        const hw = ['','cien','doscientos','trescientos','cuatrocientos','quinientos','seiscientos','setecientos','ochocientos','novecientos'];
+        let restText = hundreds > 0 ? hw[hundreds] : '';
+        if (rem > 0) restText += (restText ? ' ' : '') + numToText(rem);
+        return thW + ' ' + restText;
       }
 
       // Directores de programa (incluye param manual si se pasa)
@@ -3812,9 +3852,9 @@ app.get('/theses/:id/acta/download-for-signing', authMiddleware, async (req, res
         period: defensePeriod,
         lugar: thesis.defense_location || 'Auditorio por definir',
         hora: timeText,
-        dia_numero: defenseDate.getDate(),
-        dia_texto: numToText(defenseDate.getDate()),
-        mes_nombre: months[defenseDate.getMonth()],
+        dia_numero: defenseDateBogota.getDate(),
+        dia_texto: numToText(defenseDateBogota.getDate()),
+        mes_nombre: months[defenseDateBogota.getMonth()],
         year_text: `${defenseYear} (${numToTextYear(defenseYear)})`,
         titulo: thesis.title || '',
         estudiantes: studentNames,
@@ -3972,6 +4012,36 @@ app.post('/theses/:id/acta/upload-signed', authMiddleware, upload.fields([{ name
   });
 });
 
+// Subir acta firmada manualmente (marca todo como completo)
+app.post('/theses/:id/acta/upload-manual-signed', authMiddleware, requireRole('admin'), upload.single('signed_pdf'), (req, res) => {
+  const thesisId = req.params.id;
+  const pdfFile = req.file;
+  if (!pdfFile) return res.status(400).json({ error: 'Se requiere el archivo PDF' });
+
+  let signedActa = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? ORDER BY version DESC LIMIT 1').get(thesisId);
+  if (!signedActa) {
+    const actaId = uuidv4();
+    db.prepare('INSERT INTO signed_actas (id, thesis_id, current_pdf_url, version, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(actaId, thesisId, path.basename(pdfFile.path), 1, 'completed', Date.now(), nowSec());
+  } else {
+    db.prepare('UPDATE signed_actas SET current_pdf_url = ?, status = ?, updated_at = ? WHERE id = ?')
+      .run(path.basename(pdfFile.path), 'completed', Date.now(), signedActa.id);
+  }
+
+  // Insert a single 'manual' signature record to mark as allSigned
+  const existing = db.prepare('SELECT id FROM digital_signatures WHERE thesis_id = ? AND signer_role = ?').get(thesisId, 'manual');
+  if (!existing) {
+    db.prepare(`INSERT INTO digital_signatures (id, signed_acta_id, thesis_id, signer_user_id, signer_name, signer_role, signed_at, signature_valid, created_at, pdf_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(uuidv4(), signedActa?.id || '', thesisId, req.user.id, req.user.full_name || 'Admin', 'manual', Date.now(), 1, nowSec(), `/uploads/${path.basename(pdfFile.path)}`);
+  } else {
+    db.prepare('UPDATE digital_signatures SET pdf_url = ?, signed_at = ? WHERE id = ?')
+      .run(`/uploads/${path.basename(pdfFile.path)}`, Date.now(), existing.id);
+  }
+
+  res.json({ ok: true, pdf_url: `/uploads/${path.basename(pdfFile.path)}` });
+});
+
 // Descargar el PDF final con todas las firmas
 app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, res) => {
   const thesisId = req.params.id;
@@ -3985,15 +4055,18 @@ app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, re
     return res.status(403).json({ error: 'No tiene permisos para descargar' });
   }
 
-  // Servir el último PDF subido por cualquier firmante (cadena de firmas)
-  const signedActa = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? ORDER BY updated_at DESC LIMIT 1').get(thesisId);
-  if (signedActa && signedActa.current_pdf_url) {
-    const pdfPath = path.join(uploadDir, path.basename(signedActa.current_pdf_url));
-    if (fs.existsSync(pdfPath)) {
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="acta-final-firmada-${thesisId}.pdf"`);
-      return res.sendFile(pdfPath);
+  // Only serve stored PDF if it was a manual upload (not a drawn/digital signature flow)
+  const manualSig = db.prepare('SELECT id FROM digital_signatures WHERE thesis_id = ? AND signer_role = ?').get(thesisId, 'manual');
+  if (manualSig) {
+    const signedActa = db.prepare('SELECT * FROM signed_actas WHERE thesis_id = ? ORDER BY updated_at DESC LIMIT 1').get(thesisId);
+    if (signedActa && signedActa.current_pdf_url) {
+      const pdfPath = path.join(uploadDir, path.basename(signedActa.current_pdf_url));
+      if (fs.existsSync(pdfPath)) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="acta-final-firmada-${thesisId}.pdf"`);
+        return res.sendFile(pdfPath);
+      }
     }
   }
 
@@ -4006,15 +4079,21 @@ app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, re
     // Usar digital_signatures (token-based) como fuente de firmas para el PDF final
     const digitalSigs = db.prepare('SELECT * FROM digital_signatures WHERE thesis_id = ?').all(thesisId);
     const sigTokensFinal = db.prepare('SELECT signer_name, signer_role FROM signing_tokens WHERE thesis_id = ?').all(thesisId);
-    const signatures = digitalSigs.length > 0 ? digitalSigs : [...ctx.signatures, ...sigTokensFinal];
-    const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date)) : new Date();
+    const rawSigs = digitalSigs.length > 0 ? digitalSigs : [...ctx.signatures, ...sigTokensFinal];
+    // generateActaDocx expects sig.file_url for the image — map signature_image_url to file_url
+    const signatures = rawSigs.map(s => ({
+      ...s,
+      file_url: s.file_url || s.signature_image_url || null,
+    }));
+    const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date) * 1000) : new Date();
+    const defenseDateBogota = new Date(defenseDate.getTime() - 5 * 3600 * 1000);
     const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-    const timeText = defenseDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-    const defenseYear = defenseDate.getFullYear();
-    const defenseMonth = defenseDate.getMonth() + 1;
+    const timeText = defenseDate.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' });
+    const defenseYear = defenseDateBogota.getFullYear();
+    const defenseMonth = defenseDateBogota.getMonth() + 1;
     const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
-    const periodStart = defensePeriod === 'I' ? new Date(defenseYear,0,1).getTime() : new Date(defenseYear,6,1).getTime();
-    const periodEnd   = defensePeriod === 'I' ? new Date(defenseYear,6,1).getTime() : new Date(defenseYear+1,0,1).getTime();
+    const periodStart = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,0,1).getTime() : new Date(defenseYear,6,1).getTime()) / 1000);
+    const periodEnd   = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,6,1).getTime() : new Date(defenseYear+1,0,1).getTime()) / 1000);
     const thesesInPeriod = db.prepare(`SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`).all(periodStart, periodEnd);
     let thesisPos = 1;
     for (let i = 0; i < thesesInPeriod.length; i++) { if (thesesInPeriod[i].id === thesis.id) { thesisPos = i+1; break; } }
@@ -4032,16 +4111,21 @@ app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, re
       if (n < 1000) return numToText(n);
       const th = Math.floor(n/1000), rest = n%1000;
       const thW = th === 1 ? 'mil' : numToText(th)+' mil';
-      return rest === 0 ? thW : thW+' '+numToText(rest);
+      if (rest === 0) return thW;
+      const hundreds = Math.floor(rest/100), rem = rest%100;
+      const hw = ['','cien','doscientos','trescientos','cuatrocientos','quinientos','seiscientos','setecientos','ochocientos','novecientos'];
+      let restText = hundreds > 0 ? hw[hundreds] : '';
+      if (rem > 0) restText += (restText ? ' ' : '') + numToText(rem);
+      return thW + ' ' + restText;
     }
 
     const docxBuf = generateActaDocx({
       thesisNumber, year: defenseYear, period: defensePeriod,
       lugar: thesis.defense_location || 'Auditorio por definir',
       hora: timeText,
-      dia_numero: defenseDate.getDate(),
-      dia_texto: numToText(defenseDate.getDate()),
-      mes_nombre: months[defenseDate.getMonth()],
+      dia_numero: defenseDateBogota.getDate(),
+      dia_texto: numToText(defenseDateBogota.getDate()),
+      mes_nombre: months[defenseDateBogota.getMonth()],
       year_text: `${defenseYear} (${numToTextYear(defenseYear)})`,
       titulo: thesis.title || '',
       estudiantes: students.map(s => s.name).join(', '),
@@ -4117,7 +4201,7 @@ app.get('/theses/:id/acta/export', authMiddleware, async (req, res) => {
   const digitalSigsRaw = db.prepare('SELECT * FROM digital_signatures WHERE thesis_id = ? ORDER BY signed_at ASC').all(thesisId);
   const sigTokensExport = db.prepare('SELECT signer_name, signer_role FROM signing_tokens WHERE thesis_id = ?').all(thesisId);
   const signatures = digitalSigsRaw.length > 0
-    ? digitalSigsRaw.map(s => ({ ...s, file_url: null, created_at: s.signed_at }))
+    ? digitalSigsRaw.map(s => ({ ...s, file_url: s.file_url || s.signature_image_url || null, created_at: s.signed_at }))
     : [...oldSignatures, ...sigTokensExport];
   const classification = scoreClassification(weighted.finalScore);
   const mark = (label) => (classification === label ? 'X' : ' ');
@@ -4132,17 +4216,18 @@ app.get('/theses/:id/acta/export', authMiddleware, async (req, res) => {
   const programDirectorSig = signatures.find(s => s.signer_role === 'program_director');
 
   // Preparar datos para el template
-  const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date)) : new Date();
+  const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date) * 1000) : new Date();
+  const defenseDateBogota = new Date(defenseDate.getTime() - 5 * 3600 * 1000);
   const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-  const dateText = `${defenseDate.getDate()} de ${months[defenseDate.getMonth()]} de ${defenseDate.getFullYear()}`;
-  const timeText = defenseDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-  
+  const dateText = `${defenseDateBogota.getDate()} de ${months[defenseDateBogota.getMonth()]} de ${defenseDateBogota.getFullYear()}`;
+  const timeText = defenseDate.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' });
+
   // Calcular año, período y consecutivo
-  const defenseYear = defenseDate.getFullYear();
-  const defenseMonth = defenseDate.getMonth() + 1;
+  const defenseYear = defenseDateBogota.getFullYear();
+  const defenseMonth = defenseDateBogota.getMonth() + 1;
   const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
-  const periodStart2 = defensePeriod === 'I' ? new Date(defenseYear, 0, 1).getTime() : new Date(defenseYear, 6, 1).getTime();
-  const periodEnd2 = defensePeriod === 'I' ? new Date(defenseYear, 6, 1).getTime() : new Date(defenseYear + 1, 0, 1).getTime();
+  const periodStart2 = Math.floor((defensePeriod === 'I' ? new Date(defenseYear, 0, 1).getTime() : new Date(defenseYear, 6, 1).getTime()) / 1000);
+  const periodEnd2 = Math.floor((defensePeriod === 'I' ? new Date(defenseYear, 6, 1).getTime() : new Date(defenseYear + 1, 0, 1).getTime()) / 1000);
   const thesesInPeriod2 = db.prepare(`SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`).all(periodStart2, periodEnd2);
   let thesisPos2 = 1;
   for (let i = 0; i < thesesInPeriod2.length; i++) { if (thesesInPeriod2[i].id === thesis.id) { thesisPos2 = i + 1; break; } }
@@ -4163,7 +4248,13 @@ app.get('/theses/:id/acta/export', authMiddleware, async (req, res) => {
     if (n < 1000) return numToText2(n);
     const th = Math.floor(n / 1000), rest = n % 1000;
     const thW = th === 1 ? 'mil' : numToText2(th) + ' mil';
-    return rest === 0 ? thW : thW + ' ' + numToText2(rest);
+    if (rest === 0) return thW;
+    const hundreds = Math.floor(rest / 100);
+    const rem = rest % 100;
+    const hw = ['','cien','doscientos','trescientos','cuatrocientos','quinientos','seiscientos','setecientos','ochocientos','novecientos'];
+    let restText = hundreds > 0 ? hw[hundreds] : '';
+    if (rem > 0) restText += (restText ? ' ' : '') + numToText2(rem);
+    return thW + ' ' + restText;
   }
 
   try {
@@ -4173,9 +4264,9 @@ app.get('/theses/:id/acta/export', authMiddleware, async (req, res) => {
       period: defensePeriod,
       lugar: thesis.defense_location || 'Auditorio por definir',
       hora: timeText,
-      dia_numero: defenseDate.getDate(),
-      dia_texto: numToText2(defenseDate.getDate()),
-      mes_nombre: months[defenseDate.getMonth()],
+      dia_numero: defenseDateBogota.getDate(),
+      dia_texto: numToText2(defenseDateBogota.getDate()),
+      mes_nombre: months[defenseDateBogota.getMonth()],
       year_text: `${defenseYear} (${numToTextYear2(defenseYear)})`,
       titulo: thesis.title || '',
       estudiantes: studentNames,
@@ -4232,6 +4323,571 @@ app.get('/theses/:id/acta/export', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Error generando acta:', error);
     return res.status(500).json({ error: 'Error generando acta' });
+  }
+});
+
+// ============================================================================
+// Download complete thesis package (all files + acta + rubrics) as ZIP
+// ============================================================================
+app.get('/theses/:id/download-complete-package', authMiddleware, async (req, res) => {
+  const thesisId = req.params.id;
+  
+  try {
+    // Verificar permisos
+    const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+    const isAdmin = roles.includes('admin') || roles.includes('superadmin');
+    const isEvaluator = !!db.prepare('SELECT 1 FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesisId, req.user.id);
+    const isDirector = !!db.prepare('SELECT 1 FROM thesis_directors WHERE thesis_id = ? AND user_id = ?').get(thesisId, req.user.id);
+    
+    if (!isAdmin && !isEvaluator && !isDirector) {
+      return res.status(403).json({ error: 'No tiene permisos para descargar este paquete' });
+    }
+
+    // Verificar que todas las firmas estén completas (usando digital_signatures)
+    const ctx = getActaContext(thesisId);
+    if (!ctx) return res.status(404).json({ error: 'Tesis no encontrada' });
+
+    const digitalSigs = db.prepare('SELECT * FROM digital_signatures WHERE thesis_id = ?').all(thesisId);
+    const _tp3 = ['profesional','esp.','mg.','phd.','dr.'];
+    const _sn3 = (n) => { if (!n) return ''; let s = n.trim().toLowerCase(); for (const t of _tp3) { if (s.startsWith(t + ' ')) { s = s.slice(t.length + 1).trim(); break; } } return s; };
+
+    const requiredSigners = [
+      ...ctx.evaluators.map(e => ({ user_id: e.id, name: e.name, role: 'evaluator' })),
+      ...ctx.directors.map(d => ({ user_id: null, name: d, role: 'director' })),
+      { user_id: null, name: 'Director del Programa', role: 'program_director' }
+    ];
+    const pendingSigners = requiredSigners.filter(r => {
+      if (r.role === 'evaluator') {
+        return !digitalSigs.some(ds =>
+          (ds.signer_role === 'evaluator' || ds.signer_role === 'evaluador' || ds.signer_role === null) &&
+          ((ds.signer_user_id && String(ds.signer_user_id) === String(r.user_id)) ||
+           _sn3(ds.signer_name) === _sn3(r.name) ||
+           ds.signer_name.toLowerCase() === r.name.toLowerCase())
+        );
+      } else if (r.role === 'director') {
+        return !digitalSigs.some(ds =>
+          (_sn3(ds.signer_name) === _sn3(r.name) || ds.signer_name.toLowerCase() === r.name.toLowerCase()) &&
+          (ds.signer_role === 'director' || ds.signer_role === null)
+        );
+      } else {
+        return !digitalSigs.some(ds =>
+          ds.signer_role === 'program_director' ||
+          (ds.signer_role === null && ds.signer_name.toLowerCase() === 'director del programa')
+        );
+      }
+    });
+    const hasManualSig = digitalSigs.some(ds => ds.signer_role === 'manual');
+    const allSigned = hasManualSig || (pendingSigners.length === 0 && requiredSigners.length > 0);
+
+    if (!allSigned) {
+      return res.status(403).json({ error: 'El acta aún no tiene todas las firmas completas' });
+    }
+
+    const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesisId);
+    const students = db.prepare(`SELECT u.full_name as name FROM users u JOIN thesis_students ts ON u.id = ts.student_id WHERE ts.thesis_id = ?`).all(thesisId);
+    const studentNames = students.map(s => s.name).join('_').replace(/[^a-zA-Z0-9_]/g, '_');
+    
+    const archiver = require('archiver');
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    
+    const zipFilename = `Tesis_${studentNames || 'SinNombre'}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(zipFilename)}"`);
+    
+    archive.on('error', (err) => {
+      logger.error('Error generando ZIP:', err);
+      res.status(500).json({ error: 'Error generando el paquete' });
+    });
+    
+    archive.pipe(res);
+    
+    // 1. Agregar todos los archivos enviados por el estudiante
+    const thesisFiles = db.prepare('SELECT file_name, file_url FROM thesis_files WHERE thesis_id = ?').all(thesisId);
+    for (const file of thesisFiles) {
+      const filePath = path.join(uploadDir, path.basename(file.file_url));
+      if (fs.existsSync(filePath)) {
+        archive.file(filePath, { name: `Archivos_Enviados/${file.file_name}` });
+      }
+    }
+    
+    // 2. Agregar el acta en PDF
+    try {
+      const { thesis: thesisData, students: studentsData, evaluators, directors, signatures: oldSignatures, weighted, programName, programDirectors } = ctx;
+      const digitalSigsRaw = db.prepare('SELECT * FROM digital_signatures WHERE thesis_id = ? ORDER BY signed_at ASC').all(thesisId);
+      const sigTokensExport = db.prepare('SELECT signer_name, signer_role FROM signing_tokens WHERE thesis_id = ?').all(thesisId);
+      const signatures = digitalSigsRaw.length > 0
+        ? digitalSigsRaw.map(s => ({ ...s, file_url: s.file_url || s.signature_image_url || null, created_at: s.signed_at }))
+        : [...oldSignatures, ...sigTokensExport];
+      
+      const defenseDate = thesisData.defense_date ? new Date(Number(thesisData.defense_date) * 1000) : new Date();
+      const defenseDateBogota = new Date(defenseDate.getTime() - 5 * 3600 * 1000);
+      const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      const timeText = defenseDate.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' });
+      const defenseYear = defenseDateBogota.getFullYear();
+      const defenseMonth = defenseDateBogota.getMonth() + 1;
+      const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
+      const periodStart = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,0,1).getTime() : new Date(defenseYear,6,1).getTime()) / 1000);
+      const periodEnd   = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,6,1).getTime() : new Date(defenseYear+1,0,1).getTime()) / 1000);
+      const thesesInPeriod = db.prepare(`SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`).all(periodStart, periodEnd);
+      let thesisPos = 1;
+      for (let i = 0; i < thesesInPeriod.length; i++) { if (thesesInPeriod[i].id === thesisData.id) { thesisPos = i+1; break; } }
+      const thesisNumber = String(thesisPos).padStart(2, '0');
+      
+      function numToText(n) {
+        const units = ['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve'];
+        const teens = ['diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];
+        const tens2 = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
+        if (n < 10) return units[n]; if (n < 20) return teens[n-10];
+        const t = Math.floor(n/10), u = n%10;
+        if (u === 0) return tens2[t]; if (t === 2) return 'veinti'+units[u];
+        return tens2[t]+' y '+units[u];
+      }
+      function numToTextYear(n) {
+        if (n < 1000) return numToText(n);
+        const th = Math.floor(n/1000), rest = n%1000;
+        const thW = th === 1 ? 'mil' : numToText(th)+' mil';
+        if (rest === 0) return thW;
+        const hundreds = Math.floor(rest/100), rem = rest%100;
+        const hw = ['','cien','doscientos','trescientos','cuatrocientos','quinientos','seiscientos','setecientos','ochocientos','novecientos'];
+        let restText = hundreds > 0 ? hw[hundreds] : '';
+        if (rem > 0) restText += (restText ? ' ' : '') + numToText(rem);
+        return thW + ' ' + restText;
+      }
+      
+      const docxBuf = generateActaDocx({
+        thesisNumber, year: defenseYear, period: defensePeriod,
+        lugar: thesisData.defense_location || 'Auditorio por definir',
+        hora: timeText,
+        dia_numero: defenseDateBogota.getDate(),
+        dia_texto: numToText(defenseDateBogota.getDate()),
+        mes_nombre: months[defenseDateBogota.getMonth()],
+        year_text: `${defenseYear} (${numToTextYear(defenseYear)})`,
+        titulo: thesisData.title || '',
+        estudiantes: studentsData.map(s => s.name).join(', '),
+        codigos: studentsData.map(s => s.student_code || '').filter(Boolean).join(', ') || 'N/A',
+        director: directors.join(', '),
+        evaluadores: evaluators.map(e => e.name).join(', '),
+        observaciones: thesisData.defense_info || 'Sin observaciones registradas',
+        classification: scoreClassification(weighted.finalScore),
+        nota: Number(weighted.finalScore || 0).toFixed(1),
+        calificacion_letras: scoreToSpanishText(weighted.finalScore),
+        evaluators, directors, programDirectors, signatures, programName,
+      });
+      
+      // Convertir a PDF
+      const { execSync } = require('child_process');
+      const tmpDocx = path.join('/tmp', `acta_final_${thesisId}_${Date.now()}.docx`);
+      fs.writeFileSync(tmpDocx, docxBuf);
+      execSync(`libreoffice --headless --convert-to pdf --outdir /tmp "${tmpDocx}"`, { timeout: 30000, stdio: 'pipe' });
+      const tmpPdf = tmpDocx.replace(/\.docx$/, '.pdf');
+      const pdfBuffer = fs.readFileSync(tmpPdf);
+      
+      archive.append(pdfBuffer, { name: 'Acta_de_Sustentacion.pdf' });
+      
+      // Limpiar archivos temporales
+      try { fs.unlinkSync(tmpDocx); } catch {}
+      try { fs.unlinkSync(tmpPdf); } catch {}
+    } catch (e) {
+      logger.error('Error generando PDF del acta para ZIP:', e);
+    }
+    
+    // 3. Agregar el acta en Word
+    try {
+      const { thesis: thesisData, students: studentsData, evaluators, directors, signatures: oldSignatures, weighted, programName, programDirectors } = ctx;
+      const digitalSigsRaw = db.prepare('SELECT * FROM digital_signatures WHERE thesis_id = ? ORDER BY signed_at ASC').all(thesisId);
+      const sigTokensExport = db.prepare('SELECT signer_name, signer_role FROM signing_tokens WHERE thesis_id = ?').all(thesisId);
+      const signatures = digitalSigsRaw.length > 0
+        ? digitalSigsRaw.map(s => ({ ...s, file_url: s.file_url || s.signature_image_url || null, created_at: s.signed_at }))
+        : [...oldSignatures, ...sigTokensExport];
+      
+      const defenseDate = thesisData.defense_date ? new Date(Number(thesisData.defense_date) * 1000) : new Date();
+      const defenseDateBogota = new Date(defenseDate.getTime() - 5 * 3600 * 1000);
+      const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      const timeText = defenseDate.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' });
+      const defenseYear = defenseDateBogota.getFullYear();
+      const defenseMonth = defenseDateBogota.getMonth() + 1;
+      const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
+      const periodStart = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,0,1).getTime() : new Date(defenseYear,6,1).getTime()) / 1000);
+      const periodEnd   = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,6,1).getTime() : new Date(defenseYear+1,0,1).getTime()) / 1000);
+      const thesesInPeriod = db.prepare(`SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`).all(periodStart, periodEnd);
+      let thesisPos = 1;
+      for (let i = 0; i < thesesInPeriod.length; i++) { if (thesesInPeriod[i].id === thesisData.id) { thesisPos = i+1; break; } }
+      const thesisNumber = String(thesisPos).padStart(2, '0');
+      
+      function numToText(n) {
+        const units = ['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve'];
+        const teens = ['diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'];
+        const tens2 = ['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
+        if (n < 10) return units[n]; if (n < 20) return teens[n-10];
+        const t = Math.floor(n/10), u = n%10;
+        if (u === 0) return tens2[t]; if (t === 2) return 'veinti'+units[u];
+        return tens2[t]+' y '+units[u];
+      }
+      function numToTextYear(n) {
+        if (n < 1000) return numToText(n);
+        const th = Math.floor(n/1000), rest = n%1000;
+        const thW = th === 1 ? 'mil' : numToText(th)+' mil';
+        if (rest === 0) return thW;
+        const hundreds = Math.floor(rest/100), rem = rest%100;
+        const hw = ['','cien','doscientos','trescientos','cuatrocientos','quinientos','seiscientos','setecientos','ochocientos','novecientos'];
+        let restText = hundreds > 0 ? hw[hundreds] : '';
+        if (rem > 0) restText += (restText ? ' ' : '') + numToText(rem);
+        return thW + ' ' + restText;
+      }
+      
+      const docxBuf = generateActaDocx({
+        thesisNumber, year: defenseYear, period: defensePeriod,
+        lugar: thesisData.defense_location || 'Auditorio por definir',
+        hora: timeText,
+        dia_numero: defenseDateBogota.getDate(),
+        dia_texto: numToText(defenseDateBogota.getDate()),
+        mes_nombre: months[defenseDateBogota.getMonth()],
+        year_text: `${defenseYear} (${numToTextYear(defenseYear)})`,
+        titulo: thesisData.title || '',
+        estudiantes: studentsData.map(s => s.name).join(', '),
+        codigos: studentsData.map(s => s.student_code || '').filter(Boolean).join(', ') || 'N/A',
+        director: directors.join(', '),
+        evaluadores: evaluators.map(e => e.name).join(', '),
+        observaciones: thesisData.defense_info || 'Sin observaciones registradas',
+        classification: scoreClassification(weighted.finalScore),
+        nota: Number(weighted.finalScore || 0).toFixed(1),
+        calificacion_letras: scoreToSpanishText(weighted.finalScore),
+        evaluators, directors, programDirectors, signatures, programName,
+      });
+      
+      archive.append(docxBuf, { name: 'Acta_de_Sustentacion.docx' });
+    } catch (e) {
+      logger.error('Error generando DOCX del acta para ZIP:', e);
+    }
+    
+    // 4. Agregar las rúbricas completas (XLSX) de cada evaluador (última ronda)
+    const ExcelJS = require('exceljs');
+    const thesisProgramRow = db.prepare('SELECT program_id FROM thesis_programs WHERE thesis_id = ? LIMIT 1').get(thesisId);
+    const thesisProgramId = thesisProgramRow ? thesisProgramRow.program_id : null;
+    const program = thesisProgramId ? db.prepare('SELECT name FROM programs WHERE id = ?').get(thesisProgramId) : null;
+    const programNameForRubric = program ? program.name : '';
+
+    // Obtener evaluadores asignados
+    const assignedEvaluators = db.prepare(
+      `SELECT te.evaluator_id, te.id as te_id, u.full_name as evaluator_name
+       FROM thesis_evaluators te
+       LEFT JOIN users u ON u.id = te.evaluator_id
+       WHERE te.thesis_id = ?`
+    ).all(thesisId);
+
+    // Tipos de evaluación a incluir
+    const evalTypes = ['document'];
+    if (thesis.defense_date) evalTypes.push('presentation');
+
+    const COLOR = {
+      titleBg: '1E3A5F', titleFg: 'FFFFFF',
+      headerBg: '2E75B6', headerFg: 'FFFFFF',
+      sectionColors: ['D6E4F0', 'D5E8D4', 'FFE6CC', 'E1D5E7', 'DAE8FC'],
+      sectionFg: '1E3A5F',
+      criterionAlt: 'F0F7FF',
+      filledBg: 'E8F5E9',
+      subtotalBg: 'E2EFDA', subtotalFg: '375623',
+      totalBg: '375623', totalFg: 'FFFFFF',
+      border: 'B0BEC5',
+    };
+    const font  = (bold = false, size = 11, color = '000000') => ({ name: 'Calibri', bold, size, color: { argb: 'FF' + color } });
+    const fill  = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
+    const bdr   = (hex = COLOR.border) => { const s = { style: 'thin', color: { argb: 'FF' + hex } }; return { top: s, left: s, bottom: s, right: s }; };
+    const align = (h = 'left', v = 'middle', wrap = false) => ({ horizontal: h, vertical: v, wrapText: wrap });
+
+    for (const evaluator of assignedEvaluators) {
+      for (const evalType of evalTypes) {
+        try {
+          // Rúbrica del programa
+          const rubricRow = db.prepare('SELECT * FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(thesisProgramId, evalType);
+          if (!rubricRow) continue;
+          const sections = JSON.parse(rubricRow.sections_json);
+
+          // Evaluación más reciente de este evaluador/tipo
+          const evaluation = db.prepare(
+            `SELECT e.* FROM evaluations e
+             WHERE e.thesis_evaluator_id = ? AND e.evaluation_type = ?
+             ORDER BY e.revision_round DESC, e.submitted_at DESC LIMIT 1`
+          ).get(evaluator.te_id, evalType);
+          if (!evaluation) continue;
+
+          const scores = db.prepare(
+            'SELECT section_id, criterion_id, score, observations FROM evaluation_scores WHERE evaluation_id = ?'
+          ).all(evaluation.id);
+
+          const typeLabel = evalType === 'presentation' ? 'Sustentación' : 'Documento';
+          const typeLabelFile = evalType === 'presentation' ? 'Sustentacion' : 'Documento';
+
+          const wb = new ExcelJS.Workbook();
+          wb.creator = 'SisTesis';
+          const ws = wb.addWorksheet(`Rúbrica ${typeLabel}`.substring(0, 31), {
+            pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+            views: [{ state: 'frozen', ySplit: 5 }],
+          });
+          ws.columns = [
+            { width: 28 }, { width: 10 }, { width: 8 },
+            { width: 42 }, { width: 16 }, { width: 18 }, { width: 20 },
+          ];
+
+          // Título
+          const tRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '']);
+          ws.mergeCells(1, 1, 1, 7); tRow.height = 32;
+          Object.assign(tRow.getCell(1), { font: font(true, 14, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
+
+          // Programa
+          const pRow = ws.addRow([programNameForRubric, '', '', '', '', '', '']);
+          ws.mergeCells(2, 1, 2, 7); pRow.height = 20;
+          Object.assign(pRow.getCell(1), { font: font(false, 11, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
+
+          // Tesis
+          const thesisRow = ws.addRow([`Tesis: ${thesis.title || ''}`, '', '', '', '', '', '']);
+          ws.mergeCells(3, 1, 3, 7); thesisRow.height = 18;
+          Object.assign(thesisRow.getCell(1), { font: font(false, 10, COLOR.titleFg), fill: fill('2E5080'), alignment: align('left', 'middle', true), border: bdr() });
+
+          // Evaluador y nota
+          const evalRow = ws.addRow([`Evaluador: ${evaluator.evaluator_name || ''}     |     Nota final: ${Number(evaluation.final_score || 0).toFixed(1)} / 5.0`, '', '', '', '', '', '']);
+          ws.mergeCells(4, 1, 4, 7); evalRow.height = 18;
+          Object.assign(evalRow.getCell(1), { font: font(true, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align('center', 'middle'), border: bdr() });
+
+          // Encabezados de columna
+          const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado']);
+          hRow.height = 28;
+          hRow.eachCell(c => Object.assign(c, { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('center', 'middle', true), border: bdr() }));
+
+          let currentRow = 6;
+          const sectionSubtotalRefs = [];
+
+          sections.forEach((section, sIdx) => {
+            const count = section.criteria.length;
+            const secStart = currentRow;
+            const secBg = COLOR.sectionColors[sIdx % COLOR.sectionColors.length];
+
+            section.criteria.forEach((criterion, cIdx) => {
+              const er = currentRow;
+              const existingScore = scores.find(sc => sc.section_id === section.id && sc.criterion_id === criterion.id);
+              const scoreValue = existingScore ? existingScore.score : null;
+              const obsValue = existingScore ? existingScore.observations : '';
+
+              const row = ws.addRow([
+                cIdx === 0 ? section.name : '',
+                cIdx === 0 ? section.weight : '',
+                cIdx === 0 ? count : '',
+                criterion.name,
+                criterion.maxScore,
+                scoreValue,
+                null,
+              ]);
+              row.height = 22;
+
+              Object.assign(row.getCell(1), { font: font(true, 11, COLOR.sectionFg), fill: fill(secBg), alignment: align('center', 'middle', true), border: bdr() });
+              Object.assign(row.getCell(2), { font: font(true, 11, COLOR.sectionFg), fill: fill(secBg), alignment: align('center', 'middle'), numFmt: '0"%"', border: bdr() });
+              Object.assign(row.getCell(3), { font: font(false, 10, '555555'), fill: fill(secBg), alignment: align('center', 'middle'), border: bdr() });
+
+              const critBg = cIdx % 2 === 0 ? 'FFFFFF' : COLOR.criterionAlt;
+              Object.assign(row.getCell(4), { font: font(false, 11), fill: fill(critBg), alignment: align('left', 'middle', true), border: bdr() });
+              Object.assign(row.getCell(5), { font: font(false, 11, '444444'), fill: fill(critBg), alignment: align('center', 'middle'), border: bdr() });
+
+              const cF = row.getCell(6);
+              cF.fill = fill(scoreValue !== null ? COLOR.filledBg : 'FFF9C4');
+              cF.alignment = align('center', 'middle');
+              cF.border = bdr(scoreValue !== null ? '375623' : 'FFBB00');
+              cF.font = font(scoreValue !== null, 11, scoreValue !== null ? '375623' : '333333');
+
+              const cG = row.getCell(7);
+              cG.value = { formula: `IFERROR((F${er}/E${er})*(B${secStart}/C${secStart}),0)` };
+              cG.numFmt = '0.00';
+              Object.assign(cG, { font: font(false, 11, COLOR.sectionFg), fill: fill(critBg), alignment: align('center', 'middle'), border: bdr() });
+
+              if (obsValue) {
+                currentRow++;
+                const obsRow = ws.addRow(['', '', '', `  ↳ Obs: ${obsValue}`, '', '', '']);
+                obsRow.height = 16;
+                Object.assign(obsRow.getCell(4), { font: { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF666666' } }, fill: fill('FAFAFA'), alignment: align('left', 'middle', true), border: bdr() });
+                [1,2,3,5,6,7].forEach(col => { obsRow.getCell(col).fill = fill('FAFAFA'); obsRow.getCell(col).border = bdr(); });
+              }
+              currentRow++;
+            });
+
+            if (count > 1) {
+              ws.mergeCells(secStart, 1, secStart + count - 1, 1);
+              ws.mergeCells(secStart, 2, secStart + count - 1, 2);
+              ws.mergeCells(secStart, 3, secStart + count - 1, 3);
+            }
+
+            const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null]);
+            stRow.height = 20;
+            stRow.getCell(7).value = { formula: `SUM(G${secStart}:G${currentRow - 1})` };
+            stRow.getCell(7).numFmt = '0.00';
+            sectionSubtotalRefs.push(`G${currentRow}`);
+            [1,2,3,4,5,6,7].forEach(col => Object.assign(stRow.getCell(col), { font: font(col === 4, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align(col === 4 ? 'right' : 'center', 'middle'), border: bdr() }));
+            currentRow++;
+            ws.addRow([]).height = 5;
+            currentRow++;
+          });
+
+          // Nota final
+          const finalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null]);
+          finalRow.height = 30;
+          finalRow.getCell(7).value = { formula: `(${sectionSubtotalRefs.join('+')})/100*5` };
+          finalRow.getCell(7).numFmt = '0.0"  / 5.0"';
+          [1,2,3,4,5,6,7].forEach(col => Object.assign(finalRow.getCell(col), { font: font(true, 13, COLOR.totalFg), fill: fill(COLOR.totalBg), alignment: align(col === 6 ? 'right' : 'center', 'middle'), border: bdr() }));
+
+          // Observaciones generales
+          if (evaluation.general_observations) {
+            ws.addRow([]).height = 8;
+            const goTitle = ws.addRow(['Observaciones Generales', '', '', '', '', '', '']);
+            ws.mergeCells(goTitle.number, 1, goTitle.number, 7);
+            Object.assign(goTitle.getCell(1), { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('left', 'middle'), border: bdr() });
+            const goRow = ws.addRow([evaluation.general_observations, '', '', '', '', '', '']);
+            ws.mergeCells(goRow.number, 1, goRow.number, 7);
+            goRow.height = 40;
+            Object.assign(goRow.getCell(1), { font: font(false, 10), fill: fill('F9F9F9'), alignment: align('left', 'middle', true), border: bdr() });
+          }
+
+          const buffer = await wb.xlsx.writeBuffer();
+          const evaluatorNameFile = (evaluator.evaluator_name || 'Evaluador').replace(/[^a-zA-Z0-9_]/g, '_');
+          archive.append(buffer, { name: `Rubricas/Rubrica_${typeLabelFile}_${evaluatorNameFile}.xlsx` });
+        } catch (e) {
+          logger.error(`Error generando rúbrica XLSX evaluador ${evaluator.evaluator_id} tipo ${evalType}:`, e);
+        }
+      }
+    }
+    
+    // 5. Agregar resumen consolidado de calificaciones
+    try {
+      const docWeightRow = db.prepare("SELECT value FROM settings WHERE key = 'doc_weight'").get();
+      const presWeightRow = db.prepare("SELECT value FROM settings WHERE key = 'presentation_weight'").get();
+      const docWeight = Number((docWeightRow || {}).value || 70);
+      const presWeight = Number((presWeightRow || {}).value || 30);
+      const hasPresentation = !!thesis.defense_date;
+
+      const wbSum = new ExcelJS.Workbook();
+      wbSum.creator = 'SisTesis';
+      const wsSum = wbSum.addWorksheet('Resumen', {
+        pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+      });
+
+      const font  = (bold = false, size = 11, color = '000000') => ({ name: 'Calibri', bold, size, color: { argb: 'FF' + color } });
+      const fill  = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
+      const bdr   = () => { const s = { style: 'thin', color: { argb: 'FFB0BEC5' } }; return { top: s, left: s, bottom: s, right: s }; };
+      const align = (h = 'center', v = 'middle', wrap = false) => ({ horizontal: h, vertical: v, wrapText: wrap });
+
+      // Título
+      const numCols = hasPresentation ? 7 : 5;
+      wsSum.columns = hasPresentation
+        ? [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 10 }, { width: 10 }, { width: 18 }]
+        : [{ width: 30 }, { width: 18 }, { width: 18 }, { width: 10 }, { width: 18 }];
+
+      const tRow = wsSum.addRow([`RESUMEN DE CALIFICACIONES — ${thesis.title || 'Tesis'}`, ...Array(numCols - 1).fill('')]);
+      wsSum.mergeCells(1, 1, 1, numCols); tRow.height = 32;
+      Object.assign(tRow.getCell(1), { font: font(true, 14, 'FFFFFF'), fill: fill('1E3A5F'), alignment: align('center'), border: bdr() });
+
+      // Subtitle with weights
+      const wRow = wsSum.addRow([
+        hasPresentation
+          ? `Peso Documento: ${docWeight}%   |   Peso Sustentación: ${presWeight}%`
+          : 'Evaluación: solo documento',
+        ...Array(numCols - 1).fill('')
+      ]);
+      wsSum.mergeCells(2, 1, 2, numCols); wRow.height = 18;
+      Object.assign(wRow.getCell(1), { font: font(false, 11, 'FFFFFF'), fill: fill('2E5080'), alignment: align('center'), border: bdr() });
+
+      // Header row
+      const headers = hasPresentation
+        ? ['Evaluador', 'Nota Documento', 'Nota Sustentación', 'Nota Ponderada', `Peso Doc (${docWeight}%)`, `Peso Sus (${presWeight}%)`, 'NOTA FINAL (0–5)']
+        : ['Evaluador', 'Nota Documento', 'Promedio Evaluadores', `Peso Doc (${docWeight}%)`, 'NOTA FINAL (0–5)'];
+      const hRow = wsSum.addRow(headers);
+      hRow.height = 28;
+      hRow.eachCell(c => Object.assign(c, { font: font(true, 11, 'FFFFFF'), fill: fill('2E75B6'), alignment: align('center', 'middle', true), border: bdr() }));
+
+      // One row per evaluator
+      let evalRowNums = [];
+      for (const evaluator of assignedEvaluators) {
+        const docEval = db.prepare('SELECT final_score FROM evaluations WHERE thesis_evaluator_id = ? AND evaluation_type = ? ORDER BY revision_round DESC, submitted_at DESC LIMIT 1').get(evaluator.te_id, 'document');
+        const presEval = hasPresentation ? db.prepare('SELECT final_score FROM evaluations WHERE thesis_evaluator_id = ? AND evaluation_type = ? ORDER BY revision_round DESC, submitted_at DESC LIMIT 1').get(evaluator.te_id, 'presentation') : null;
+
+        const docScore = docEval ? Number(docEval.final_score) : null;
+        const presScore = presEval ? Number(presEval.final_score) : null;
+        const finalScore = docScore !== null
+          ? (hasPresentation && presScore !== null
+              ? (docScore * docWeight / 100) + (presScore * presWeight / 100)
+              : docScore)
+          : null;
+
+        const rowData = hasPresentation
+          ? [evaluator.evaluator_name || 'Evaluador', docScore, presScore, finalScore, docWeight/100, presWeight/100, finalScore]
+          : [evaluator.evaluator_name || 'Evaluador', docScore, null, docWeight/100, finalScore];
+
+        const eRow = wsSum.addRow(rowData);
+        eRow.height = 22;
+        evalRowNums.push(eRow.number);
+
+        Object.assign(eRow.getCell(1), { font: font(false, 11), fill: fill('F5F5F5'), alignment: align('left', 'middle'), border: bdr() });
+        // Score cells
+        const scoreCols = hasPresentation ? [2, 3, 4, 7] : [2, 5];
+        eRow.eachCell((c, colNum) => {
+          if (colNum > 1) {
+            c.numFmt = '0.00';
+            c.font = font(scoreCols.includes(colNum), 11, scoreCols.includes(colNum) ? '375623' : '555555');
+            c.fill = fill(scoreCols.includes(colNum) ? 'E8F5E9' : 'FAFAFA');
+            c.alignment = align('center', 'middle');
+            c.border = bdr();
+          }
+        });
+        eRow.getCell(1).border = bdr();
+      }
+
+      // Promedio row
+      if (evalRowNums.length > 0) {
+        wsSum.addRow([]).height = 4;
+        const lastDataRow = Math.max(...evalRowNums);
+        const firstDataRow = Math.min(...evalRowNums);
+        const avgRowData = hasPresentation
+          ? ['PROMEDIO GENERAL',
+              { formula: `AVERAGE(B${firstDataRow}:B${lastDataRow})` },
+              { formula: `AVERAGE(C${firstDataRow}:C${lastDataRow})` },
+              { formula: `AVERAGE(D${firstDataRow}:D${lastDataRow})` },
+              docWeight/100, presWeight/100,
+              { formula: `AVERAGE(G${firstDataRow}:G${lastDataRow})` }]
+          : ['PROMEDIO GENERAL',
+              { formula: `AVERAGE(B${firstDataRow}:B${lastDataRow})` },
+              { formula: `AVERAGE(C${firstDataRow}:C${lastDataRow})` },
+              docWeight/100,
+              { formula: `AVERAGE(E${firstDataRow}:E${lastDataRow})` }];
+
+        const avgRow = wsSum.addRow(avgRowData);
+        avgRow.height = 28;
+        avgRow.eachCell((c, colNum) => {
+          if (colNum < numCols) {
+            c.font = font(true, 12, 'FFFFFF');
+            c.fill = fill('375623');
+          } else {
+            c.font = font(true, 14, 'FFFFFF');
+            c.fill = fill('1E3A5F');
+          }
+          c.numFmt = '0.00';
+          c.alignment = align('center', 'middle');
+          c.border = bdr();
+        });
+        avgRow.getCell(1).font = font(true, 12, 'FFFFFF');
+        avgRow.getCell(1).numFmt = '@';
+        avgRow.getCell(numCols).numFmt = '0.00" / 5.00"';
+      }
+
+      const bufSum = await wbSum.xlsx.writeBuffer();
+      archive.append(bufSum, { name: 'Resumen_Calificaciones.xlsx' });
+    } catch (e) {
+      logger.error('Error generando resumen de calificaciones:', e);
+    }
+
+    // Finalizar el archivo
+    await archive.finalize();
+    
+  } catch (error) {
+    logger.error('Error generando paquete completo:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Error generando el paquete completo' });
+    }
   }
 });
 
@@ -5091,10 +5747,21 @@ app.get('/theses/:id/meritoria/download-final', authMiddleware, (req, res) => {
 app.post('/theses/:id/generate-signing-token', authMiddleware, (req, res) => {
   const thesisId = req.params.id;
   const { signerName, signerRole } = req.body;
-  
+
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
   const isAdmin = roles.includes('admin') || roles.includes('superadmin');
-  if (!isAdmin) return res.status(403).json({ error: 'forbidden' });
+  if (!isAdmin) {
+    const isEvaluator = !!db.prepare('SELECT 1 FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesisId, req.user.id);
+    const isDirector = !!db.prepare('SELECT 1 FROM thesis_directors WHERE thesis_id = ? AND user_id = ?').get(thesisId, req.user.id);
+    if (!isEvaluator && !isDirector) return res.status(403).json({ error: 'forbidden' });
+    // Evaluators can only generate their own token; directors can generate for any signer
+    if (isEvaluator && !isDirector) {
+      const user = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
+      const tp = ['profesional','esp.','mg.','phd.','dr.'];
+      const strip = n => { if (!n) return ''; let s = n.trim().toLowerCase(); for (const t of tp) { if (s.startsWith(t+' ')) { s = s.slice(t.length+1).trim(); break; } } return s; };
+      if (strip(signerName) !== strip(user?.full_name || '')) return res.status(403).json({ error: 'Solo puede generar su propio enlace' });
+    }
+  }
 
   const ctx = getActaContext(thesisId);
   if (!ctx) return res.status(404).json({ error: 'not found' });
@@ -5151,17 +5818,19 @@ app.get('/sign/token/:token/download-pdf', async (req, res) => {
   // Include signing_tokens for title-prefixed names
   const digSigsToken = db.prepare('SELECT * FROM digital_signatures WHERE thesis_id = ?').all(thesisId);
   const sigTokensToken = db.prepare('SELECT signer_name, signer_role FROM signing_tokens WHERE thesis_id = ?').all(thesisId);
-  const signatures = digSigsToken.length > 0 ? digSigsToken : [...ctxSignatures, ...sigTokensToken];
+  const rawSigsToken = digSigsToken.length > 0 ? digSigsToken : [...ctxSignatures, ...sigTokensToken];
+  const signatures = rawSigsToken.map(s => ({ ...s, file_url: s.file_url || s.signature_image_url || null }));
 
-  const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date)) : new Date();
+  const defenseDate = thesis.defense_date ? new Date(Number(thesis.defense_date) * 1000) : new Date();
+  const defenseDateBogota = new Date(defenseDate.getTime() - 5 * 3600 * 1000);
   const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-  const timeText = defenseDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-  const defenseYear = defenseDate.getFullYear();
-  const defenseMonth = defenseDate.getMonth() + 1;
+  const timeText = defenseDate.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' });
+  const defenseYear = defenseDateBogota.getFullYear();
+  const defenseMonth = defenseDateBogota.getMonth() + 1;
   const defensePeriod = defenseMonth >= 7 ? 'II' : 'I';
 
-  const periodStart = defensePeriod === 'I' ? new Date(defenseYear,0,1).getTime() : new Date(defenseYear,6,1).getTime();
-  const periodEnd   = defensePeriod === 'I' ? new Date(defenseYear,6,1).getTime() : new Date(defenseYear+1,0,1).getTime();
+  const periodStart = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,0,1).getTime() : new Date(defenseYear,6,1).getTime()) / 1000);
+  const periodEnd   = Math.floor((defensePeriod === 'I' ? new Date(defenseYear,6,1).getTime() : new Date(defenseYear+1,0,1).getTime()) / 1000);
   const thesesInPeriod = db.prepare(`SELECT id FROM theses WHERE defense_date IS NOT NULL AND CAST(defense_date AS INTEGER) >= ? AND CAST(defense_date AS INTEGER) < ? ORDER BY CAST(defense_date AS INTEGER) ASC`).all(periodStart, periodEnd);
   let thesisPos = 1;
   for (let i = 0; i < thesesInPeriod.length; i++) { if (thesesInPeriod[i].id === thesis.id) { thesisPos = i+1; break; } }
@@ -5182,7 +5851,12 @@ app.get('/sign/token/:token/download-pdf', async (req, res) => {
     if (n < 1000) return numToText(n);
     const th = Math.floor(n/1000), rest = n%1000;
     const thW = th === 1 ? 'mil' : numToText(th)+' mil';
-    return rest === 0 ? thW : thW+' '+numToText(rest);
+    if (rest === 0) return thW;
+    const hundreds = Math.floor(rest/100), rem = rest%100;
+    const hw = ['','cien','doscientos','trescientos','cuatrocientos','quinientos','seiscientos','setecientos','ochocientos','novecientos'];
+    let restText = hundreds > 0 ? hw[hundreds] : '';
+    if (rem > 0) restText += (restText ? ' ' : '') + numToText(rem);
+    return thW + ' ' + restText;
   }
 
   try {
@@ -5192,9 +5866,9 @@ app.get('/sign/token/:token/download-pdf', async (req, res) => {
       period: defensePeriod,
       lugar: thesis.defense_location || 'Auditorio por definir',
       hora: timeText,
-      dia_numero: defenseDate.getDate(),
-      dia_texto: numToText(defenseDate.getDate()),
-      mes_nombre: months[defenseDate.getMonth()],
+      dia_numero: defenseDateBogota.getDate(),
+      dia_texto: numToText(defenseDateBogota.getDate()),
+      mes_nombre: months[defenseDateBogota.getMonth()],
       year_text: `${defenseYear} (${numToTextYear(defenseYear)})`,
       titulo: thesis.title || '',
       estudiantes: students.map(s => s.name).join(', '),
@@ -5317,6 +5991,56 @@ app.post('/sign/token/:token/upload-signed', upload.fields([{ name: 'signed_pdf'
   db.prepare('UPDATE signing_tokens SET used_at = ? WHERE token = ?').run(now, token);
 
   res.json({ success: true, pdf_url });
+});
+
+// POST /sign/token/:token/sign-drawing — registra firma dibujada sin necesidad de subir PDF
+app.post('/sign/token/:token/sign-drawing', upload.none(), (req, res) => {
+  const token = req.params.token;
+  const tokenRow = db.prepare('SELECT * FROM signing_tokens WHERE token = ? AND used_at IS NULL').get(token);
+  if (!tokenRow) return res.status(404).json({ error: 'Token inválido o ya utilizado' });
+
+  const sigDataUrl = req.body && req.body.signature_image_data;
+  if (!sigDataUrl || !sigDataUrl.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Se requiere la imagen de la firma' });
+  }
+
+  const thesisId = tokenRow.thesis_id;
+  const signerName = tokenRow.signer_name;
+  const signerRole = tokenRow.signer_role;
+
+  // Save signature image
+  let signatureImageUrl = null;
+  const matches = sigDataUrl.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/);
+  if (matches) {
+    const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+    const buffer = Buffer.from(matches[2], 'base64');
+    const imgName = `sig-${Date.now()}-${signerName.replace(/\s+/g,'-')}.${ext}`;
+    const imgPath = path.join(__dirname, 'uploads', imgName);
+    fs.writeFileSync(imgPath, buffer);
+    signatureImageUrl = `/uploads/${imgName}`;
+  }
+
+  const canonicalRole = (signerRole === 'evaluador' || signerRole === 'evaluator') ? 'evaluator'
+    : signerRole === 'director' ? 'director' : 'program_director';
+
+  let signerUserId = null;
+  if (canonicalRole === 'evaluator') {
+    const _tp2 = ['profesional','esp.','mg.','phd.','dr.'];
+    let stripped = signerName.trim();
+    let lower = stripped.toLowerCase();
+    for (const t of _tp2) { if (lower.startsWith(t + ' ')) { stripped = stripped.slice(t.length + 1).trim(); break; } }
+    const u = db.prepare('SELECT id FROM users WHERE full_name = ? OR full_name = ?').get(signerName, stripped);
+    if (u) signerUserId = u.id;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(`INSERT INTO digital_signatures (id, thesis_id, signer_user_id, signer_name, signer_role, signed_at, pdf_url, signature_image_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(crypto.randomUUID(), thesisId, signerUserId, signerName, canonicalRole, now, null, signatureImageUrl);
+
+  db.prepare('UPDATE signing_tokens SET used_at = ? WHERE token = ?').run(now, token);
+
+  res.json({ success: true });
 });
 
 // POST /theses/:id/meritoria/generate-signing-token — genera token para firma meritoria sin login
@@ -6311,7 +7035,7 @@ app.post('/admin/smtp-config/send-test-email', authMiddleware, requireRole('admi
 
 // POST /admin/smtp-config - guardar configuración SMTP
 app.post('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) => {
-  const { host, port, username, password, encryption, is_default } = req.body;
+  const { host, port, username, password, encryption, is_default, notifications_enabled } = req.body;
   const portNum = parseInt(port, 10);
   if (!host?.trim() || !portNum || portNum < 1 || !username?.trim() || !password?.trim()) {
     return res.status(400).json({ error: 'Faltan campos requeridos o inválidos' });
@@ -6320,6 +7044,7 @@ app.post('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) 
   const id = uuidv4();
   const now = Math.floor(Date.now() / 1000);
   const isDefault = is_default ? 1 : 0;
+  const notificationsEnabled = notifications_enabled === false ? 0 : 1;
   try {
     // Si se marca como default, quitar default de las demás
     if (isDefault) db.prepare('UPDATE smtp_config SET is_default = 0').run();
@@ -6327,9 +7052,9 @@ app.post('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) 
     db.prepare('DELETE FROM smtp_config WHERE user_id = ?').run(req.user.id);
     // Crear nueva config
     db.prepare(`
-      INSERT INTO smtp_config (id, user_id, host, port, username, password, encryption, is_default, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, req.user.id, host.trim(), portNum, username.trim(), password, encryption || 'TLS', isDefault, now, now);
+      INSERT INTO smtp_config (id, user_id, host, port, username, password, encryption, is_default, notifications_enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, req.user.id, host.trim(), portNum, username.trim(), password, encryption || 'TLS', isDefault, notificationsEnabled, now, now);
     res.json({ ok: true, id });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6488,6 +7213,9 @@ app.use((err, req, res, next) => {
   }
   if (err.code === 'LIMIT_UNEXPECTED_FILE') {
     return res.status(400).json({ error: 'Tipo de archivo no permitido.' });
+  }
+  if (err.message && err.message.startsWith('Invalid file type')) {
+    return res.status(400).json({ error: 'Tipo de archivo no permitido. Se aceptan: PDF, Word, Excel, CSV e imágenes.' });
   }
 
   // Manejo de errores de validación express-validator

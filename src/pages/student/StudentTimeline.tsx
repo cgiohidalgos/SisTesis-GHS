@@ -44,6 +44,7 @@ export default function StudentTimeline() {
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
   const [revisionComment, setRevisionComment] = useState('');
   const [revisionFiles, setRevisionFiles] = useState<File[]>([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const navigate = useNavigate();
 
@@ -90,8 +91,13 @@ export default function StudentTimeline() {
   // handlers for the student revision form
   const handleRevisionFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
-    setRevisionFiles(Array.from(files));
+    if (!files || files.length === 0) return;
+    setRevisionFiles(prev => [...prev, ...Array.from(files)]);
+    setFileInputKey((k: number) => k + 1);
+  };
+
+  const removeRevisionFile = (index: number) => {
+    setRevisionFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const submitRevision = async () => {
@@ -327,39 +333,80 @@ export default function StudentTimeline() {
               isAdmin={false}
             />
 
-            {/* revision submission form for students when applicable */}
-            {(thesis.status === 'revision_minima' || thesis.status === 'revision_cuidados') && (
-              <div className="mt-8 p-4 sm:p-6 border rounded-lg bg-white dark:bg-slate-950 space-y-4">
-                <h3 className="text-lg font-bold">Enviar Revisión / Respuesta</h3>
-                <p className="text-sm text-muted-foreground">
-                  Si has recibido comentarios o archivos del evaluador, puedes responder aquí subiendo tus archivos y escribiendo tus observaciones.
-                </p>
-                <Textarea
-                  value={revisionComment}
-                  onChange={(e) => setRevisionComment(e.target.value)}
-                  placeholder="Escribe tus comentarios o explicación aquí..."
-                  className="min-h-[80px]"
-                />
-                <div>
-                  <label className="text-sm font-medium text-foreground mb-2 block">Archivos de revisión</label>
-                  <input type="file" multiple onChange={handleRevisionFiles} />
-                  {revisionFiles.length > 0 && (
-                    <ul className="mt-2 space-y-1">
-                      {revisionFiles.map((f, i) => (
-                        <li key={i} className="text-sm">{f.name}</li>
-                      ))}
+            {/* revision submission form — only show when ALL assigned evaluators have submitted their document evaluation */}
+            {(() => {
+              const canRevise = thesis.status === 'revision_minima' || thesis.status === 'revision_cuidados';
+              if (!canRevise) return null;
+              const assignedIds: string[] = (thesis.evaluators || []).map((e: any) => e.id).filter(Boolean);
+              const docEvalIds = new Set(
+                (thesis.evaluations || [])
+                  .filter((e: any) => e.evaluation_type !== 'presentation')
+                  .map((e: any) => e.evaluator_id)
+              );
+              const allDocEvaluated = assignedIds.length > 0 && assignedIds.every(id => docEvalIds.has(id));
+              if (!allDocEvaluated) return null;
+              return (
+                <div className="mt-8 p-4 sm:p-6 border rounded-lg bg-white dark:bg-slate-950 space-y-4">
+                  <h3 className="text-lg font-bold">Enviar Revisión / Respuesta</h3>
+                  <div className="text-sm text-muted-foreground space-y-2">
+                    <p>
+                      Has recibido la evaluación de tu documento. Antes de enviar tu revisión, asegúrate de:
+                    </p>
+                    <ul className="list-disc list-inside space-y-1 ml-1">
+                      <li>Revisar los comentarios y recomendaciones de los evaluadores (Ver arriba).</li>
+                      <li>Aplicar <strong>todas</strong> las correcciones indicadas en el documento.</li>
+                      <li>Subir el <strong>documento corregido</strong>.</li>
+                      <li>Subir un archivo separado (<strong>recomendado: Excel o CSV</strong>) donde expliques y justifiques cada cambio realizado en respuesta a los comentarios de los evaluadores.</li>
                     </ul>
-                  )}
+                    <p className="text-xs text-muted-foreground/80 italic">
+                      Ambos evaluadores recibirán tu revisión para una nueva evaluación.
+                    </p>
+                  </div>
+                  <Textarea
+                    value={revisionComment}
+                    onChange={(e) => setRevisionComment(e.target.value)}
+                    placeholder="Escribe aquí un resumen de los cambios realizados o cualquier observación adicional..."
+                    className="min-h-[100px]"
+                  />
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-2 block">Archivos de revisión</label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer px-3 py-2 border rounded-md text-sm hover:bg-accent/10 transition-colors">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Agregar archivo
+                      <input key={fileInputKey} type="file" className="hidden" onChange={handleRevisionFiles} />
+                    </label>
+                    {revisionFiles.length > 0 && (
+                      <ul className="mt-3 space-y-2">
+                        {revisionFiles.map((f, i) => (
+                          <li key={i} className="flex items-center justify-between gap-2 p-2 rounded-lg border bg-secondary/30 text-sm">
+                            <span className="truncate flex-1">{f.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeRevisionFile(i)}
+                              className="text-destructive hover:text-destructive/80 flex-shrink-0 p-1 rounded hover:bg-destructive/10 transition-colors"
+                              title="Quitar archivo"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <button
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 font-medium"
+                    disabled={submittingRevision || revisionFiles.length === 0}
+                    onClick={submitRevision}
+                  >
+                    {submittingRevision ? 'Enviando...' : 'Enviar Revisión'}
+                  </button>
                 </div>
-                <button
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
-                  disabled={submittingRevision}
-                  onClick={submitRevision}
-                >
-                  {submittingRevision ? 'Enviando...' : 'Enviar Revisión'}
-                </button>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Score summaries */}
             {(() => {

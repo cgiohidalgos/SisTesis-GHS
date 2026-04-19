@@ -155,10 +155,10 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
       ? initialFinalScore
       : null;
 
-  const conceptOptions: { value: EvaluatorConcept; label: string; icon: typeof CheckCircle2; color: string }[] = [
-    { value: "accepted", label: "Aceptado para Sustentación", icon: CheckCircle2, color: "bg-success text-success-foreground" },
-    { value: "minor_changes", label: "Cambios Menores", icon: AlertTriangle, color: "bg-warning text-warning-foreground" },
-    { value: "major_changes", label: "Cambios Mayores", icon: XCircle, color: "bg-destructive text-destructive-foreground" },
+  const conceptOptions: { value: EvaluatorConcept; label: string; description: string; icon: typeof CheckCircle2; color: string }[] = [
+    { value: "accepted", label: "Aceptado para Sustentación", description: "El proyecto queda listo. El estudiante no podrá subir nuevamente archivos ni correcciones.", icon: CheckCircle2, color: "bg-success text-success-foreground" },
+    { value: "minor_changes", label: "Cambios Menores", description: "El estudiante debe hacer correcciones y podrá subir un archivo. Usted tendrá que volver a evaluar después de que el estudiante haga las correcciones.", icon: AlertTriangle, color: "bg-warning text-warning-foreground" },
+    { value: "major_changes", label: "Cambios Mayores", description: "El proyecto entra a revisión del comité porque aún no cumple los requisitos para presentarse como proyecto de grado.", icon: XCircle, color: "bg-destructive text-destructive-foreground" },
   ];
 
   return (
@@ -361,15 +361,23 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
                   onClick={() => !readOnly && setConcept(opt.value)}
                   disabled={readOnly}
                   className={cn(
-                    "flex items-center gap-2 px-4 py-3 rounded-lg border-2 transition-all text-sm font-medium",
+                    "flex flex-col items-start gap-1 px-4 py-3 rounded-lg border-2 transition-all text-left",
                     concept === opt.value
                       ? `${opt.color} border-transparent shadow-md`
                       : "bg-card border-border text-foreground hover:border-accent/30",
                     readOnly && "cursor-default"
                   )}
                 >
-                  <opt.icon className="w-4 h-4" />
-                  {opt.label}
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <opt.icon className="w-4 h-4 flex-shrink-0" />
+                    {opt.label}
+                  </span>
+                  <span className={cn(
+                    "text-xs leading-snug",
+                    concept === opt.value ? "opacity-90" : "text-muted-foreground"
+                  )}>
+                    {opt.description}
+                  </span>
                 </button>
               ))}
             </div>
