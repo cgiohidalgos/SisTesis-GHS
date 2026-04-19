@@ -55,10 +55,7 @@ export default function Index() {
   useEffect(() => {
     (async () => {
       try {
-        const token = localStorage.getItem("token");
-        const resp = await fetch(`${getApiBase()}/programs`, {
-          headers: { Authorization: token ? `Bearer ${token}` : "" },
-        });
+        const resp = await fetch(`${getApiBase()}/programs`, {});
         if (resp.ok) {
           setPrograms(await resp.json());
         }

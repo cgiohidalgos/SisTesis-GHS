@@ -66,7 +66,7 @@ export default function EvaluatorStudentView() {
       <div className="max-w-2xl mx-auto px-4 sm:px-0">
         <button
           className="text-sm text-muted-foreground hover:text-foreground mb-4 flex items-center gap-1"
-          onClick={() => navigate("/evaluator")}
+          onClick={() => navigate("/evaluator/my-students")}
         >
           ← Volver
         </button>
@@ -77,27 +77,52 @@ export default function EvaluatorStudentView() {
           <div className="text-center py-8">No se encontró el proyecto de grado.</div>
         ) : (
           <>
-            <div className="mb-8">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-2">
-                <h2 className="font-heading text-2xl font-bold text-foreground">
-                  Seguimiento del proyecto de grado
-                </h2>
-                {thesis.revision_round > 0 && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Ronda de revisión: {thesis.revision_round}
-                  </p>
-                )}
+            <div className="mb-6 bg-card p-6 rounded-lg shadow-card">
+              <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                <h2 className="font-heading text-2xl font-bold">Seguimiento del proyecto de grado</h2>
                 <StatusBadge status={thesis.status} />
               </div>
-              <p className="text-sm text-muted-foreground line-clamp-2">{thesis.title}</p>
-              {thesis.students && thesis.students.length > 0 && (
-                <p className="text-sm text-muted-foreground mt-2">
-                  <strong>Autor{thesis.students.length > 1 ? "es" : ""}:</strong>{" "}
-                  {thesis.students.map((s: any) => s.name).join(", ")}
+
+              {thesis.revision_round > 0 && (
+                <p className="text-sm text-muted-foreground mb-2">
+                  <strong>Ronda de revisión:</strong> {thesis.revision_round}
                 </p>
               )}
+
+              <p className="text-lg font-semibold mb-2">
+                <strong>Título:</strong> {thesis.title}
+              </p>
+
+              {thesis.students && thesis.students.length > 0 && (
+                <div className="mb-3">
+                  <p className="text-sm text-muted-foreground mb-2">
+                    <strong>Autor{thesis.students.length > 1 ? "es" : ""}:</strong>{" "}
+                    {thesis.students.map((s: any) => s.name).join(", ")}
+                  </p>
+                  {thesis.students.map((student: any, idx: number) => (
+                    <div key={idx} className="ml-4 text-xs text-muted-foreground space-y-0.5 mb-2">
+                      {student.student_code && (
+                        <p><strong>Código:</strong> {student.student_code}</p>
+                      )}
+                      {student.cedula && (
+                        <p><strong>Cédula:</strong> {student.cedula}</p>
+                      )}
+                      {student.institutional_email && (
+                        <p><strong>Correo institucional:</strong> {student.institutional_email}</p>
+                      )}
+                      {student.email && student.email !== student.institutional_email && (
+                        <p><strong>Correo personal:</strong> {student.email}</p>
+                      )}
+                      {student.cvlac && (
+                        <p><strong>CVLAC:</strong> {student.cvlac}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {thesis.directors && thesis.directors.length > 0 && (
-                <p className="text-sm text-muted-foreground mt-2">
+                <p className="text-sm text-muted-foreground mb-1">
                   <strong>Director{thesis.directors.length > 1 ? "es" : ""}:</strong>{" "}
                   {thesis.directors
                     .map((d: any) => (typeof d === "string" ? d : d?.name || d?.user_id || ""))
@@ -105,23 +130,57 @@ export default function EvaluatorStudentView() {
                     .join(", ")}
                 </p>
               )}
-              {thesis.evaluators && thesis.evaluators.length > 0 && (
-                <p className="text-sm text-muted-foreground mt-2">
-                  <strong>Evaluadores asignados:</strong>{" "}
-                  {thesis.evaluators.some((e: any) => e.is_blind) ? (
-                    <em>pares ciegos</em>
-                  ) : (
-                    thesis.evaluators.map((e: any) => e.name).join(", ")
-                  )}
+
+              {thesis.programs && thesis.programs.length > 0 && (
+                <p className="text-sm text-muted-foreground mb-1">
+                  <strong>Programas:</strong>{" "}
+                  {thesis.programs.map((p: any) => p.name || p).join(", ")}
                 </p>
               )}
+
+              {thesis.keywords && (
+                <p className="text-sm text-muted-foreground mb-1">
+                  <strong>Palabras clave:</strong> {thesis.keywords}
+                </p>
+              )}
+
+              {thesis.evaluators && thesis.evaluators.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>Evaluadores asignados:</strong>{" "}
+                    {thesis.evaluators.some((e: any) => e.is_blind)
+                      ? "Pares ciegos"
+                      : thesis.evaluators.map((e: any) => e.name).join(", ")}
+                  </p>
+                </div>
+              )}
+
               {thesis.defense_date && (
-                <p className="text-sm text-muted-foreground mt-2">
+                <p className="text-sm text-muted-foreground mt-1">
                   <strong>Sustentación:</strong>{" "}
                   {new Date(thesis.defense_date * 1000).toLocaleString()}
-                  {thesis.defense_location ? ` en ${thesis.defense_location}` : ""}
-                  {thesis.defense_info && ` – ${thesis.defense_info}`}
+                  {thesis.defense_location ? ` — ${thesis.defense_location}` : ""}
+                  {thesis.defense_info ? ` — ${thesis.defense_info}` : ""}
                 </p>
+              )}
+
+              {/* Files */}
+              {thesis.files && thesis.files.length > 0 && (
+                <div className="mt-4 border-t pt-4">
+                  <p className="text-sm font-semibold mb-2">Documentos enviados</p>
+                  <div className="space-y-2">
+                    {thesis.files.map((file: any, i: number) => (
+                      <a
+                        key={i}
+                        href={file.file_url}
+                        download
+                        className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        📄 {file.file_name}
+                      </a>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 

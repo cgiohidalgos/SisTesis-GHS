@@ -11,6 +11,7 @@ import {
   LogOut,
   Settings,
   Bell,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -28,11 +29,13 @@ const navItems = {
   ],
   evaluator: [
     { label: "Proyectos asignados", href: "/evaluator", icon: FileText },
-    { label: "Mis estudiantes", href: "/evaluator#students", icon: Users },
+    { label: "Mis estudiantes", href: "/evaluator/my-students", icon: Users },
   ],
   admin: [
     { label: "Panel", href: "/admin", icon: LayoutDashboard },
     { label: "Proyectos", href: "/admin/theses", icon: FileText },
+    { label: "Por Evaluar", href: "/admin/as-evaluator", icon: ClipboardCheck },
+    { label: "Mis Estudiantes", href: "/admin/my-students", icon: GraduationCap },
     { label: "Evaluadores", href: "/admin/evaluators", icon: Users },
     { label: "Programas", href: "/admin/programs", icon: BookOpen },
     { label: "Rúbricas", href: "/admin/rubrics", icon: BookOpen },

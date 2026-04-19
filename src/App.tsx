@@ -13,6 +13,7 @@ import RegisterThesis from "./pages/student/RegisterThesis";
 import EvaluatorDashboard from "./pages/evaluator/EvaluatorDashboard";
 import EvaluatorRubric from "./pages/evaluator/EvaluatorRubric";
 import EvaluatorStudentView from "./pages/evaluator/EvaluatorStudentView";
+import EvaluatorMyStudents from "./pages/evaluator/EvaluatorMyStudents";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminTheses from "./pages/admin/AdminTheses";
 import AdminThesisDetail from "./pages/admin/AdminThesisDetail";
@@ -26,6 +27,8 @@ import AdminUsers from "./pages/admin/AdminUsers";
 import AdminSMTPConfig from "./pages/admin/AdminSMTPConfig";
 import AdminNotifications from "./pages/admin/AdminNotifications";
 import AdminNotificationRules from "./pages/admin/AdminNotificationRules";
+import AdminAsEvaluator from "./pages/admin/AdminAsEvaluator";
+import AdminDirectedTheses from "./pages/admin/AdminDirectedTheses";
 import StudentRegister from "./pages/auth/StudentRegister";
 import StudentLogin from "./pages/auth/StudentLogin";
 import StaffLogin from "./pages/auth/StaffLogin";
@@ -64,6 +67,7 @@ const App = () => (
               <Route path="/evaluator/rubric" element={<EvaluatorDashboard />} />
               <Route path="/evaluator/rubric/:id" element={<EvaluatorRubric />} />
               <Route path="/evaluator/student/:id" element={<EvaluatorStudentView />} />
+              <Route path="/evaluator/my-students" element={<EvaluatorMyStudents />} />
             </Route>
 
             {/* Rutas protegidas: admin */}
@@ -81,6 +85,8 @@ const App = () => (
               <Route path="/admin/smtp-config" element={<AdminSMTPConfig />} />
               <Route path="/admin/notifications" element={<AdminNotifications />} />
               <Route path="/admin/notification-rules" element={<AdminNotificationRules />} />
+              <Route path="/admin/as-evaluator" element={<AdminAsEvaluator />} />
+              <Route path="/admin/my-students" element={<AdminDirectedTheses />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

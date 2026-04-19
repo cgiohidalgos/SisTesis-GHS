@@ -49,6 +49,7 @@ export default function AdminUsers() {
   const [programs, setPrograms] = useState<{id:string;name:string}[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [filter, setFilter] = useState("");
+  const [programSearch, setProgramSearch] = useState("");
   const [form, setForm] = useState<any>({
     password: "",
     full_name: "",
@@ -261,7 +262,7 @@ export default function AdminUsers() {
           </div>
           <Dialog open={showDialog} onOpenChange={(open) => {
             setShowDialog(open);
-            if (!open) resetForm();
+            if (!open) { resetForm(); setProgramSearch(""); }
           }}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm">
@@ -332,27 +333,47 @@ export default function AdminUsers() {
                 {form.roles.includes('admin') && (
                   <div>
                     <Label>Programas asignados</Label>
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {programs.map((p) => (
-                        <label key={p.id} className={`flex items-center gap-2 cursor-pointer text-sm px-3 py-1.5 rounded-full border-2 transition-all ${
-                          form.program_ids.includes(p.id)
-                            ? "border-accent bg-accent/10 font-medium"
-                            : "border-border hover:border-accent/30"
-                        }`}>
-                          <input
-                            type="checkbox"
-                            className="sr-only"
-                            checked={form.program_ids.includes(p.id)}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? [...form.program_ids, p.id]
-                                : form.program_ids.filter((x: string) => x !== p.id);
-                              setForm({ ...form, program_ids: next });
-                            }}
-                          />
-                          {p.name}
-                        </label>
-                      ))}
+                    <div className="mt-2 border rounded-lg overflow-hidden">
+                      <div className="p-2 border-b bg-muted/30">
+                        <Input
+                          placeholder="Buscar programa..."
+                          value={programSearch}
+                          onChange={(e) => setProgramSearch(e.target.value)}
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div className="overflow-y-auto max-h-48 p-2 flex flex-col gap-1">
+                        {programs
+                          .filter((p) => p.name.toLowerCase().includes(programSearch.toLowerCase()))
+                          .map((p) => (
+                            <label key={p.id} className={`flex items-center gap-2 cursor-pointer text-sm px-3 py-2 rounded-md border transition-all ${
+                              form.program_ids.includes(p.id)
+                                ? "border-accent bg-accent/10 font-medium"
+                                : "border-transparent hover:bg-muted/50"
+                            }`}>
+                              <input
+                                type="checkbox"
+                                className="accent-primary w-4 h-4 shrink-0"
+                                checked={form.program_ids.includes(p.id)}
+                                onChange={(e) => {
+                                  const next = e.target.checked
+                                    ? [...form.program_ids, p.id]
+                                    : form.program_ids.filter((x: string) => x !== p.id);
+                                  setForm({ ...form, program_ids: next });
+                                }}
+                              />
+                              <span className="leading-tight">{p.name}</span>
+                            </label>
+                          ))}
+                        {programs.filter((p) => p.name.toLowerCase().includes(programSearch.toLowerCase())).length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-3">Sin resultados</p>
+                        )}
+                      </div>
+                      {form.program_ids.length > 0 && (
+                        <div className="px-3 py-1.5 border-t bg-muted/20 text-xs text-muted-foreground">
+                          {form.program_ids.length} programa{form.program_ids.length !== 1 ? 's' : ''} seleccionado{form.program_ids.length !== 1 ? 's' : ''}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

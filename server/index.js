@@ -50,7 +50,7 @@ const limiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 login attempts per windowMs
+  max: 200, // limit each IP to 200 login attempts per windowMs
   message: 'Too many login attempts, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -1886,6 +1886,10 @@ app.post('/users/:id/send-credentials', authMiddleware, requireRole('admin'), as
   const firstName = (user.full_name || '').split(' ')[0].toLowerCase();
   const password = firstName + user.cedula;
 
+  // Actualizar el hash en la BD para que coincida con la contraseña enviada
+  const newHash = bcrypt.hashSync(password, 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, id);
+
   const sent = await sendWelcomeEmail(db, user.institutional_email, user.full_name, user.institutional_email, password, req.user.id);
   if (!sent) return res.status(500).json({ error: 'No se pudo enviar el correo. Verifica la configuración SMTP.' });
   res.json({ ok: true });
@@ -2134,13 +2138,14 @@ app.get('/programs', (req, res) => {
   } catch {}
 
   const rows = db.prepare(
-    `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators,
+    `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
             GROUP_CONCAT(pa.user_id) as admin_user_ids
      FROM programs p
      LEFT JOIN program_admins pa ON pa.program_id = p.id
-     GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators
+     WHERE (p.hidden = 0 OR p.hidden IS NULL OR ? = 1)
+     GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden
      ORDER BY p.name`
-  ).all();
+  ).all(isAdmin ? 1 : 0);
 
   const data = rows
     .map(r => ({
@@ -2149,6 +2154,7 @@ app.get('/programs', (req, res) => {
       reception_start: r.reception_start ? new Date(r.reception_start).toISOString().slice(0,10) : null,
       reception_end: r.reception_end ? new Date(r.reception_end).toISOString().slice(0,10) : null,
       max_evaluators: r.max_evaluators ?? 2,
+      hidden: !!r.hidden,
       admin_user_ids: r.admin_user_ids ? r.admin_user_ids.split(',') : []
     }));
   res.json(data);
@@ -2891,13 +2897,56 @@ app.get('/theses/directed', authMiddleware, (req, res) => {
   res.json(enriched);
 });
 
+// Returns theses where the authenticated user is assigned as evaluator
+app.get('/theses/as-evaluator', authMiddleware, (req, res) => {
+  const rows = db.prepare(`
+    SELECT DISTINCT t.* FROM theses t
+    INNER JOIN thesis_evaluators te ON t.id = te.thesis_id
+    WHERE te.evaluator_id = ? AND t.status != 'deleted'
+    ORDER BY t.created_at DESC
+  `).all(req.user.id);
+
+  const enriched = rows.map(t => {
+    const students = db.prepare(
+      `SELECT u.id, u.full_name as name, u.institutional_email FROM users u
+       JOIN thesis_students ts ON u.id = ts.student_id
+       WHERE ts.thesis_id = ?`
+    ).all(t.id);
+    const programs = db.prepare(
+      `SELECT p.id, p.name FROM programs p
+       JOIN thesis_programs tp ON p.id = tp.program_id
+       WHERE tp.thesis_id = ?`
+    ).all(t.id);
+    const evalInfo = db.prepare(
+      `SELECT due_date, is_blind FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?`
+    ).get(t.id, req.user.id);
+    return { ...t, students, programs, due_date: evalInfo?.due_date, is_blind: !!evalInfo?.is_blind };
+  });
+
+  res.json(enriched);
+});
+
 app.get('/theses', authMiddleware, (req, res) => {
   // Decide qué tesis devolver según el rol del usuario
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
   console.log('GET /theses requested by user', req.user.id, 'roles:', roles);
   let rows;
-  if (roles.includes('admin') || roles.includes('superadmin')) {
+  if (roles.includes('superadmin')) {
     rows = db.prepare(`SELECT * FROM theses WHERE status != 'deleted' ORDER BY created_at DESC`).all();
+  } else if (roles.includes('admin')) {
+    // El admin solo ve tesis de los programas que tiene asignados
+    const adminPrograms = db.prepare(`SELECT program_id FROM program_admins WHERE user_id = ?`).all(req.user.id).map(r => r.program_id);
+    if (adminPrograms.length === 0) {
+      rows = [];
+    } else {
+      const placeholders = adminPrograms.map(() => '?').join(',');
+      rows = db.prepare(`
+        SELECT DISTINCT t.* FROM theses t
+        JOIN thesis_programs tp ON t.id = tp.thesis_id
+        WHERE tp.program_id IN (${placeholders}) AND t.status != 'deleted'
+        ORDER BY t.created_at DESC
+      `).all(...adminPrograms);
+    }
   } else if (roles.includes('evaluator')) {
     // sólo tesis asignadas a este evaluador, evitar duplicados si hay registros repetidos
     rows = db.prepare(`
@@ -6289,20 +6338,39 @@ app.post('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) 
 
 // GET /admin/notifications - obtener historial de notificaciones
 app.get('/admin/notifications', authMiddleware, requireRole('admin'), (req, res) => {
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperadmin = roles.includes('superadmin');
   const limit = Math.min(parseInt(req.query.limit) || 50, 100);
   const offset = parseInt(req.query.offset) || 0;
+
+  let programFilter = '';
+  let programParams = [];
+  if (!isSuperadmin) {
+    const adminPrograms = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ?').all(req.user.id).map(r => r.program_id);
+    if (adminPrograms.length === 0) {
+      return res.json({ notifications: [], total: 0, totalSent: 0, totalFailed: 0 });
+    }
+    const ph = adminPrograms.map(() => '?').join(',');
+    programFilter = `WHERE (n.related_thesis_id IS NULL OR n.related_thesis_id IN (
+      SELECT DISTINCT thesis_id FROM thesis_programs WHERE program_id IN (${ph})
+    ))`;
+    programParams = adminPrograms;
+  }
+
   const totals = db.prepare(`
     SELECT
       COUNT(*) as total,
       SUM(CASE WHEN sent_at IS NOT NULL AND error IS NULL THEN 1 ELSE 0 END) as totalSent,
       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as totalFailed
-    FROM notifications
-  `).get();
+    FROM notifications n
+    ${programFilter}
+  `).get(...programParams);
   const notifications = db.prepare(`
     SELECT n.*, u.full_name, u.email FROM notifications n
     LEFT JOIN users u ON u.id = n.user_id
+    ${programFilter}
     ORDER BY n.created_at DESC LIMIT ? OFFSET ?
-  `).all(limit, offset);
+  `).all(...programParams, limit, offset);
   res.json({ notifications, total: totals.total, totalSent: totals.totalSent, totalFailed: totals.totalFailed });
 });
 
