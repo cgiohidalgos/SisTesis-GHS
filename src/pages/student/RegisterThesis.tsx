@@ -209,8 +209,8 @@ export default function RegisterThesis() {
 
   const isProgramOpen = (prog: { reception_start?: string; reception_end?: string }) => {
     const now = Date.now();
-    if (prog.reception_start && now < Date.parse(prog.reception_start)) return false;
-    if (prog.reception_end && now > Date.parse(prog.reception_end)) return false;
+    if (prog.reception_start && now < Date.parse(prog.reception_start + 'T00:00:00-05:00')) return false;
+    if (prog.reception_end && now > Date.parse(prog.reception_end + 'T23:59:59-05:00')) return false;
     return true;
   };
 

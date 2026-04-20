@@ -2155,8 +2155,8 @@ app.get('/programs', (req, res) => {
     .map(r => ({
       id: r.id,
       name: r.name,
-      reception_start: r.reception_start ? new Date(r.reception_start).toISOString().slice(0,10) : null,
-      reception_end: r.reception_end ? new Date(r.reception_end).toISOString().slice(0,10) : null,
+      reception_start: r.reception_start ? new Date(r.reception_start).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }) : null,
+      reception_end: r.reception_end ? new Date(r.reception_end).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }) : null,
       max_evaluators: r.max_evaluators ?? 2,
       hidden: !!r.hidden,
       admin_user_ids: r.admin_user_ids ? r.admin_user_ids.split(',') : []
@@ -2192,8 +2192,8 @@ app.post('/programs', authMiddleware, requireRole('admin'), (req, res) => {
   if (!name) return res.status(400).json({ error: 'name required' });
   const id = uuidv4();
   try {
-    const startTs = reception_start ? Date.parse(reception_start) : null;
-    const endTs = reception_end ? Date.parse(reception_end) : null;
+    const startTs = reception_start ? Date.parse(reception_start + 'T00:00:00-05:00') : null;
+    const endTs = reception_end ? Date.parse(reception_end + 'T23:59:59-05:00') : null;
     // keep legacy column but we will also populate program_admins
     db.prepare('INSERT INTO programs (id, name, admin_user_id, reception_start, reception_end) VALUES (?, ?, ?, ?, ?)')
       .run(id, name, admin_user_id || null, startTs, endTs);
@@ -2216,8 +2216,8 @@ app.put('/programs/:id', authMiddleware, requireRole('admin'), (req, res) => {
   try {
     const existing = db.prepare('SELECT id FROM programs WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({ error: 'not found' });
-    const startTs = reception_start ? Date.parse(reception_start) : null;
-    const endTs = reception_end ? Date.parse(reception_end) : null;
+    const startTs = reception_start ? Date.parse(reception_start + 'T00:00:00-05:00') : null;
+    const endTs = reception_end ? Date.parse(reception_end + 'T23:59:59-05:00') : null;
     db.prepare('UPDATE programs SET name = ?, admin_user_id = ?, reception_start = ?, reception_end = ? WHERE id = ?')
       .run(name, admin_user_id || null, startTs, endTs, id);
     // update join table if list provided
@@ -3658,10 +3658,19 @@ app.post('/theses/:id/acta/sign-program-director', authMiddleware, requireRole('
 // ============================================================================
 
 // Eliminar una firma digital (admin)
-app.post('/theses/:id/acta/delete-signature', authMiddleware, requireRole('admin'), (req, res) => {
+app.post('/theses/:id/acta/delete-signature', authMiddleware, (req, res) => {
   const thesisId = req.params.id;
   const { signer_name, signer_role } = req.body;
   if (!signer_name) return res.status(400).json({ error: 'signer_name requerido' });
+  // Allow admin/superadmin or a director of this thesis
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isAdmin = roles.includes('admin') || roles.includes('superadmin');
+  if (!isAdmin) {
+    const isDirector = db.prepare(
+      `SELECT 1 FROM thesis_directors WHERE thesis_id = ? AND user_id = ?`
+    ).get(thesisId, req.user.id);
+    if (!isDirector) return res.status(403).json({ error: 'forbidden' });
+  }
   db.prepare('DELETE FROM digital_signatures WHERE thesis_id = ? AND signer_name = ? AND signer_role = ?')
     .run(thesisId, signer_name, signer_role);
   db.prepare('UPDATE signing_tokens SET used_at = NULL WHERE thesis_id = ? AND signer_name = ?')

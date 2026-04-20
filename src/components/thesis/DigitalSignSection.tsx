@@ -47,9 +47,10 @@ interface Props {
   myUserId?: string | number | null;
   /** Directors see all pending signers; evaluators only see their own */
   showAllPending?: boolean;
+  canDelete?: boolean;
 }
 
-export default function DigitalSignSection({ thesisId, userName, myRole, myUserId, showAllPending }: Props) {
+export default function DigitalSignSection({ thesisId, userName, myRole, myUserId, showAllPending, canDelete }: Props) {
   const [status, setStatus] = useState<any>(null);
   const [generatedLinks, setGeneratedLinks] = useState<Record<string, { url: string; copied: boolean }>>({});
   const [signerTitles, setSignerTitles] = useState<Record<string, string>>(() => {
@@ -149,19 +150,38 @@ export default function DigitalSignSection({ thesisId, userName, myRole, myUserI
     <div className="mt-6 border p-4 rounded bg-success/5">
       <h3 className="font-semibold mb-2">🔐 Firma Digital del Acta</h3>
 
-      {/* Signature status */}
+      {/* Estado de firmas */}
       <div className="mb-3 space-y-1">
         <p className="text-xs font-medium">Estado de firmas:</p>
         {(status.digitalSignatures ?? []).length > 0 ? (
           (status.digitalSignatures as any[]).map((sig: any, idx: number) => (
             <div key={idx} className="flex items-center gap-2">
-              <span className="text-xs text-green-600">
+              <span className="text-xs text-green-600 flex-1">
                 ✓ {roleLabel(sig.signer_role)}: {sig.signer_name}
               </span>
+              {canDelete && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-500 hover:text-red-700 h-5 px-1 text-xs"
+                  onClick={async () => {
+                    if (!confirm(`¿Eliminar firma de ${sig.signer_name}?`)) return;
+                    const token = localStorage.getItem("token");
+                    await fetch(`${API_BASE}/theses/${thesisId}/acta/delete-signature`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Authorization: token ? `Bearer ${token}` : "" },
+                      body: JSON.stringify({ signer_name: sig.signer_name, signer_role: sig.signer_role }),
+                    });
+                    fetchStatus();
+                  }}
+                >
+                  🗑
+                </Button>
+              )}
             </div>
           ))
         ) : (
-          <p className="text-xs text-muted-foreground">No hay firmas registradas aún.</p>
+          <p className="text-xs text-muted-foreground">No hay firmas digitales registradas aún.</p>
         )}
         {!status.allSigned && (status.pendingSigners ?? []).length > 0 && (
           <p className="text-xs text-orange-600 mt-1">
@@ -170,17 +190,66 @@ export default function DigitalSignSection({ thesisId, userName, myRole, myUserI
         )}
       </div>
 
-      {/* All signed: download buttons */}
+      {/* Si todas las firmas están completas */}
       {status.allSigned && (
-        <div className="bg-green-50 border border-green-200 rounded p-3 mb-3 space-y-2">
-          <p className="text-sm font-medium text-green-700">✅ Todas las firmas han sido registradas</p>
+        <div className="bg-green-50 border border-green-200 rounded p-3 mb-3">
+          <p className="text-sm font-medium text-green-700 mb-2">✅ Todas las firmas han sido registradas</p>
           <div className="flex gap-2 flex-wrap">
-            <Button size="sm" onClick={() => handleDownload("pdf")} disabled={downloadingPdf}>
+            <Button variant="outline" size="sm" onClick={() => handleDownload("pdf")} disabled={downloadingPdf}>
               {downloadingPdf ? "Descargando..." : "📄 Descargar PDF final firmado"}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => handleDownload("word")} disabled={downloadingWord}>
+            <Button variant="outline" size="sm" onClick={() => handleDownload("word")} disabled={downloadingWord}>
               {downloadingWord ? "Descargando..." : "📝 Descargar Word"}
             </Button>
+          </div>
+        </div>
+      )}
+
+      {status.allSigned && (
+        <div className="border rounded-xl p-6 bg-gradient-to-br from-green-50 to-blue-50 dark:from-green-950/20 dark:to-blue-950/20 mb-3">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0 w-12 h-12 rounded-full bg-green-500 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-bold text-green-900 dark:text-green-100 mb-2">¡Proceso de sustentación completado!</h3>
+              <p className="text-sm text-green-800 dark:text-green-200 mb-4">
+                Todas las firmas han sido registradas y el proceso ha concluido exitosamente.
+                A continuación puede descargar todos los documentos relacionados con esta tesis en un solo archivo.
+              </p>
+              <button
+                className="px-6 py-3 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium flex items-center gap-2 transition-colors shadow-md"
+                onClick={async () => {
+                  try {
+                    const token = localStorage.getItem("token");
+                    const resp = await fetch(`${API_BASE}/theses/${thesisId}/download-complete-package`, {
+                      headers: { Authorization: token ? `Bearer ${token}` : "" },
+                    });
+                    if (!resp.ok) throw new Error("Error al descargar");
+                    const disposition = resp.headers.get("Content-Disposition") || "";
+                    const match = disposition.match(/filename="?([^"]+)"?/);
+                    const filename = match ? decodeURIComponent(match[1]) : "Tesis_Completa.zip";
+                    const blob = await resp.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a"); a.href = url; a.download = filename;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    URL.revokeObjectURL(url);
+                  } catch (e: any) { alert(e.message || "Error al descargar"); }
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Descargar Paquete Completo (.zip)
+              </button>
+              <p className="text-xs text-green-700 dark:text-green-300 mt-3">
+                El archivo incluye: todos los documentos enviados, acta de sustentación (PDF y Word), y rúbricas completas (XLSX) de todos los evaluadores.
+              </p>
+            </div>
           </div>
         </div>
       )}

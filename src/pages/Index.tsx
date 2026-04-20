@@ -32,15 +32,15 @@ export default function Index() {
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return "-";
-    const d = new Date(dateString);
-    if (Number.isNaN(d.getTime())) return dateString;
-    return d.toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const parts = dateString.split('-');
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    return dateString;
   };
 
   const isOpen = (p: { reception_start?: string; reception_end?: string }) => {
     const now = Date.now();
-    if (p.reception_start && now < Date.parse(p.reception_start)) return false;
-    if (p.reception_end && now > Date.parse(p.reception_end)) return false;
+    if (p.reception_start && now < Date.parse(p.reception_start + 'T00:00:00-05:00')) return false;
+    if (p.reception_end && now > Date.parse(p.reception_end + 'T23:59:59-05:00')) return false;
     return true;
   };
 

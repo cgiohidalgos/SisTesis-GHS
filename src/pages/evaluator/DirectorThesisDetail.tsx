@@ -128,16 +128,108 @@ export default function DirectorThesisDetail() {
         {/* Thesis info */}
         <div className="mb-6 bg-card p-6 rounded-lg shadow-card">
           <h2 className="font-heading text-2xl font-bold mb-3">Detalle de Tesis</h2>
-          <p className="text-sm text-muted-foreground mb-1"><strong>Estado:</strong> <span className="capitalize">{safeStr(thesis.status)}</span></p>
-          {thesis.title && <p className="text-sm text-muted-foreground mb-1"><strong>Título:</strong> {safeStr(thesis.title)}</p>}
-          {thesis.student_name && <p className="text-sm text-muted-foreground mb-1"><strong>Estudiante:</strong> {safeStr(thesis.student_name)}</p>}
+          <p className="text-sm text-muted-foreground mb-2"><strong>Estado:</strong> <span className="capitalize">{safeStr(thesis.status)}</span></p>
+          {thesis.title && <p className="text-lg font-semibold mb-2"><strong>Título:</strong> {safeStr(thesis.title)}</p>}
+          {thesis.students && thesis.students.length > 0 && (
+            <div className="mb-3">
+              <p className="text-sm text-muted-foreground mb-2">
+                <strong>Autor{thesis.students.length > 1 ? 'es' : ''}:</strong> {thesis.students.map((s: any) => safeStr(s.name || s.full_name || s)).join(', ')}
+              </p>
+              {thesis.students.map((student: any, idx: number) => (
+                <div key={idx} className="ml-4 text-xs text-muted-foreground space-y-0.5 mb-2">
+                  {student.student_code && <p><strong>Código:</strong> {student.student_code}</p>}
+                  {student.cedula && <p><strong>Cédula:</strong> {student.cedula}</p>}
+                  {student.institutional_email && <p><strong>Correo institucional:</strong> {student.institutional_email}</p>}
+                  {student.email && student.email !== student.institutional_email && <p><strong>Correo personal:</strong> {student.email}</p>}
+                  {student.cvlac && <p><strong>CVLAC:</strong> {student.cvlac}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+          {!thesis.students?.length && thesis.student_name && (
+            <p className="text-sm text-muted-foreground mb-1"><strong>Estudiante:</strong> {safeStr(thesis.student_name)}</p>
+          )}
           {thesis.directors?.length > 0 && (
             <p className="text-sm text-muted-foreground mb-1">
-              <strong>Director(es):</strong> {thesis.directors.map((d: any) => safeStr(d)).join(', ')}
+              <strong>Director{thesis.directors.length > 1 ? 'es' : ''}:</strong> {thesis.directors.map((d: any) => safeStr(d)).join(', ')}
             </p>
           )}
-          {thesis.program_name && <p className="text-sm text-muted-foreground mb-1"><strong>Programa:</strong> {safeStr(thesis.program_name)}</p>}
+          {thesis.programs?.length > 0 && (
+            <p className="text-sm text-muted-foreground mb-1">
+              <strong>Programa{thesis.programs.length > 1 ? 's' : ''}:</strong> {thesis.programs.map((p: any) => safeStr(p)).join(', ')}
+            </p>
+          )}
+          {!thesis.programs?.length && thesis.program_name && (
+            <p className="text-sm text-muted-foreground mb-1"><strong>Programa:</strong> {safeStr(thesis.program_name)}</p>
+          )}
         </div>
+
+        {/* Documentos enviados */}
+        {thesis.files && thesis.files.length > 0 && (
+          <div className="mb-6">
+            <h3 className="font-heading text-lg font-bold text-foreground mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+              Documentos enviados
+            </h3>
+            <div className="grid grid-cols-1 gap-3">
+              {thesis.files.map((f: any, fi: number) => {
+                const isUrl = f.file_url?.startsWith('http://') || f.file_url?.startsWith('https://') ||
+                              f.file_name?.startsWith('http://') || f.file_name?.startsWith('https://');
+                const isPdf = f.file_name?.toLowerCase().endsWith('.pdf');
+                const isDoc = f.file_name?.toLowerCase().match(/\.(doc|docx)$/);
+                const urlToOpen = isUrl ? (f.file_url?.startsWith('http') ? f.file_url : f.file_name) : null;
+                return (
+                  <div key={fi} className="group relative flex items-center gap-3 p-4 rounded-lg border border-border bg-card hover:bg-accent/5 hover:border-accent/50 transition-all duration-200 shadow-sm hover:shadow-md">
+                    <div className="flex-shrink-0">
+                      {isUrl ? (
+                        <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                          <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                        </div>
+                      ) : isPdf ? (
+                        <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                          <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                        </div>
+                      ) : isDoc ? (
+                        <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                          <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                          <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      {isUrl ? (
+                        <a href={urlToOpen} target="_blank" rel="noopener noreferrer" className="block w-full group-hover:text-accent transition-colors">
+                          <p className="font-medium text-sm truncate">{f.file_name}</p>
+                          {urlToOpen !== f.file_name && <p className="text-xs text-muted-foreground truncate mt-0.5">{urlToOpen}</p>}
+                        </a>
+                      ) : (
+                        <button type="button" className="text-left w-full group-hover:text-accent transition-colors" onClick={() => downloadFile(f.file_url, f.file_name)}>
+                          <p className="font-medium text-sm truncate">{f.file_name}</p>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0">
+                      {isUrl ? (
+                        <a href={urlToOpen} target="_blank" rel="noopener noreferrer" className="p-2 rounded-full hover:bg-accent/10 transition-colors inline-block" title="Abrir enlace">
+                          <svg className="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        </a>
+                      ) : (
+                        <button type="button" onClick={() => downloadFile(f.file_url, f.file_name)} className="p-2 rounded-full hover:bg-accent/10 transition-colors" title="Descargar">
+                          <svg className="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Evaluators */}
         {thesis.evaluators?.length > 0 && (
@@ -262,73 +354,15 @@ export default function DirectorThesisDetail() {
           </div>
         )}
 
-        {actaStatus?.allSigned && (
-          <div className="mb-6 border rounded-xl p-6 bg-gradient-to-br from-green-50 to-blue-50 dark:from-green-950/20 dark:to-blue-950/20">
-            <div className="flex items-start gap-4">
-              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-green-500 flex items-center justify-center">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-green-900 dark:text-green-100 mb-2">
-                  ¡Gracias por haber dirigido este trabajo!
-                </h3>
-                <p className="text-sm text-green-800 dark:text-green-200 mb-4">
-                  El proceso de sustentación ha concluido exitosamente. A continuación puede descargar todos los documentos relacionados con esta tesis.
-                </p>
-                <button
-                  className="px-6 py-3 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium flex items-center gap-2 transition-colors shadow-md"
-                  onClick={async () => {
-                    try {
-                      const token = localStorage.getItem('token');
-                      const resp = await fetch(`${API_BASE}/theses/${id}/download-complete-package`, {
-                        headers: { Authorization: token ? 'Bearer ' + token : '' },
-                      });
-                      if (!resp.ok) {
-                        const err = await resp.json().catch(() => ({ error: 'Error al descargar' }));
-                        throw new Error(err.error || 'Error al descargar');
-                      }
-                      const disposition = resp.headers.get('Content-Disposition') || '';
-                      const match = disposition.match(/filename="?([^"]+)"?/);
-                      const filename = match ? match[1] : 'Tesis_Completa.zip';
-                      const blob = await resp.blob();
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = decodeURIComponent(filename);
-                      document.body.appendChild(a);
-                      a.click();
-                      a.remove();
-                      URL.revokeObjectURL(url);
-                      toast.success('Paquete completo descargado');
-                    } catch (e: any) {
-                      toast.error(e.message || 'Error al descargar el paquete completo');
-                    }
-                  }}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="7 10 12 15 17 10"/>
-                    <line x1="12" y1="15" x2="12" y2="3"/>
-                  </svg>
-                  Descargar Paquete Completo (.zip)
-                </button>
-                <p className="text-xs text-green-700 dark:text-green-300 mt-3">
-                  El archivo incluye: todos los documentos enviados, acta de sustentación (PDF y Word), y rúbricas completas (XLSX) de todos los evaluadores.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {id && user && (
+        {id && user && thesis?.defense_date && (
           <DigitalSignSection
             thesisId={id}
             userName={user.full_name || ""}
             myRole="director"
             myUserId={user.id}
             showAllPending={true}
+            canDelete={true}
           />
         )}
       </div>
