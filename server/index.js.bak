@@ -2111,24 +2111,16 @@ app.get('/auth/session', (req, res) => {
   }
 });
 
-app.get('/profiles/:id', authMiddleware, (req, res) => {
+app.get('/profiles/:id', (req, res) => {
   const id = req.params.id;
-  const callerRoles = Array.isArray(req.user.roles) ? req.user.roles : [req.user.role];
-  const isAdmin = callerRoles.some(r => ['admin', 'superadmin'].includes(r));
-  // Users can only fetch their own profile unless they are admin
-  if (req.user.id !== id && !isAdmin) return res.status(403).json({ error: 'forbidden' });
   const profile = db.prepare('SELECT id, full_name, student_code, cedula, institutional_email FROM users WHERE id = ?').get(id);
   if (!profile) return res.status(404).json({ error: 'not found' });
   res.json(profile);
 });
 
-app.get('/user_roles', authMiddleware, (req, res) => {
+app.get('/user_roles', (req, res) => {
   const user_id = req.query.user_id;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
-  const callerRoles = Array.isArray(req.user.roles) ? req.user.roles : [req.user.role];
-  const isAdmin = callerRoles.some(r => ['admin', 'superadmin'].includes(r));
-  // Users can only fetch their own roles unless they are admin
-  if (req.user.id !== user_id && !isAdmin) return res.status(403).json({ error: 'forbidden' });
   const rows = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(user_id);
   res.json(rows.map(r => r.role));
 });
@@ -4922,9 +4914,9 @@ app.post('/evaluations/:id/files', authMiddleware, upload.single('file'), (req, 
   res.json({ id, file_name, file_url: `/uploads/${basename}`, uploaded_at });
 });
 
-// Serve uploaded files — requires authentication
-app.get('/uploads/:file', authMiddleware, (req, res) => {
-  const file = path.basename(req.params.file); // prevent path traversal
+// Serve uploaded files
+app.get('/uploads/:file', (req, res) => {
+  const file = req.params.file;
   const p = path.join(uploadDir, file);
   if (!fs.existsSync(p)) return res.status(404).json({ error: 'not found' });
   res.sendFile(p);
@@ -7246,37 +7238,6 @@ app.use((err, req, res, next) => {
 });
 
 // ── GioBot chat endpoint ──────────────────────────────────────────────────────
-const pdfParse = require('pdf-parse');
-const mammoth = require('mammoth');
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
-
-async function extractFileText(fileUrl, fileName) {
-  try {
-    if (!fileUrl || fileUrl.startsWith('http')) return null;
-    const filePath = path.join(UPLOADS_DIR, fileUrl);
-    if (!fs.existsSync(filePath)) return null;
-    const buf = fs.readFileSync(filePath);
-    const nameLower = (fileName || '').toLowerCase();
-    if (nameLower.endsWith('.pdf')) {
-      const r = await pdfParse(buf);
-      return r.text?.slice(0, 15000) || null;
-    }
-    if (nameLower.endsWith('.docx') || nameLower.endsWith('.doc')) {
-      const r = await mammoth.extractRawText({ buffer: buf });
-      return r.value?.slice(0, 15000) || null;
-    }
-    if (buf[0] === 0x25 && buf[1] === 0x50) {
-      const r = await pdfParse(buf);
-      return r.text?.slice(0, 15000) || null;
-    }
-    if (buf[0] === 0x50 && buf[1] === 0x4b) {
-      const r = await mammoth.extractRawText({ buffer: buf });
-      return r.value?.slice(0, 15000) || null;
-    }
-    return null;
-  } catch { return null; }
-}
-
 app.post('/chat', authMiddleware, async (req, res) => {
   const userId = req.user.id;
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(userId).map(r => r.role);
@@ -7310,201 +7271,60 @@ app.post('/chat', authMiddleware, async (req, res) => {
         `).all(thesisId);
         const evaluations = db.prepare(`
           SELECT e.evaluation_type, e.final_score, e.concept, u.full_name as evaluator_name
-          FROM evaluations e
-          JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
-          JOIN users u ON te.evaluator_id = u.id
-          WHERE te.thesis_id = ?
+          FROM evaluations e JOIN users u ON e.evaluator_id = u.id WHERE e.thesis_id = ?
         `).all(thesisId);
-        const fileRows = db.prepare(`SELECT file_name, file_type, file_url FROM thesis_files WHERE thesis_id = ?`).all(thesisId);
-
-        const docsText = [];
-        for (const f of fileRows) {
-          if (f.file_type === 'url' || !f.file_url || f.file_url.startsWith('http')) continue;
-          const text = await extractFileText(f.file_url, f.file_name);
-          if (text) docsText.push(`--- Documento: ${f.file_name} ---\n${text}`);
-        }
-
+        const files = db.prepare(`SELECT file_name, file_type FROM thesis_files WHERE thesis_id = ?`).all(thesisId);
         const thesisObj = {
           ...thesis,
           defense_date: thesis.defense_date ? new Date(thesis.defense_date * 1000).toLocaleString('es-CO') : null,
-          students, directors, evaluators, evaluations,
-          files: fileRows.map(f => ({ name: f.file_name, type: f.file_type })),
+          students, directors, evaluators, evaluations, files
         };
         contextData = `\n\nDATOS DE LA TESIS:\n${JSON.stringify(thesisObj, null, 2)}`;
-        if (docsText.length > 0) {
-          contextData += `\n\nCONTENIDO DE DOCUMENTOS ENVIADOS:\n${docsText.join('\n\n')}`;
-        }
       }
     } else if (contextType === 'list') {
       const isAdmin = roles.includes('admin') || roles.includes('superadmin');
-      let thesisIds;
+      let theses;
       if (isAdmin) {
-        thesisIds = db.prepare(`SELECT id FROM theses ORDER BY created_at DESC LIMIT 100`).all().map(r => r.id);
+        theses = db.prepare(`
+          SELECT t.id, t.title, t.status, t.defense_date,
+            (SELECT u.full_name FROM thesis_students ts JOIN users u ON ts.student_id = u.id WHERE ts.thesis_id = t.id LIMIT 1) as student_name,
+            (SELECT GROUP_CONCAT(u.full_name, ', ') FROM thesis_directors td JOIN users u ON td.user_id = u.id WHERE td.thesis_id = t.id) as directors
+          FROM theses t ORDER BY t.created_at DESC LIMIT 100
+        `).all();
       } else {
-        const directedIds = db.prepare(`SELECT thesis_id as id FROM thesis_directors WHERE user_id = ?`).all(userId).map(r => r.id);
-        const assignedIds = db.prepare(`SELECT thesis_id as id FROM thesis_evaluators WHERE evaluator_id = ?`).all(userId).map(r => r.id);
-        thesisIds = [...new Set([...directedIds, ...assignedIds])];
+        const directed = db.prepare(`
+          SELECT t.id, t.title, t.status, t.defense_date, 'director' as my_role,
+            (SELECT u.full_name FROM thesis_students ts JOIN users u ON ts.student_id = u.id WHERE ts.thesis_id = t.id LIMIT 1) as student_name
+          FROM theses t JOIN thesis_directors td ON td.thesis_id = t.id WHERE td.user_id = ? ORDER BY t.created_at DESC
+        `).all(userId);
+        const assigned = db.prepare(`
+          SELECT t.id, t.title, t.status, t.defense_date, 'evaluador' as my_role,
+            (SELECT u.full_name FROM thesis_students ts JOIN users u ON ts.student_id = u.id WHERE ts.thesis_id = t.id LIMIT 1) as student_name
+          FROM theses t JOIN thesis_evaluators te ON te.thesis_id = t.id WHERE te.evaluator_id = ? ORDER BY t.created_at DESC
+        `).all(userId);
+        const seen = new Set();
+        theses = [...directed, ...assigned].filter(t => { if (seen.has(t.id)) return false; seen.add(t.id); return true; });
       }
-
-      const theses = thesisIds.map(id => {
-        const t = db.prepare(`SELECT id, title, status, defense_date FROM theses WHERE id = ?`).get(id);
-        if (!t) return null;
-        const students = db.prepare(`
-          SELECT u.full_name, u.student_code, u.cedula, u.institutional_email, u.cvlac
-          FROM thesis_students ts JOIN users u ON ts.student_id = u.id WHERE ts.thesis_id = ?
-        `).all(id);
-        const directors = db.prepare(`
-          SELECT u.full_name FROM thesis_directors td JOIN users u ON td.user_id = u.id WHERE td.thesis_id = ?
-        `).all(id).map(d => d.full_name);
-        const programs = db.prepare(`
-          SELECT p.name FROM thesis_programs tp JOIN programs p ON tp.program_id = p.id WHERE tp.thesis_id = ?
-        `).all(id).map(p => p.name);
-        return {
-          titulo: t.title,
-          estado: t.status,
-          fecha_defensa: t.defense_date ? new Date(t.defense_date * 1000).toLocaleString('es-CO') : null,
-          programas: programs,
-          directores: directors,
-          estudiantes: students.map(s => ({
-            nombre: s.full_name,
-            cedula: s.cedula,
-            codigo: s.student_code,
-            correo: s.institutional_email,
-            cvlac: s.cvlac,
-          })),
-        };
-      }).filter(Boolean);
-
-      contextData = `\n\nLISTA DE TESIS (${theses.length} proyectos):\n${JSON.stringify(theses)}`;
+      theses = theses.map(t => ({
+        ...t,
+        defense_date: t.defense_date ? new Date(t.defense_date * 1000).toLocaleString('es-CO') : null
+      }));
+      contextData = `\n\nLISTA DE TESIS (${theses.length}):\n${JSON.stringify(theses, null, 2)}`;
     }
   } catch (dbErr) {
     console.error('GioBot DB error:', dbErr);
   }
 
-  const systemPrompt = `Eres GioBot, el asistente IA del sistema SisTesis de la Universidad de San Buenaventura Cali (USB Cali). Ayudas a directores de tesis, evaluadores y administradores a consultar información sobre proyectos de grado Y a entender cómo usar la plataforma.
+  const systemPrompt = `Eres GioBot, el asistente IA del sistema SisTesis de la Universidad de San Buenaventura Cali (USB Cali). Ayudas a directores de tesis, evaluadores y administradores a consultar información sobre proyectos de grado.
 El usuario actual tiene rol(es): ${roles.join(', ')}.
-Responde siempre en español. Si te preguntan sobre datos de tesis, sé conciso. Si te preguntan cómo usar la plataforma, sé MUY DETALLADO con pasos numerados claros.
-Las calificaciones son sobre 5.0. Los estados posibles de tesis: submitted (enviado), under_review (en revisión), returned (devuelto), approved (aprobado), assigned (evaluador asignado), evaluated (evaluado), defended (defendido), finalized (finalizado).
-IMPORTANTE: NO uses sintaxis Markdown en tus respuestas. No uses **, ##, *, ---, ni backticks. Escribe en texto plano. Para listas usa guiones simples con espacio. Para énfasis escribe en MAYÚSCULAS si es necesario.
-CRÍTICO SOBRE LOS DATOS: Cuando el contexto incluye LISTA DE TESIS o DATOS DE LA TESIS, ESA ES LA INFORMACIÓN REAL de la plataforma que debes usar directamente. NO digas que no tienes acceso a los datos ni que el usuario debe ir a otro lado — los datos ya están aquí. Si te piden una tabla, constrúyela con los datos del contexto usando formato de texto plano con columnas separadas por | (pipe). Si un campo está vacío o es null, escribe "N/A".
-
-=== DOCUMENTACIÓN COMPLETA DE LA PLATAFORMA SISTESIS ===
-
---- ROLES Y ACCESOS ---
-- Estudiante: registra su proyecto, sube documentos, ve su línea de tiempo.
-- Evaluador: puede ser evaluador de comité (califica con rúbrica) y/o director (dirige y avala proyectos de sus estudiantes).
-- Administrador: gestiona todos los proyectos, asigna evaluadores, configura la plataforma. También puede ser director de programa y tener sus propios estudiantes.
-- Superadministrador: todo lo del administrador más gestión de usuarios y configuración SMTP.
-
---- FLUJO COMPLETO DE UN PROYECTO DE GRADO ---
-1. El estudiante registra su proyecto de grado (título, descripción, programa).
-2. El proyecto queda en estado "submitted" (enviado).
-3. El administrador/director revisa los requisitos previos.
-4. Si hay observaciones, el admin puede devolver el proyecto (estado "returned") con comentarios.
-5. Cuando cumple los requisitos, el admin marca los ítems de revisión y el proyecto pasa a "approved".
-6. El admin asigna evaluadores al proyecto (estado "assigned").
-7. Los evaluadores califican con rúbrica (estado "evaluated").
-8. El estudiante defiende su proyecto (estado "defended").
-9. Se genera acta de grado y firmas digitales (estado "finalized").
-
---- CÓMO ASIGNAR EVALUADORES A UN PROYECTO ---
-Paso 1: Ir al menú "Proyectos" en la barra lateral izquierda.
-Paso 2: Buscar el proyecto que deseas gestionar y hacer clic en él para abrir el detalle.
-Paso 3: Verificar que el proyecto cumple los requisitos previos. En la sección de revisión verás una lista de ítems que deben estar marcados:
-  - Revisión (el documento ha sido revisado)
-  - Aval director(es) (el director ha dado su aval)
-  - Compilatio < 20% (el índice de similitud es menor al 20%)
-  Si algún ítem no está marcado, debes marcarlo haciendo clic en el checkbox correspondiente.
-Paso 4: Una vez marcados TODOS los ítems de revisión, el sistema habilitará la opción de asignar evaluadores. Busca la sección "Evaluadores" o "Asignar evaluadores" dentro del detalle del proyecto.
-Paso 5: En la sección de evaluadores, haz clic en "Agregar evaluador" o en el botón de asignación.
-Paso 6: Selecciona el evaluador de la lista de evaluadores disponibles. Puedes asignar uno o más evaluadores.
-Paso 7: Confirma la asignación. El proyecto cambiará automáticamente al estado "assigned" (evaluador asignado) y el evaluador recibirá una notificación por correo electrónico.
-
---- CÓMO DEVOLVER UN PROYECTO AL ESTUDIANTE ---
-Paso 1: Abrir el detalle del proyecto desde "Proyectos".
-Paso 2: Buscar el botón "Devolver proyecto" o "Retornar".
-Paso 3: Escribir las observaciones o comentarios explicando qué debe corregir el estudiante.
-Paso 4: Confirmar. El proyecto vuelve al estado "returned" y el estudiante recibe notificación.
-
---- CÓMO CALIFICAR UN PROYECTO (EVALUADOR) ---
-Paso 1: Ir al menú "Proyectos asignados" en la barra lateral.
-Paso 2: Seleccionar el proyecto que debes evaluar.
-Paso 3: Hacer clic en "Evaluar" o "Calificar con rúbrica".
-Paso 4: Se abrirá la rúbrica de evaluación con todas las secciones y criterios.
-Paso 5: Para cada criterio, selecciona el nivel de desempeño (Deficiente, Aceptable, Bueno, Excelente) o ingresa la calificación numérica sobre 5.0.
-Paso 6: Puedes agregar comentarios por sección.
-Paso 7: Al finalizar, haz clic en "Guardar" para guardar sin enviar, o "Enviar calificación" para enviar la evaluación definitiva.
-Paso 8: Una vez enviada, la calificación queda registrada y no puede modificarse.
-
---- CÓMO VER MIS ESTUDIANTES (DIRECTOR) ---
-- Como evaluador-director: ir al menú "Mis estudiantes" en la barra lateral. Allí verás todos los proyectos que diriges.
-- Como administrador-director: ir al menú "Mis Estudiantes" en la barra lateral de admin.
-- Desde esa vista puedes ver el estado de cada proyecto, los documentos subidos y el avance.
-
---- CÓMO GESTIONAR EVALUADORES (ADMIN) ---
-Paso 1: Ir al menú "Evaluadores" en la barra lateral.
-Paso 2: Verás la lista de todos los evaluadores registrados con sus proyectos asignados.
-Paso 3: Para agregar un nuevo evaluador, haz clic en "Agregar evaluador" e ingresa sus datos.
-Paso 4: Para enviarle sus credenciales de acceso, busca el botón "Enviar acceso" junto al evaluador.
-
---- CÓMO GESTIONAR PROGRAMAS ACADÉMICOS (ADMIN) ---
-Paso 1: Ir al menú "Programas" en la barra lateral.
-Paso 2: Puedes crear, editar o desactivar programas académicos.
-Paso 3: Cada programa tiene un nombre, descripción y puede tener ventanas de recepción de proyectos.
-Paso 4: Las ventanas de recepción definen los períodos en que los estudiantes pueden registrar proyectos.
-
---- CÓMO CONFIGURAR RÚBRICAS (ADMIN) ---
-Paso 1: Ir al menú "Rúbricas" en la barra lateral.
-Paso 2: Puedes crear rúbricas con secciones y criterios de evaluación.
-Paso 3: Cada criterio tiene niveles de desempeño con puntajes.
-Paso 4: Las rúbricas se asignan a los evaluadores para calificar proyectos.
-
---- CÓMO VER ESTADÍSTICAS Y REPORTES (ADMIN) ---
-- En el "Panel" (dashboard) verás estadísticas generales: total de proyectos, distribución por estado, calificaciones promedio.
-- Desde el detalle de un proyecto puedes descargar reportes en PDF.
-- Desde la lista de proyectos puedes exportar datos en Excel/ZIP con las rúbricas.
-
---- CÓMO FUNCIONA LA FIRMA DIGITAL DE ACTAS ---
-Paso 1: Cuando un proyecto llega a estado "defended", se puede generar el acta de grado.
-Paso 2: El sistema envía un enlace de firma a cada firmante (director, evaluadores, director de programa).
-Paso 3: Cada firmante accede al enlace, revisa el acta y puede firmar dibujando su firma o subiendo una imagen.
-Paso 4: Cuando todos han firmado, el acta queda finalizada y el proyecto pasa a estado "finalized".
-
---- ESTADOS DE LOS PROYECTOS ---
-- submitted: El estudiante registró el proyecto, espera revisión del admin.
-- under_review: El admin está revisando el proyecto.
-- returned: El admin devolvió el proyecto al estudiante con observaciones.
-- approved: El proyecto cumple requisitos, listo para asignar evaluadores.
-- assigned: Se asignaron evaluadores, esperando evaluación.
-- evaluated: Los evaluadores calificaron el proyecto.
-- defended: El estudiante presentó su defensa.
-- finalized: Proceso completo, acta firmada.
-
---- NOTIFICACIONES ---
-- El sistema envía correos automáticos en eventos clave: asignación de evaluadores, devolución de proyectos, nuevos documentos, etc.
-- Los administradores pueden configurar reglas de notificación personalizadas en "Reglas de notificación".
-- GioBot (este asistente) también te avisa de tareas pendientes cuando abres el chat.
-
---- PREGUNTAS FRECUENTES ---
-P: No puedo asignar evaluadores, ¿por qué?
-R: Debes marcar TODOS los ítems de revisión primero (Revisión, Aval director, Compilatio < 20%). Solo cuando todos estén marcados se habilita la asignación.
-
-P: El evaluador no recibe el correo de notificación.
-R: Verifica la configuración SMTP en "Configuración SMTP" (solo superadmin). Asegúrate de que las credenciales sean correctas y el servidor SMTP esté activo.
-
-P: ¿Cómo cambio la contraseña de un usuario?
-R: Solo el superadministrador puede gestionar usuarios desde el menú "Usuarios". Desde allí puede cambiar contraseñas o enviar accesos.
-
-P: ¿Puedo editar una calificación ya enviada?
-R: No. Una vez que el evaluador envía la calificación definitiva, no puede modificarse. Contacta al administrador si hay un error.
-=== FIN DOCUMENTACIÓN ===
-${contextData}`;
+Responde siempre en español, de forma concisa y precisa. Si te preguntan algo que no está en los datos disponibles, dilo claramente.
+Las calificaciones son sobre 5.0. Los estados posibles de tesis son: submitted, under_review, returned, approved, assigned, evaluated, defended, finalized.${contextData}`;
 
   try {
     const anthropic = new Anthropic({ apiKey });
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
+      max_tokens: 1024,
       system: systemPrompt,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
     });
@@ -7516,74 +7336,46 @@ ${contextData}`;
   }
 });
 
+// Middleware para rutas no encontradas
+app.use((req, res) => {
+  logger.warn(`Ruta no encontrada: ${req.method} ${req.url}`, {
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
+  res.status(404).json({ error: 'Ruta no encontrada' });
+});
 
-// ── GioBot alerts endpoint ────────────────────────────────────────────────────
-app.get('/chat/alerts', authMiddleware, (req, res) => {
-  const userId = req.user.id;
-  const roles = Array.isArray(req.user.roles) ? req.user.roles : [req.user.role];
-  const alerts = [];
+// Health check endpoint
+app.get('/health', (req, res) => {
+  const uptime = process.uptime();
+  const memoryUsage = process.memoryUsage();
 
+  // Verificar conexión a base de datos
+  let dbStatus = 'ok';
   try {
-    const isEvaluator = roles.some(r => r === 'evaluator');
-    const isAdmin = roles.some(r => r === 'admin' || r === 'superadmin');
-
-    if (isEvaluator) {
-      // Tesis asignadas como evaluador sin evaluación completada
-      const pendingEval = db.prepare(`
-        SELECT t.title FROM thesis_evaluators te
-        JOIN theses t ON t.id = te.thesis_id
-        LEFT JOIN evaluations e ON e.thesis_evaluator_id = te.id
-        WHERE te.evaluator_id = ? AND te.role = 'evaluator'
-          AND (e.id IS NULL OR e.final_score IS NULL)
-          AND t.status NOT IN ('finalized')
-      `).all(userId);
-      if (pendingEval.length > 0) {
-        alerts.push(`Tienes ${pendingEval.length} tesis pendiente(s) de evaluar: ${pendingEval.map(t => t.title).join(', ')}.`);
-      }
-
-      // Tesis dirigidas con documentos nuevos (últimas 48h)
-      const recentDocs = db.prepare(`
-        SELECT COUNT(*) as cnt FROM thesis_files tf
-        JOIN theses t ON t.id = tf.thesis_id
-        JOIN thesis_evaluators te ON te.thesis_id = t.id
-        WHERE te.evaluator_id = ? AND te.role = 'director'
-          AND tf.uploaded_at >= datetime('now', '-48 hours')
-      `).get(userId);
-      if (recentDocs && recentDocs.cnt > 0) {
-        alerts.push(`${recentDocs.cnt} documento(s) nuevo(s) subido(s) en las últimas 48 horas en tus tesis dirigidas.`);
-      }
-    }
-
-    if (isAdmin) {
-      // Tesis enviadas sin asignar evaluador
-      const unassigned = db.prepare(`
-        SELECT COUNT(*) as cnt FROM theses t
-        LEFT JOIN thesis_evaluators te ON te.thesis_id = t.id AND te.role = 'evaluator'
-        WHERE t.status IN ('submitted','under_review') AND te.id IS NULL
-      `).get();
-      if (unassigned && unassigned.cnt > 0) {
-        alerts.push(`${unassigned.cnt} tesis enviada(s) sin evaluador asignado.`);
-      }
-
-      // Tesis asignadas con evaluación pendiente hace más de 7 días
-      const stalePending = db.prepare(`
-        SELECT COUNT(*) as cnt FROM theses t
-        JOIN thesis_evaluators te ON te.thesis_id = t.id AND te.role = 'evaluator'
-        LEFT JOIN evaluations e ON e.thesis_evaluator_id = te.id
-        WHERE t.status = 'assigned'
-          AND (e.id IS NULL OR e.final_score IS NULL)
-          AND t.updated_at <= datetime('now', '-7 days')
-      `).get();
-      if (stalePending && stalePending.cnt > 0) {
-        alerts.push(`${stalePending.cnt} tesis asignada(s) sin evaluación completada desde hace más de 7 días.`);
-      }
-    }
+    db.prepare('SELECT 1').get();
   } catch (err) {
-    console.error('GioBot alerts error:', err);
+    dbStatus = 'error';
+    console.error('Database health check failed:', err.message);
   }
 
-  res.json({ alerts });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: `${Math.floor(uptime)}s`,
+    memory: {
+      rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
+      heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`
+    },
+    database: dbStatus,
+    version: process.version,
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
+
 
 app.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on http://0.0.0.0:${PORT}`, {

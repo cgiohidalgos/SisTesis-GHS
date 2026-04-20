@@ -342,7 +342,7 @@ export default function RegisterThesis() {
           throw new Error(errData?.error || "Error creando proyecto de grado");
         }
         // Todo guardado en un solo paso — navegar directamente
-        toast.success("Proyecto de grado registrado correctamente");
+        toast.success("Proyecto de grado registrado correctamente. Recibirás notificaciones por correo — si no llegan, revisa tu carpeta de spam.", { duration: 15000 });
         navigate("/student");
         return;
       }

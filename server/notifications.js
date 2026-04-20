@@ -51,7 +51,17 @@ async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
   
   try {
     const transporter = createTransport(config);
-    const info = await transporter.sendMail({ from: config.username, to: toEmail, subject, html: body });
+    const info = await transporter.sendMail({
+      from: `"SisTesis USB Cali" <${config.username}>`,
+      to: toEmail,
+      subject,
+      html: body,
+      headers: {
+        'X-Mailer': 'SisTesis-Notifier',
+        'Precedence': 'bulk',
+        'List-Unsubscribe': `<mailto:${config.username}?subject=unsubscribe>`,
+      },
+    });
     console.log('[notify] Email enviado:', info.messageId);
     return true;
   } catch (err) {
@@ -61,7 +71,7 @@ async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
 }
 
 async function sendWelcomeEmail(db, toEmail, fullName, username, password, smtpOwnerId) {
-  const subject = '[SisTesis] Bienvenido al sistema';
+  const subject = 'Bienvenido al sistema';
   const body = `
     <div style="font-family:sans-serif;max-width:600px">
       <h2 style="color:#1a1a2e">Bienvenido${fullName ? `, ${fullName}` : ''}</h2>
@@ -94,7 +104,7 @@ async function notifyEvaluatorRemoved(db, thesisId, evaluatorId, triggeredBy) {
 
   const studentList = students.map(s => `• ${s.full_name || 'Estudiante'}`).join('<br />');
 
-  const subject = `[SisTesis] Ya no eres evaluador de la tesis: ${thesis.title}`;
+  const subject = `Ya no eres evaluador de la tesis: ${thesis.title}`;
   const body = `
     <div style="font-family:sans-serif;max-width:600px">
       <h2 style="color:#1a1a2e">Retiro de asignación como evaluador</h2>
@@ -131,7 +141,7 @@ async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy) {
   const evalFirstName = (evaluator.full_name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '') || 'usuario';
   const evalPassword = evalCedula ? `${evalFirstName}${evalCedula}` : null;
 
-  const subject = `[SisTesis] Has sido asignado como evaluador de la tesis: ${thesis.title}`;
+  const subject = `Has sido asignado como evaluador de la tesis: ${thesis.title}`;
   const body = `
     <div style="font-family:sans-serif;max-width:600px">
       <h2 style="color:#1a1a2e">Nueva asignación de evaluación</h2>
@@ -260,7 +270,7 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
       label = 'Sustentación reprogramada';
     }
     const tpl = db.prepare('SELECT subject, body_html FROM notification_templates WHERE event_type = ?').get(eventType);
-    const subjectTpl  = tpl?.subject   || `[SisTesis] ${label}: {{titulo_tesis}}`;
+    const subjectTpl  = tpl?.subject   || `${label}: {{titulo_tesis}}`;
     const bodyTpl     = tpl?.body_html || `<div style="font-family:sans-serif;max-width:600px"><p>Hola <strong>{{destinatario_nombre}}</strong>,</p><p><strong>Tesis:</strong> {{titulo_tesis}}</p><p><strong>Detalle:</strong> {{descripcion}}</p><hr style="border:none;border-top:1px solid #eee;margin:20px 0"><p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p></div>`;
 
     // Obtener IDs de usuarios involucrados
@@ -308,7 +318,7 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
 
       if (directorIdSet.has(recipientId) && !tpl) {
         // Email enriquecido para directores (sin plantilla personalizada configurada)
-        renderedSubject = `[SisTesis] ${label}: ${thesis.title || ''}`;
+        renderedSubject = `${label}: ${thesis.title || ''}`;
         renderedBody = buildDirectorBody(recipientName, label, description, thesis, studentDetails, programaStr);
       } else {
         const ctx = { ...baseCtx, destinatario_nombre: recipientName };
@@ -373,7 +383,7 @@ function startReminderCron(db) {
         `).get(row.evaluator_id, row.thesis_id, nowSec - daySec);
         if (alreadySent) continue;
 
-        const subject = `[SisTesis] Recordatorio: el plazo de tu evaluación vence ${label}`;
+        const subject = `Recordatorio: el plazo de tu evaluación vence ${label}`;
         const body = `
           <div style="font-family:sans-serif;max-width:600px">
             <h2 style="color:#1a1a2e">Recordatorio: evaluación pendiente de entrega</h2>

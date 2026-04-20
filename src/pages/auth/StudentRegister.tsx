@@ -90,7 +90,7 @@ export default function StudentRegister() {
       }
       const { user, token } = await resp.json();
       if (token) localStorage.setItem('token', token);
-      toast.success("Registro exitoso. Bienvenido(a).");
+      toast.success("Registro exitoso. Bienvenido(a). Revisa tu correo — si no llega, busca en la carpeta de spam.", { duration: 15000 });
       window.location.href = '/';
     } catch (error: any) {
       toast.error(error.message || "Error al registrarse");

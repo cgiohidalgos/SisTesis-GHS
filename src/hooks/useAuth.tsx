@@ -41,7 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchUserData = async (userId: string): Promise<AppRole | null> => {
     let resolvedRole: AppRole | null = null;
     try {
-      const rolesResp = await fetch(`${API_BASE}/user_roles?user_id=${encodeURIComponent(userId)}`);
+      const token = localStorage.getItem('token');
+      const authHeaders: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const rolesResp = await fetch(`${API_BASE}/user_roles?user_id=${encodeURIComponent(userId)}`, { headers: authHeaders });
       const ro = await rolesResp.json();
       setRoles(ro || []);
       setIsSuper(Array.isArray(ro) && ro.includes('superadmin'));
@@ -56,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setRole(resolvedRole);
 
-      const profileResp = await fetch(`${API_BASE}/profiles/${encodeURIComponent(userId)}`);
+      const profileResp = await fetch(`${API_BASE}/profiles/${encodeURIComponent(userId)}`, { headers: authHeaders });
       if (profileResp.ok) {
         const profileData = await profileResp.json();
         setProfile(profileData as AuthContextType["profile"]);

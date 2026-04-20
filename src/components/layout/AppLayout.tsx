@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import GioBot from "@/components/GioBot";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -81,6 +82,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
   };
 
   return (
+    <>
     <div className="min-h-dvh flex">
       {/* Mobile overlay */}
       {sidebarOpen && (
@@ -181,5 +183,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
         <main className="flex-1 p-3 sm:p-6">{children}</main>
       </div>
     </div>
+    {role !== "student" && <GioBot />}
+    </>
   );
 }
