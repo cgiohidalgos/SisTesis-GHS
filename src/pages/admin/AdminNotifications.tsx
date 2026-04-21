@@ -303,7 +303,7 @@ export default function AdminNotifications() {
 
     {/* Modal: Ver mensaje */}
     <Dialog open={!!viewingNotif} onOpenChange={() => setViewingNotif(null)}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg w-[calc(100vw-2rem)]">
         <DialogHeader>
           <DialogTitle>Mensaje enviado</DialogTitle>
         </DialogHeader>
@@ -330,7 +330,7 @@ export default function AdminNotifications() {
 
     {/* Modal: Mensaje personalizado */}
     <Dialog open={!!customTarget} onOpenChange={() => setCustomTarget(null)}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg w-[calc(100vw-2rem)]">
         <DialogHeader>
           <DialogTitle>Mensaje personalizado</DialogTitle>
         </DialogHeader>

@@ -25,6 +25,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       - NODE_ENV=production
       - FRONTEND_URL=https://sistesis.site
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
       - sistesis_data:/app/data
       - sistesis_uploads:/app/uploads

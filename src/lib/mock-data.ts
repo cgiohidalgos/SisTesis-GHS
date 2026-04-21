@@ -112,7 +112,7 @@ export const statusLabels: Record<ThesisStatus, string> = {
 export const statusColors: Record<ThesisStatus, string> = {
   submitted: "info",
   admin_review: "warning",
-  evaluators_assigned: "info",
+  evaluators_assigned: "accent",
   academic_evaluation: "warning",
   concept_issued: "accent",
   corrections_requested: "destructive",

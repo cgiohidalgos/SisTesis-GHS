@@ -5,7 +5,15 @@ export function getApiBase() {
   //   localStorage.setItem('__api_base__', 'https://TU-BACKEND.ngrok-free.app')
   if (typeof window !== 'undefined') {
     const override = localStorage.getItem('__api_base__');
-    if (override) return override;
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (override) {
+      const overrideIsLocal = override.includes('localhost') || override.includes('127.0.0.1');
+      if (overrideIsLocal && !isLocalhost) {
+        localStorage.removeItem('__api_base__');
+      } else {
+        return override;
+      }
+    }
   }
 
   // En desarrollo local (localhost), siempre usar el backend local en el puerto 4000.

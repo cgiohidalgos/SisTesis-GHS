@@ -364,9 +364,6 @@ function EvalScoresDetail({ scores, evaluationType }: { scores: any[]; evaluatio
                       <div key={crit.id} className="pl-2 border-l-2 border-muted">
                         <div className="flex items-center gap-2">
                           <span className="text-sm text-foreground">{info?.name || crit.id}</span>
-                          <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-muted">
-                            {sc.score}/{info?.maxScore ?? 5}
-                          </span>
                         </div>
                         {sc.observations && (
                           <div className="flex items-start gap-1 text-sm text-muted-foreground mt-0.5">

@@ -302,6 +302,26 @@ export default function DirectorThesisDetail() {
           </div>
         )}
 
+        {/* Calificaciones de Sustentación */}
+        {thesis.evaluations?.filter((e: any) => e.evaluation_type === 'presentation').length > 0 && (
+          <div className="mb-6 bg-white dark:bg-slate-950 rounded-2xl border border-border shadow-sm overflow-hidden">
+            <div className="bg-slate-50 dark:bg-slate-900 px-6 py-4 border-b border-border">
+              <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Calificaciones de Sustentación</h3>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {thesis.evaluations.filter((e: any) => e.evaluation_type === 'presentation').map((ev: any, idx: number) => (
+                  <div key={idx} className="bg-slate-50 dark:bg-slate-900 rounded-xl p-4 border border-border">
+                    <p className="text-sm text-muted-foreground font-medium mb-1">{ev.evaluator_name || `Evaluador ${idx + 1}`}</p>
+                    <p className="text-3xl font-black text-primary">{ev.final_score != null ? ev.final_score.toFixed(1) : '-'}<span className="text-sm text-muted-foreground font-normal ml-1">/ 5.00</span></p>
+                    {ev.concept && <p className="text-xs mt-1 capitalize text-muted-foreground">{ev.concept.replace(/_/g, ' ')}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Calificación consolidada */}
         {consolidated && (
           <div className="mb-6 bg-white dark:bg-slate-950 rounded-2xl border border-border shadow-sm overflow-hidden">

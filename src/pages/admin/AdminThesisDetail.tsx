@@ -842,7 +842,16 @@ export default function AdminThesisDetail() {
                           <AccordionItem value={`${ev.id}-doc`} className="border-b px-2">
                             <AccordionTrigger className="hover:no-underline py-2 flex justify-between items-center">
                               <span>Rúbrica de Documento</span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
+                              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                <button
+                                  className="text-xs px-2 py-1 rounded bg-green-100 text-green-800 hover:bg-green-200 font-medium"
+                                  title="Descargar rúbrica llena (XLSX)"
+                                  onClick={() => downloadFile(`/admin/theses/${thesis.id}/rubric-xlsx?evaluator_id=${ev.id}&evaluation_type=document`, `Rubrica_Documento_${(ev.name || 'evaluador').replace(/\s+/g,'_')}.xlsx`)}
+                                >
+                                  📥 XLSX
+                                </button>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
+                              </div>
                             </AccordionTrigger>
                             <AccordionContent className="pb-4">
                               <RubricEvaluation
@@ -874,7 +883,16 @@ export default function AdminThesisDetail() {
                           <AccordionItem value={`${ev.id}-pres`} className="border-b px-2">
                             <AccordionTrigger className="hover:no-underline py-2 flex justify-between items-center">
                               <span>Rúbrica de Sustentación</span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
+                              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                <button
+                                  className="text-xs px-2 py-1 rounded bg-green-100 text-green-800 hover:bg-green-200 font-medium"
+                                  title="Descargar rúbrica llena (XLSX)"
+                                  onClick={() => downloadFile(`/admin/theses/${thesis.id}/rubric-xlsx?evaluator_id=${ev.id}&evaluation_type=presentation`, `Rubrica_Sustentacion_${(ev.name || 'evaluador').replace(/\s+/g,'_')}.xlsx`)}
+                                >
+                                  📥 XLSX
+                                </button>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
+                              </div>
                             </AccordionTrigger>
                             <AccordionContent className="pb-4">
                               <RubricEvaluation
@@ -1070,6 +1088,46 @@ export default function AdminThesisDetail() {
             </p>
           </div>
         )}
+        {/* Calificaciones del Documento */}
+        {thesis.evaluations?.filter((e: any) => e.evaluation_type !== 'presentation').length > 0 && (
+          <div className="mb-6 bg-white dark:bg-slate-950 rounded-2xl border border-border shadow-sm overflow-hidden">
+            <div className="bg-slate-50 dark:bg-slate-900 px-6 py-4 border-b border-border">
+              <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Calificaciones del Documento</h3>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {thesis.evaluations.filter((e: any) => e.evaluation_type !== 'presentation').map((ev: any, idx: number) => (
+                  <div key={idx} className="bg-slate-50 dark:bg-slate-900 rounded-xl p-4 border border-border">
+                    <p className="text-sm text-muted-foreground font-medium mb-1">{ev.evaluator_name || `Evaluador ${idx + 1}`}</p>
+                    <p className="text-3xl font-black text-primary">{ev.final_score != null ? ev.final_score.toFixed(1) : '-'}<span className="text-sm text-muted-foreground font-normal ml-1">/ 5.00</span></p>
+                    {ev.concept && <p className="text-xs mt-1 capitalize text-muted-foreground">{ev.concept.replace(/_/g, ' ')}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Calificaciones de Sustentación */}
+        {thesis.evaluations?.filter((e: any) => e.evaluation_type === 'presentation').length > 0 && (
+          <div className="mb-6 bg-white dark:bg-slate-950 rounded-2xl border border-border shadow-sm overflow-hidden">
+            <div className="bg-slate-50 dark:bg-slate-900 px-6 py-4 border-b border-border">
+              <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Calificaciones de Sustentación</h3>
+            </div>
+            <div className="p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {thesis.evaluations.filter((e: any) => e.evaluation_type === 'presentation').map((ev: any, idx: number) => (
+                  <div key={idx} className="bg-slate-50 dark:bg-slate-900 rounded-xl p-4 border border-border">
+                    <p className="text-sm text-muted-foreground font-medium mb-1">{ev.evaluator_name || `Evaluador ${idx + 1}`}</p>
+                    <p className="text-3xl font-black text-primary">{ev.final_score != null ? ev.final_score.toFixed(1) : '-'}<span className="text-sm text-muted-foreground font-normal ml-1">/ 5.00</span></p>
+                    {ev.concept && <p className="text-xs mt-1 capitalize text-muted-foreground">{ev.concept.replace(/_/g, ' ')}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* consolidated score for admin */}
         {consolidated && (
           <div className="mb-6 bg-white dark:bg-slate-950 rounded-2xl border border-border shadow-sm overflow-hidden">
@@ -1748,7 +1806,7 @@ export default function AdminThesisDetail() {
       </div>
 
       <Dialog open={showReplaceDialog} onOpenChange={setShowReplaceDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg w-[calc(100vw-2rem)]">
           <DialogHeader>
             <DialogTitle>{isAddingEvaluator ? 'Agregar evaluador' : 'Reemplazar evaluador'}</DialogTitle>
           </DialogHeader>

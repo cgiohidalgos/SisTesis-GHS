@@ -444,35 +444,107 @@ export default function StudentTimeline() {
                 assignedEvaluatorIds.every((id: any) => presentationEvaluatorIds.has(id));
 
               const shouldShowConsolidated =
+                hasDefense &&
                 docAvg != null &&
                 finalScore != null &&
-                // Si hay sustentación programada, mostrar solo cuando TODOS los evaluadores hayan evaluado
-                (!hasDefense || (hasDefense && allEvaluatedPresentation));
+                allEvaluatedPresentation;
 
               return (
                 <div className="space-y-4 mt-6">
                   {/* Document scores */}
-                  {docEvals.length > 0 && (
-                    <ScoreCard label="Calificaciones del Documento">
-                      <p className="text-xs text-muted-foreground mb-2">
-                        Esta evaluación vale <strong>{weights.doc}%</strong> de la nota final.
-                      </p>
-                      {docEvals.map((ev:any, i:number) => (
-                        <div key={ev.id || i} className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">{isBlind ? `Evaluador ${i+1}` : ev.evaluator_name}</span>
-                          <span className="font-semibold">{Number(ev.final_score).toFixed(1)}</span>
-                        </div>
-                      ))}
-                      {docAvg != null && (
-                        <div className="border-t pt-2 mt-2 flex justify-between text-sm font-bold">
-                          <span>Promedio Documento</span>
-                          <span>{docAvg.toFixed(1)} / 5.0</span>
-                        </div>
-                      )}
-                    </ScoreCard>
-                  )}
+                  {docEvals.length > 0 && (() => {
+                    const clsDoc = (score: number | null) => {
+                      if (score === null) return null;
+                      if (score < 3) return { code: 'I', label: 'Insuficiente', color: 'text-red-600' };
+                      if (score < 4) return { code: 'P', label: 'Parcialmente suficiente', color: 'text-yellow-600' };
+                      return { code: 'S', label: 'Suficiente', color: 'text-green-600' };
+                    };
+                    if (thesis.isPregrado && thesis.sectionClassifications?.document) {
+                      return (
+                        <ScoreCard label="Clasificación por Sección — Documento">
+                          {thesis.sectionClassifications.document.map((sc: any) => {
+                            const cls = sc.classification;
+                            const color = cls
+                              ? cls.code === 'S' ? 'text-green-600' : cls.code === 'P' ? 'text-yellow-600' : 'text-red-600'
+                              : 'text-muted-foreground';
+                            return (
+                              <div key={sc.section_id} className="flex justify-between items-center text-sm py-1">
+                                <span className="text-muted-foreground">{sc.section_name}</span>
+                                {cls ? (
+                                  <span className={`font-bold ${color}`}>{cls.code} — {cls.label}</span>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </ScoreCard>
+                      );
+                    }
+                    // Posgrado: before defense → per-evaluator I/P/S only; after defense → numeric scores
+                    const clsDescriptions: Record<string, string> = {
+                      I: 'No cumple los criterios mínimos requeridos.',
+                      P: 'Cumple algunos criterios pero requiere mejoras.',
+                      S: 'Cumple satisfactoriamente todos los criterios de evaluación.',
+                    };
+                    if (!hasDefense) {
+                      return (
+                        <ScoreCard label="Calificaciones del Documento">
+                          <div className="space-y-3 mb-3">
+                            {docEvals.map((ev: any, i: number) => {
+                              const evCls = clsDoc(ev.final_score != null ? Number(ev.final_score) : null);
+                              return (
+                                <div key={ev.id || i} className="text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-muted-foreground font-medium">{isBlind ? `Evaluador ${i + 1}` : ev.evaluator_name}:</span>
+                                    {evCls ? (
+                                      <span className={`font-bold ${evCls.color}`}>{evCls.code} — {evCls.label}</span>
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </div>
+                                  {evCls && (
+                                    <p className="text-xs text-muted-foreground mt-0.5 ml-1">{clsDescriptions[evCls.code]}</p>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <p className="text-xs text-muted-foreground border-t pt-2">
+                            Esta evaluación vale <strong>{weights.doc}%</strong> de la nota final.
+                          </p>
+                        </ScoreCard>
+                      );
+                    }
+                    // After defense scheduled: show numeric scores
+                    const docCls = clsDoc(docAvg);
+                    return (
+                      <ScoreCard label="Calificaciones del Documento">
+                        {docCls && (
+                          <div className="mb-3">
+                            <span className={`text-base font-black ${docCls.color}`}>{docCls.code} — {docCls.label}</span>
+                          </div>
+                        )}
+                        <p className="text-xs text-muted-foreground mb-2">
+                          Esta evaluación vale <strong>{weights.doc}%</strong> de la nota final.
+                        </p>
+                        {docEvals.map((ev: any, i: number) => (
+                          <div key={ev.id || i} className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">{isBlind ? `Evaluador ${i + 1}` : ev.evaluator_name}</span>
+                            <span className="font-semibold">{Number(ev.final_score).toFixed(1)}</span>
+                          </div>
+                        ))}
+                        {docAvg != null && (
+                          <div className="border-t pt-2 mt-2 flex justify-between text-sm font-bold">
+                            <span>Promedio Documento</span>
+                            <span>{docAvg.toFixed(1)} / 5.0</span>
+                          </div>
+                        )}
+                      </ScoreCard>
+                    );
+                  })()}
 
-                  {/* Presentation scores */}
+                  {/* Presentation scores — always numeric */}
                   {presEvals.length > 0 && (
                     <ScoreCard label="Calificaciones de la Sustentación">
                       <p className="text-xs text-muted-foreground mb-2">
@@ -494,7 +566,15 @@ export default function StudentTimeline() {
                   )}
 
                   {/* Consolidated */}
-                  {shouldShowConsolidated && (
+                  {shouldShowConsolidated && (() => {
+                    const clsDoc = (score: number | null) => {
+                      if (score === null) return null;
+                      if (score < 3) return { code: 'I', label: 'Insuficiente', color: 'text-red-600' };
+                      if (score < 4) return { code: 'P', label: 'Parcialmente suficiente', color: 'text-yellow-600' };
+                      return { code: 'S', label: 'Suficiente', color: 'text-green-600' };
+                    };
+                    const docCls = thesis.isPregrado ? clsDoc(docAvg) : null;
+                    return (
                     <ScoreCard label="Calificación Consolidada">
                       <div className="text-center mb-3">
                         <span className="text-3xl font-black text-primary">{Number(finalScore).toFixed(1)}</span>
@@ -503,20 +583,32 @@ export default function StudentTimeline() {
                       <div className="text-sm text-center font-semibold text-muted-foreground mb-2">Nota Final Ponderada</div>
                       {hasDefense && allEvaluatedPresentation ? (
                         <p className="text-sm text-center text-muted-foreground break-words">
-                          Cálculo: ({docAvg.toFixed(1)} × {w.doc}%) + ({presAvg?.toFixed(1)} × {w.presentation}%) = {Number(finalScore).toFixed(1)}
+                          {thesis.isPregrado && docCls
+                            ? <>Documento: <span className={`font-semibold ${docCls.color}`}>{docCls.code}</span> ({docAvg.toFixed(1)} × {w.doc}%) + Sustentación: {presAvg?.toFixed(1)} × {w.presentation}% = {Number(finalScore).toFixed(1)}</>
+                            : <>Cálculo: ({docAvg.toFixed(1)} × {w.doc}%) + ({presAvg?.toFixed(1)} × {w.presentation}%) = {Number(finalScore).toFixed(1)}</>
+                          }
                         </p>
                       ) : (
                         <p className="text-sm text-center text-muted-foreground break-words">
-                          Cálculo: promedio documento = {docAvg.toFixed(1)}
+                          {thesis.isPregrado && docCls
+                            ? <>Documento: <span className={`font-semibold ${docCls.color}`}>{docCls.code} — {docCls.label}</span> ({docAvg.toFixed(1)})</>
+                            : <>Cálculo: promedio documento = {docAvg.toFixed(1)}</>
+                          }
                         </p>
                       )}
 
                       {perEvaluator.length > 0 && (
                         <div className="border-t pt-3 mt-3 space-y-2">
-                          {perEvaluator.map((pe, i) => (
+                          {perEvaluator.map((pe, i) => {
+                            const peCls = thesis.isPregrado ? clsDoc(pe.docScore) : null;
+                            return (
                             <div key={i} className="text-sm text-muted-foreground">
                               <span className="font-medium text-foreground">{pe.name || `Evaluador ${i+1}`}:</span>{' '}
-                              {pe.docScore != null && <>documento {pe.docScore.toFixed(1)}</>}
+                              {pe.docScore != null && (
+                                thesis.isPregrado && peCls
+                                  ? <><span className={`font-semibold ${peCls.color}`}>{peCls.code}</span> ({pe.docScore.toFixed(1)})</>
+                                  : <>documento {pe.docScore.toFixed(1)}</>
+                              )}
                               {pe.presScore != null && <>, sustentación {pe.presScore.toFixed(1)}</>}
                               {pe.total != null && <>, total <span className="font-semibold text-foreground">{pe.total.toFixed(1)}</span></>}
                               {pe.docScore != null && pe.presScore != null && (
@@ -525,11 +617,13 @@ export default function StudentTimeline() {
                                 </div>
                               )}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </ScoreCard>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })()}

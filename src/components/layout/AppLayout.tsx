@@ -12,6 +12,7 @@ import {
   Settings,
   Bell,
   ClipboardCheck,
+  BarChart2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -65,6 +66,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
     items = [
       ...items,
       { label: 'Notificaciones', href: '/admin/notifications', icon: Bell },
+      { label: 'Reportes', href: '/admin/reports', icon: BarChart2 },
     ];
   }
   if (isSuper && effectiveRole === 'admin') {

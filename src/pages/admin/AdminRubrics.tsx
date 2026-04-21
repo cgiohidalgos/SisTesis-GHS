@@ -27,6 +27,7 @@ export default function AdminRubrics() {
   const [editSections, setEditSections] = useState<RubricSection[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadingDefaults, setLoadingDefaults] = useState(false);
+  const [resettingDefaults, setResettingDefaults] = useState(false);
   const [downloadingXlsx, setDownloadingXlsx] = useState(false);
 
   const handleDownloadXlsx = async () => {
@@ -50,6 +51,36 @@ export default function AdminRubrics() {
       toast.error(err.message || 'Error descargando');
     } finally {
       setDownloadingXlsx(false);
+    }
+  };
+
+  const handleResetDefaults = async () => {
+    if (!selectedProgram) return;
+    if (!window.confirm('¿Seguro que deseas reemplazar las rúbricas actuales con las de por defecto? Esta acción no se puede deshacer.')) return;
+    setResettingDefaults(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/admin/program-rubrics/${selectedProgram}/reset`, {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('Error reemplazando rúbricas');
+      const data = await resp.json();
+      toast.success(data.message || 'Rúbricas reemplazadas');
+      const rubResp = await fetch(`${API_BASE}/admin/program-rubrics/${selectedProgram}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (rubResp.ok) {
+        let rubData = await rubResp.json();
+        rubData = rubData.map((r: any) => ({ ...r, sections_json: typeof r.sections_json === 'string' ? JSON.parse(r.sections_json) : r.sections_json }));
+        setRubrics(rubData);
+        setEditingType("");
+        setEditSections([]);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Error');
+    } finally {
+      setResettingDefaults(false);
     }
   };
 
@@ -238,8 +269,8 @@ export default function AdminRubrics() {
 
   return (
     <AppLayout role={isSuper ? "superadmin" : "admin"}>
-      <div className="max-w-4xl mx-auto p-6">
-        <h2 className="text-3xl font-bold mb-6">Gestión de Rúbricas</h2>
+      <div className="max-w-4xl mx-auto px-0">
+        <h2 className="text-2xl sm:text-3xl font-bold mb-6">Gestión de Rúbricas</h2>
 
         {/* Selector de programa */}
         <div className="mb-6">
@@ -272,6 +303,14 @@ export default function AdminRubrics() {
                   >
                     {downloadingXlsx ? '⏳ Descargando...' : '📥 Descargar Rúbricas Completas (XLSX)'}
                   </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleResetDefaults}
+                    disabled={resettingDefaults}
+                    className="text-orange-700 border-orange-400 hover:bg-orange-50"
+                  >
+                    {resettingDefaults ? '⏳ Reemplazando...' : '🔄 Restablecer rúbricas por defecto'}
+                  </Button>
                 </div>
 
                 <Accordion type="single" collapsible className="w-full border rounded-lg overflow-hidden">
@@ -288,8 +327,8 @@ export default function AdminRubrics() {
                         <div className="space-y-4">
                           {editSections.map((section, sectionIdx) => (
                             <div key={sectionIdx} className="border rounded p-3 space-y-2 bg-secondary/50">
-                              <div className="flex items-end gap-2">
-                                <div className="flex-1 grid grid-cols-2 gap-2">
+                              <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                                <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
                                   <div>
                                     <label className="text-xs font-medium">Nombre Sección</label>
                                     <Input
@@ -322,7 +361,7 @@ export default function AdminRubrics() {
                               <div className="space-y-2 mt-3 p-2 bg-white/50 rounded">
                                 <p className="text-xs font-medium">Criterios:</p>
                                 {section.criteria.map((criterion, criterionIdx) => (
-                                  <div key={criterionIdx} className="flex gap-2 items-end">
+                                  <div key={criterionIdx} className="flex flex-col sm:flex-row gap-2 sm:items-end">
                                     <Input
                                       placeholder="Nombre del criterio"
                                       value={criterion.name}
@@ -334,7 +373,7 @@ export default function AdminRubrics() {
                                       placeholder="Puntuación máxima"
                                       value={criterion.maxScore}
                                       onChange={(e) => handleCriterionChange(sectionIdx, criterionIdx, 'maxScore', Number(e.target.value))}
-                                      className="w-24 text-sm"
+                                      className="sm:w-24 text-sm"
                                     />
                                     <Button
                                       variant="outline"

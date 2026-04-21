@@ -1,8 +1,8 @@
 import AppLayout from "@/components/layout/AppLayout";
 import ThesisCard from "@/components/thesis/ThesisCard";
-import { FileText, Users, CheckCircle2, Clock } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { FileText, Users, CheckCircle2, Clock, AlertTriangle, CalendarDays } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import {
   BarChart,
@@ -19,6 +19,20 @@ import {
 
 import { getApiBase } from "@/lib/utils";
 const API_BASE = getApiBase();
+
+function getDefenseDate(thesis: any): Date | null {
+  if (thesis.defense_date) {
+    const ms = thesis.defense_date > 1e12 ? thesis.defense_date : thesis.defense_date * 1000;
+    return new Date(ms);
+  }
+  for (const ev of (thesis.timeline || [])) {
+    if (ev.defense_date) {
+      const ms = ev.defense_date > 1e12 ? ev.defense_date : ev.defense_date * 1000;
+      return new Date(ms);
+    }
+  }
+  return null;
+}
 
 export default function AdminDashboard() {
   const { isSuper } = useAuth();
@@ -47,7 +61,6 @@ export default function AdminDashboard() {
           { label: 'Finalizadas', value: sjson.finalized, icon: CheckCircle2, color: 'text-success' },
           { label: 'Evaluadores', value: sjson.evaluators, icon: Users, color: 'text-accent' },
         ];
-        // due stats
         const dueStats = [];
         if (sjson.overdue !== undefined) {
           dueStats.push({ label: 'Evaluaciones vencidas', value: sjson.overdue, icon: Clock, color: 'text-destructive', link: '/admin/evaluations?due=overdue' });
@@ -62,7 +75,9 @@ export default function AdminDashboard() {
           dueStats.push({ label: 'Vence <30d', value: sjson.due30, icon: Clock, color: 'text-warning', link: '/admin/evaluations?due=30' });
         }
         setStats(baseStats.concat(dueStats));
-        if (sjson.byProgram) setByProgram(sjson.byProgram);        if (sjson.evaluatorStats) setEvalStats(sjson.evaluatorStats);      }
+        if (sjson.byProgram) setByProgram(sjson.byProgram);
+        if (sjson.evaluatorStats) setEvalStats(sjson.evaluatorStats);
+      }
       if (tresp.ok) {
         const tjson = await tresp.json();
         setTheses(tjson);
@@ -76,6 +91,27 @@ export default function AdminDashboard() {
     fetchData();
   }, []);
 
+  const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
+
+  // Theses with overdue evaluators
+  const overdueTheses = useMemo(() => theses.filter(t =>
+    (t.evaluators || []).some((e: any) => {
+      if (!e.due_date) return false;
+      const due = new Date(e.due_date > 1e12 ? e.due_date : e.due_date * 1000);
+      due.setHours(0,0,0,0);
+      return due < today;
+    })
+  ), [theses, today]);
+
+  // Upcoming defenses in next 7 days
+  const upcomingDefenses = useMemo(() => {
+    const in7 = new Date(today); in7.setDate(in7.getDate() + 7);
+    return theses
+      .map(t => ({ thesis: t, date: getDefenseDate(t) }))
+      .filter(({ date }) => date && date >= today && date <= in7)
+      .sort((a, b) => a.date!.getTime() - b.date!.getTime());
+  }, [theses, today]);
+
   return (
     <AppLayout role="admin">
       <div className="max-w-4xl mx-auto px-0">
@@ -86,23 +122,80 @@ export default function AdminDashboard() {
           Gestión integral del proceso de evaluación de proyectos de grado.
         </p>
 
+        {/* Urgency alert */}
+        {overdueTheses.length > 0 && (
+          <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/8 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
+              <p className="text-sm font-semibold text-destructive">
+                {overdueTheses.length} proyecto(s) con evaluación vencida
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              {overdueTheses.slice(0, 5).map(t => (
+                <Link
+                  key={t.id}
+                  to={`/admin/theses/${t.id}`}
+                  className="flex items-center justify-between text-xs text-destructive/90 hover:text-destructive hover:underline py-0.5"
+                >
+                  <span className="line-clamp-1 flex-1">{t.title}</span>
+                  <span className="ml-2 flex-shrink-0">
+                    {(t.students || []).map((s: any) => s.name?.split(' ').slice(0,2).join(' ')).filter(Boolean).join(', ')}
+                  </span>
+                </Link>
+              ))}
+              {overdueTheses.length > 5 && (
+                <Link to="/admin/evaluations?due=overdue" className="text-xs text-destructive hover:underline">
+                  Ver {overdueTheses.length - 5} más →
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Upcoming defenses */}
+        {upcomingDefenses.length > 0 && (
+          <div className="mb-6 rounded-lg border border-info/40 bg-info/8 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <CalendarDays className="w-4 h-4 text-info flex-shrink-0" />
+              <p className="text-sm font-semibold text-info">
+                {upcomingDefenses.length} defensa(s) en los próximos 7 días
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              {upcomingDefenses.map(({ thesis, date }) => (
+                <Link
+                  key={thesis.id}
+                  to={`/admin/theses/${thesis.id}`}
+                  className="flex items-center justify-between text-xs text-info/90 hover:text-info hover:underline py-0.5"
+                >
+                  <span className="line-clamp-1 flex-1">{thesis.title}</span>
+                  <span className="ml-2 flex-shrink-0 font-medium">
+                    {date!.toLocaleDateString('es-CO', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-8">
           {stats.map((stat) => (
             <div
               key={stat.label}
-              className={`bg-card rounded-lg border shadow-card p-5 ${stat.link ? 'cursor-pointer hover:bg-accent/10' : ''}`}
+              className={`bg-card rounded-lg border shadow-card p-3 sm:p-5 ${stat.link ? 'cursor-pointer hover:bg-accent/10' : ''}`}
               onClick={() => {
                 if (stat.link) navigate(stat.link);
               }}
             >
               <div className="flex items-center justify-between mb-2">
-                <stat.icon className={`w-5 h-5 ${stat.color}`} />
+                <stat.icon className={`w-4 h-4 sm:w-5 sm:h-5 ${stat.color}`} />
               </div>
-              <p className="text-2xl font-heading font-bold text-foreground">
+              <p className="text-xl sm:text-2xl font-heading font-bold text-foreground">
                 {stat.value}
               </p>
-              <p className="text-xs text-muted-foreground">{stat.label}</p>
+              <p className="text-xs text-muted-foreground leading-tight">{stat.label}</p>
             </div>
           ))}
         </div>
@@ -149,12 +242,10 @@ export default function AdminDashboard() {
                   {byProgram.map((p) => {
                     const counts = p.counts || {};
                     const inEval = (counts.submitted || 0) + (counts.revision_minima || 0) + (counts.revision_cuidados || 0);
-                    // treat both status keys that represent completion
                     const fin = (counts.sustentacion || 0) + (counts.finalized || 0);
-                    // other statuses are any count not in the above and not deleted
                     const other = Object.entries(counts)
                       .filter(([k]) => !['submitted','revision_minima','revision_cuidados','sustentacion','finalized'].includes(k))
-                      .reduce((sum, [,v]) => sum + v, 0);
+                      .reduce((sum, [,v]) => sum + (v as number), 0);
                     return (
                       <tr key={p.program_id} className="border-t">
                         <td className="p-2">{p.program_name || 'Sin programa'}</td>
@@ -167,7 +258,6 @@ export default function AdminDashboard() {
                 </tbody>
               </table>
             </div>
-            {/* chart per program */}
             <div className="mb-8 h-48 sm:h-64 bg-card rounded-lg p-4 shadow-card">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={byProgram.map(p => {
@@ -176,13 +266,8 @@ export default function AdminDashboard() {
                   const fin = counts.sustentacion || 0;
                   const other = Object.entries(counts)
                     .filter(([k]) => !['submitted','revision_minima','revision_cuidados','sustentacion'].includes(k))
-                    .reduce((sum, [,v]) => sum + v, 0);
-                  return {
-                    name: p.program_name,
-                    inEval,
-                    finalized: fin,
-                    other,
-                  };
+                    .reduce((sum, [,v]) => sum + (v as number), 0);
+                  return { name: p.program_name, inEval, finalized: fin, other };
                 })}>
                   <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" interval={0} height={48} tickFormatter={(v: string) => v.length > 12 ? v.slice(0, 12) + '…' : v} />
                   <YAxis />
@@ -194,7 +279,6 @@ export default function AdminDashboard() {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            {/* evaluator breakdown */}
             {evalStats.length > 0 && (
               <>
                 <h3 className="font-heading text-lg font-semibold text-foreground mb-4">
@@ -228,13 +312,18 @@ export default function AdminDashboard() {
           Proyectos recientes
         </h3>
         <div className="space-y-4">
-          {theses.map((thesis) => (
+          {theses.slice(0, 5).map((thesis) => (
             <ThesisCard
               key={thesis.id}
               thesis={thesis}
               linkTo="/admin/theses"
             />
           ))}
+          {theses.length > 5 && (
+            <Link to="/admin/theses" className="block text-center text-sm text-accent hover:underline py-2">
+              Ver todos los {theses.length} proyectos →
+            </Link>
+          )}
         </div>
       </div>
     </AppLayout>

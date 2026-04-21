@@ -176,15 +176,28 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
                 <div className="text-right">
                   <span className="text-2xl font-heading font-bold text-accent">{sectionAvg.toFixed(1)}</span>
                   <span className="text-sm text-muted-foreground">/5.0</span>
+                  {thesis?.isPregrado && (() => {
+                    const cls = sectionAvg < 3
+                      ? { code: 'I', label: 'Insuficiente', color: 'text-red-600' }
+                      : sectionAvg < 4
+                      ? { code: 'P', label: 'Parcialmente suficiente', color: 'text-yellow-600' }
+                      : { code: 'S', label: 'Suficiente', color: 'text-green-600' };
+                    return (
+                      <div className="mt-0.5">
+                        <span className={cn('text-sm font-bold', cls.color)}>{cls.code}</span>
+                        <span className={cn('text-xs ml-1', cls.color)}>{cls.label}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
             <div className="divide-y divide-border">
               {section.criteria.map((criterion) => (
                 <div key={criterion.id} className="px-5 py-4">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
                     <span className="text-sm font-medium text-foreground">{criterion.name}</span>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 flex-shrink-0">
                       {[1, 2, 3, 4, 5].map((score) => (
                         <button
                           key={score}
@@ -324,7 +337,7 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
 
       {/* Final Score */}
       <div className="bg-card rounded-lg border shadow-elevated p-6">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
           <h3 className="font-heading text-lg font-bold text-foreground">Nota Final Ponderada</h3>
           {displayFinalScore !== null ? (
             <div className="text-right">

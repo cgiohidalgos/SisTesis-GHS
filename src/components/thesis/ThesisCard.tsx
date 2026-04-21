@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { FileText, Users, Calendar } from "lucide-react";
+import { FileText, Users, Calendar, AlertTriangle, Clock } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import type { Thesis } from "@/lib/mock-data";
 
@@ -12,6 +12,19 @@ interface ThesisCardProps {
 }
 
 export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, hasActa }: ThesisCardProps) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let urgency: 'overdue' | 'soon' | null = null;
+  for (const e of thesis.evaluators) {
+    if (!e.due_date) continue;
+    const due = new Date((e.due_date as any) > 1e12 ? (e.due_date as any) : (e.due_date as any) * 1000);
+    due.setHours(0, 0, 0, 0);
+    const diffDays = (due.getTime() - today.getTime()) / 86400000;
+    if (diffDays < 0) { urgency = 'overdue'; break; }
+    if (diffDays <= 3) urgency = urgency === 'overdue' ? 'overdue' : 'soon';
+  }
+
   return (
     <Link
       to={linkTo}
@@ -22,11 +35,21 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
           <h3 className="font-heading font-semibold text-foreground group-hover:text-accent transition-colors line-clamp-2">
             {thesis.title}
           </h3>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+            {urgency === 'overdue' && (
+              <span className="inline-flex items-center gap-1 text-xs bg-destructive/15 text-destructive px-2 py-0.5 rounded font-medium">
+                <AlertTriangle className="w-3 h-3" />
+                Vencido
+              </span>
+            )}
+            {urgency === 'soon' && (
+              <span className="inline-flex items-center gap-1 text-xs bg-warning/15 text-warning px-2 py-0.5 rounded font-medium">
+                <Clock className="w-3 h-3" />
+                Vence pronto
+              </span>
+            )}
             {evalCompleted ? (
-              <>
-                <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">{hasActa ? 'Terminada con Acta' : 'Evaluación terminada'}</span>
-              </>
+              <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">{hasActa ? 'Terminada con Acta' : 'Evaluación terminada'}</span>
             ) : evaluated ? (
               <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">Evaluado</span>
             ) : null}

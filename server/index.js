@@ -1500,9 +1500,12 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
   const assignment = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, req.user.id);
   if (!assignment) return res.status(403).json({ error: 'No tiene acceso a esta tesis' });
 
-  const program = db.prepare('SELECT name FROM programs WHERE id = ?').get(thesis.program_id);
-  const rubric = db.prepare('SELECT * FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(thesis.program_id, evaluation_type);
+  const thesisProgramRow = db.prepare('SELECT p.id, p.name FROM programs p JOIN thesis_programs tp ON p.id = tp.program_id WHERE tp.thesis_id = ? LIMIT 1').get(thesis_id);
+  const program = thesisProgramRow;
+  const rubric = thesisProgramRow ? db.prepare('SELECT * FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(thesisProgramRow.id, evaluation_type) : null;
   if (!rubric) return res.status(404).json({ error: 'Rúbrica no encontrada para este programa' });
+  const isPregrado = program && /^Ingenier/i.test(program.name);
+  const maxCol = isPregrado ? 8 : 7;
 
   // Buscar evaluación existente del evaluador para esta tesis/tipo (ronda actual)
   const currentRound = thesis.revision_round || 0;
@@ -1553,26 +1556,27 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
     ws.columns = [
       { width: 28 }, { width: 10 }, { width: 8 },
       { width: 42 }, { width: 16 }, { width: 18 }, { width: 20 },
+      ...(isPregrado ? [{ width: 26 }] : []),
     ];
 
     // Título
-    const tRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '']);
-    ws.mergeCells(1, 1, 1, 7); tRow.height = 32;
+    const tRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(1, 1, 1, maxCol); tRow.height = 32;
     Object.assign(tRow.getCell(1), { font: font(true, 14, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
 
     // Programa
-    const pRow = ws.addRow([programName, '', '', '', '', '', '']);
-    ws.mergeCells(2, 1, 2, 7); pRow.height = 20;
+    const pRow = ws.addRow([programName, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(2, 1, 2, maxCol); pRow.height = 20;
     Object.assign(pRow.getCell(1), { font: font(false, 11, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
 
     // Tesis
-    const thesisRow = ws.addRow([`Tesis: ${thesis.title || ''}`, '', '', '', '', '', '']);
-    ws.mergeCells(3, 1, 3, 7); thesisRow.height = 18;
+    const thesisRow = ws.addRow([`Tesis: ${thesis.title || ''}`, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(3, 1, 3, maxCol); thesisRow.height = 18;
     Object.assign(thesisRow.getCell(1), { font: font(false, 10, COLOR.titleFg), fill: fill('2E5080'), alignment: align('left', 'middle', true), border: bdr() });
 
     // Estado
-    const estadoRow = ws.addRow([isFilled ? '✅ Evaluación enviada — puntajes cargados automáticamente' : '⚠️ Evaluación pendiente — complete la columna amarilla', '', '', '', '', '', '']);
-    ws.mergeCells(4, 1, 4, 7); estadoRow.height = 18;
+    const estadoRow = ws.addRow([isFilled ? '✅ Evaluación enviada — puntajes cargados automáticamente' : '⚠️ Evaluación pendiente — complete la columna amarilla', '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(4, 1, 4, maxCol); estadoRow.height = 18;
     const estadoCell = estadoRow.getCell(1);
     estadoCell.font = { name: 'Calibri', italic: true, size: 10, color: { argb: isFilled ? 'FF375623' : 'FF8B5E00' } };
     estadoCell.fill = fill(isFilled ? 'E2EFDA' : 'FFF8E1');
@@ -1580,7 +1584,7 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
     estadoCell.border = bdr();
 
     // Encabezados
-    const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado']);
+    const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado', ...(isPregrado ? ['Clasificación'] : [])]);
     hRow.height = 28;
     hRow.eachCell(c => Object.assign(c, { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('center', 'middle', true), border: bdr() }));
 
@@ -1606,6 +1610,7 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
           criterion.maxScore,
           scoreValue,
           null,
+          ...(isPregrado ? [''] : []),
         ]);
         row.height = 22;
 
@@ -1634,10 +1639,10 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
         // Fila observación si existe
         if (isFilled && obsValue) {
           currentRow++;
-          const obsRow = ws.addRow(['', '', '', `  ↳ Obs: ${obsValue}`, '', '', '']);
+          const obsRow = ws.addRow(['', '', '', `  ↳ Obs: ${obsValue}`, '', '', '', ...(isPregrado ? [''] : [])]);
           obsRow.height = 16;
           Object.assign(obsRow.getCell(4), { font: { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF666666' } }, fill: fill('FAFAFA'), alignment: align('left', 'middle', true), border: bdr() });
-          [1,2,3,5,6,7].forEach(col => { obsRow.getCell(col).fill = fill('FAFAFA'); obsRow.getCell(col).border = bdr(); });
+          [...[1,2,3,5,6,7], ...(isPregrado ? [8] : [])].forEach(col => { obsRow.getCell(col).fill = fill('FAFAFA'); obsRow.getCell(col).border = bdr(); });
         }
 
         currentRow++;
@@ -1650,12 +1655,18 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
       }
 
       // Subtotal sección
-      const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null]);
+      const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null, ...(isPregrado ? [''] : [])]);
       stRow.height = 20;
       stRow.getCell(7).value = { formula: `SUM(G${secStart}:G${currentRow - 1})` };
       stRow.getCell(7).numFmt = '0.00';
       sectionSubtotalRefs.push(`G${currentRow}`);
       [1,2,3,4,5,6,7].forEach(col => Object.assign(stRow.getCell(col), { font: font(col === 4, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align(col === 4 ? 'right' : 'center', 'middle'), border: bdr() }));
+      if (isPregrado) {
+        const stG = `G${currentRow}`;
+        const secW = `B${secStart}`;
+        stRow.getCell(8).value = { formula: `IF(${stG}=0,"",IF(${stG}/${secW}*5>=4,"S — Suficiente",IF(${stG}/${secW}*5>=3,"P — Parcialmente suficiente","I — Insuficiente")))` };
+        Object.assign(stRow.getCell(8), { font: font(true, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align('center', 'middle'), border: bdr() });
+      }
       currentRow++;
 
       ws.addRow([]).height = 5;
@@ -1663,20 +1674,20 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
     });
 
     // Nota final
-    const finalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null]);
+    const finalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null, ...(isPregrado ? [''] : [])]);
     finalRow.height = 30;
     finalRow.getCell(7).value = { formula: `(${sectionSubtotalRefs.join('+')})/100*5` };
     finalRow.getCell(7).numFmt = '0.0"  / 5.0"';
-    [1,2,3,4,5,6,7].forEach(col => Object.assign(finalRow.getCell(col), { font: font(true, 13, COLOR.totalFg), fill: fill(COLOR.totalBg), alignment: align(col === 6 ? 'right' : 'center', 'middle'), border: bdr() }));
+    [...[1,2,3,4,5,6,7], ...(isPregrado ? [8] : [])].forEach(col => Object.assign(finalRow.getCell(col), { font: font(true, 13, COLOR.totalFg), fill: fill(COLOR.totalBg), alignment: align(col === 6 ? 'right' : 'center', 'middle'), border: bdr() }));
 
     // Observaciones generales
     if (isFilled && existingEval.general_observations) {
       ws.addRow([]).height = 8;
-      const goTitle = ws.addRow(['Observaciones Generales', '', '', '', '', '', '']);
-      ws.mergeCells(goTitle.number, 1, goTitle.number, 7);
+      const goTitle = ws.addRow(['Observaciones Generales', '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+      ws.mergeCells(goTitle.number, 1, goTitle.number, maxCol);
       Object.assign(goTitle.getCell(1), { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('left', 'middle'), border: bdr() });
-      const goRow = ws.addRow([existingEval.general_observations, '', '', '', '', '', '']);
-      ws.mergeCells(goRow.number, 1, goRow.number, 7);
+      const goRow = ws.addRow([existingEval.general_observations, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+      ws.mergeCells(goRow.number, 1, goRow.number, maxCol);
       goRow.height = 40;
       Object.assign(goRow.getCell(1), { font: font(false, 10), fill: fill('F9F9F9'), alignment: align('left', 'middle', true), border: bdr() });
     }
@@ -1684,7 +1695,7 @@ app.get('/evaluations/rubric-xlsx', authMiddleware, requireRole('evaluator'), as
     // Pie
     ws.addRow([]).height = 8;
     const instr = ws.addRow([isFilled ? '* Puntajes cargados desde la evaluación enviada. Los aportes se calculan automáticamente.' : '* Complete únicamente la columna "Puntaje Obtenido" (celdas en amarillo).']);
-    ws.mergeCells(instr.number, 1, instr.number, 7);
+    ws.mergeCells(instr.number, 1, instr.number, maxCol);
     instr.getCell(1).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
 
     const filename = `Rubrica_${typeLabel}_${(thesis.title || 'Tesis').replace(/\s+/g, '_').substring(0, 40)}.xlsx`;
@@ -2137,18 +2148,19 @@ app.get('/user_roles', authMiddleware, (req, res) => {
 // This endpoint is intentionally public so the landing page can show reception windows
 // without requiring users to be logged in.
 app.get('/programs', (req, res) => {
-  // Determine if caller is admin/superadmin to decide whether to include hidden programs
   let isAdmin = false;
-  try {
-    const authHeader = req.headers['authorization'] || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (token) {
-      const jwt = require('jsonwebtoken');
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'ebbc1015f164c3b46f50de43732395eed6d9fee8468d36b57bcd9e755911b626830a851fc20e8119d958a964ef918005416f9ef8c8c58068ea94b7d1629c67b4');
-      const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(decoded.id).map(r => r.role);
-      isAdmin = roles.includes('admin') || roles.includes('superadmin');
-    }
-  } catch {}
+  const auth = req.headers.authorization || '';
+  const token = auth.replace(/^Bearer\s+/, '');
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      const userId = decoded.id;
+      if (userId) {
+        const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(userId).map(r => r.role);
+        isAdmin = roles.includes('admin') || roles.includes('superadmin');
+      }
+    } catch (e) { /* token inválido — mostrar solo visibles */ }
+  }
 
   const rows = db.prepare(
     `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
@@ -3302,6 +3314,10 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
       if (ev.files && ev.files.length) {
         event.evaluatorFiles = ev.files.map((f) => ({ name: f.file_name, url: f.file_url }));
       }
+      if (!isStudentRole2 && ev.scores && ev.scores.length) {
+        event.evaluationScores = ev.scores;
+        event.evaluationType = ev.evaluation_type;
+      }
       return event;
     });
     timeline = timeline.concat(evalEvents);
@@ -3364,7 +3380,46 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   // Compute weighted scores for the student view
   const weighted = computeFinalWeightedForThesis(id);
 
-  res.json({ ...thesis, students, evaluators, directors, programs, timeline, files, evaluations, weighted });
+  // Pregrado (Ingeniería) classification data — compute per-section I/P/S for student view
+  const isPregradoThesis = programs.some((p) => /^Ingenier/i.test(p.name));
+  let sectionClassifications = null;
+  if (isPregradoThesis) {
+    sectionClassifications = {};
+    for (const evalType of ['document', 'presentation']) {
+      const firstProgramId = programs.length > 0 ? programs[0].id : null;
+      const rubricForType = firstProgramId ? db.prepare('SELECT sections_json FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(firstProgramId, evalType) : null;
+      if (rubricForType) {
+        try {
+          const sections = JSON.parse(rubricForType.sections_json);
+          const typeEvals = evaluations.filter(e =>
+            (evalType === 'document' ? e.evaluation_type !== 'presentation' : e.evaluation_type === 'presentation')
+            && e.scores && e.scores.length > 0
+          );
+          sectionClassifications[evalType] = sections.map(section => {
+            let sectionTotal = 0, evalCount = 0;
+            for (const ev of typeEvals) {
+              const scs = ev.scores.filter(s => s.section_id === section.id);
+              if (scs.length > 0) {
+                const sectionAvg = scs.reduce((sum, s) => sum + (Number(s.score) || 0), 0) / scs.length;
+                sectionTotal += sectionAvg;
+                evalCount++;
+              }
+            }
+            const avg = evalCount > 0 ? sectionTotal / evalCount : null;
+            let classification = null;
+            if (avg !== null) {
+              if (avg < 3.0) classification = { code: 'I', label: 'Insuficiente' };
+              else if (avg < 4.0) classification = { code: 'P', label: 'Parcialmente suficiente' };
+              else classification = { code: 'S', label: 'Suficiente' };
+            }
+            return { section_id: section.id, section_name: section.name, avg_score: avg, classification };
+          });
+        } catch (e) { /* ignore parse error */ }
+      }
+    }
+  }
+
+  res.json({ ...thesis, students, evaluators, directors, programs, timeline, files, evaluations, weighted, isPregrado: !!isPregradoThesis, sectionClassifications });
 });
 
 // helper to recalc thesis status based on evaluations
@@ -6280,6 +6335,217 @@ app.get('/super/rubrics', authMiddleware, (req, res) => {
   res.json(result);
 });
 
+// GET /admin/theses/:id/rubric-xlsx?evaluator_id=X&evaluation_type=Y — admin descarga rúbrica llena de un evaluador
+app.get('/admin/theses/:id/rubric-xlsx', authMiddleware, async (req, res) => {
+  const { evaluator_id, evaluation_type } = req.query;
+  const thesis_id = req.params.id;
+  if (!evaluator_id || !evaluation_type) return res.status(400).json({ error: 'evaluator_id y evaluation_type son requeridos' });
+
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  if (!roles.includes('admin') && !roles.includes('superadmin')) return res.status(403).json({ error: 'Acceso denegado' });
+
+  const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesis_id);
+  if (!thesis) return res.status(404).json({ error: 'Tesis no encontrada' });
+
+  const thesisProgramRow = db.prepare('SELECT p.id, p.name FROM programs p JOIN thesis_programs tp ON p.id = tp.program_id WHERE tp.thesis_id = ? LIMIT 1').get(thesis_id);
+  const program = thesisProgramRow;
+  const rubric = thesisProgramRow ? db.prepare('SELECT * FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(thesisProgramRow.id, evaluation_type) : null;
+  if (!rubric) return res.status(404).json({ error: 'Rúbrica no encontrada para este programa' });
+  const isPregrado = program && /^Ingenier/i.test(program.name);
+  const maxCol = isPregrado ? 8 : 7;
+
+  const currentRound = thesis.revision_round || 0;
+  const existingEval = db.prepare(`
+    SELECT e.* FROM evaluations e
+    JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+    WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = ? AND e.revision_round = ?
+    ORDER BY e.submitted_at DESC LIMIT 1
+  `).get(thesis_id, evaluator_id, evaluation_type, currentRound);
+
+  let scores = [];
+  if (existingEval) {
+    scores = db.prepare('SELECT section_id, criterion_id, score, observations FROM evaluation_scores WHERE evaluation_id = ?').all(existingEval.id);
+  }
+
+  // Fetch evaluator name for the filename
+  const evaluatorUser = db.prepare('SELECT full_name FROM users WHERE id = ?').get(evaluator_id);
+  const evaluatorName = evaluatorUser ? evaluatorUser.full_name : 'Evaluador';
+
+  try {
+    const ExcelJS = require('exceljs');
+    const sections = JSON.parse(rubric.sections_json);
+    const typeLabel = evaluation_type === 'document' ? 'Documento' : 'Sustentación';
+    const programName = program ? program.name : 'Programa';
+    const isFilled = scores.length > 0;
+
+    const COLOR = {
+      titleBg: '1E3A5F', titleFg: 'FFFFFF',
+      headerBg: '2E75B6', headerFg: 'FFFFFF',
+      sectionColors: ['D6E4F0', 'D5E8D4', 'FFE6CC', 'E1D5E7', 'DAE8FC'],
+      sectionFg: '1E3A5F',
+      criterionAlt: 'F0F7FF',
+      inputBg: 'FFFDE7',
+      filledBg: 'E8F5E9',
+      subtotalBg: 'E2EFDA', subtotalFg: '375623',
+      totalBg: '375623', totalFg: 'FFFFFF',
+      border: 'B0BEC5',
+    };
+
+    const font  = (bold = false, size = 11, color = '000000') => ({ name: 'Calibri', bold, size, color: { argb: 'FF' + color } });
+    const fill  = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
+    const bdr   = (hex = COLOR.border) => { const s = { style: 'thin', color: { argb: 'FF' + hex } }; return { top: s, left: s, bottom: s, right: s }; };
+    const align = (h = 'left', v = 'middle', wrap = false) => ({ horizontal: h, vertical: v, wrapText: wrap });
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SisTesis';
+    const ws = wb.addWorksheet(`Rúbrica ${typeLabel}`.substring(0, 31), {
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+      views: [{ state: 'frozen', ySplit: 4 }],
+    });
+    ws.columns = [
+      { width: 28 }, { width: 10 }, { width: 8 },
+      { width: 42 }, { width: 16 }, { width: 18 }, { width: 20 },
+      ...(isPregrado ? [{ width: 26 }] : []),
+    ];
+
+    const tRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(1, 1, 1, maxCol); tRow.height = 32;
+    Object.assign(tRow.getCell(1), { font: font(true, 14, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
+
+    const pRow = ws.addRow([programName, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(2, 1, 2, maxCol); pRow.height = 20;
+    Object.assign(pRow.getCell(1), { font: font(false, 11, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: bdr() });
+
+    const thesisRow = ws.addRow([`Tesis: ${thesis.title || ''} | Evaluador: ${evaluatorName}`, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(3, 1, 3, maxCol); thesisRow.height = 18;
+    Object.assign(thesisRow.getCell(1), { font: font(false, 10, COLOR.titleFg), fill: fill('2E5080'), alignment: align('left', 'middle', true), border: bdr() });
+
+    const estadoRow = ws.addRow([isFilled ? '✅ Evaluación enviada — puntajes cargados automáticamente' : '⚠️ Evaluación pendiente — complete la columna amarilla', '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+    ws.mergeCells(4, 1, 4, maxCol); estadoRow.height = 18;
+    const estadoCell = estadoRow.getCell(1);
+    estadoCell.font = { name: 'Calibri', italic: true, size: 10, color: { argb: isFilled ? 'FF375623' : 'FF8B5E00' } };
+    estadoCell.fill = fill(isFilled ? 'E2EFDA' : 'FFF8E1');
+    estadoCell.alignment = align('center', 'middle');
+    estadoCell.border = bdr();
+
+    const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado', ...(isPregrado ? ['Clasificación'] : [])]);
+    hRow.height = 28;
+    hRow.eachCell(c => Object.assign(c, { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('center', 'middle', true), border: bdr() }));
+
+    let currentRow = 6;
+    const sectionSubtotalRefs = [];
+
+    sections.forEach((section, sIdx) => {
+      const count = section.criteria.length;
+      const secStart = currentRow;
+      const secBg = COLOR.sectionColors[sIdx % COLOR.sectionColors.length];
+
+      section.criteria.forEach((criterion, cIdx) => {
+        const er = currentRow;
+        const existingScore = scores.find(sc => sc.section_id === section.id && sc.criterion_id === criterion.id);
+        const scoreValue = existingScore ? existingScore.score : null;
+        const obsValue = existingScore ? existingScore.observations : '';
+
+        const row = ws.addRow([
+          cIdx === 0 ? section.name : '',
+          cIdx === 0 ? section.weight : '',
+          cIdx === 0 ? count : '',
+          criterion.name,
+          criterion.maxScore,
+          scoreValue,
+          null,
+          ...(isPregrado ? [''] : []),
+        ]);
+        row.height = 22;
+
+        Object.assign(row.getCell(1), { font: font(true, 11, COLOR.sectionFg), fill: fill(secBg), alignment: align('center', 'middle', true), border: bdr() });
+        Object.assign(row.getCell(2), { font: font(true, 11, COLOR.sectionFg), fill: fill(secBg), alignment: align('center', 'middle'), numFmt: '0"%"', border: bdr() });
+        Object.assign(row.getCell(3), { font: font(false, 10, '555555'), fill: fill(secBg), alignment: align('center', 'middle'), border: bdr() });
+
+        const critBg = cIdx % 2 === 0 ? 'FFFFFF' : COLOR.criterionAlt;
+        Object.assign(row.getCell(4), { font: font(false, 11), fill: fill(critBg), alignment: align('left', 'middle', true), border: bdr() });
+        Object.assign(row.getCell(5), { font: font(false, 11, '444444'), fill: fill(critBg), alignment: align('center', 'middle'), border: bdr() });
+
+        const cF = row.getCell(6);
+        cF.fill = fill(scoreValue !== null ? COLOR.filledBg : COLOR.inputBg);
+        cF.alignment = align('center', 'middle');
+        cF.border = bdr(scoreValue !== null ? '375623' : 'FFBB00');
+        cF.font = font(scoreValue !== null, 11, scoreValue !== null ? '375623' : '333333');
+
+        const cG = row.getCell(7);
+        cG.value = { formula: `IFERROR((F${er}/E${er})*(B${secStart}/C${secStart}),0)` };
+        cG.numFmt = '0.00';
+        Object.assign(cG, { font: font(false, 11, COLOR.sectionFg), fill: fill(critBg), alignment: align('center', 'middle'), border: bdr() });
+
+        if (isFilled && obsValue) {
+          currentRow++;
+          const obsRow = ws.addRow(['', '', '', `  ↳ Obs: ${obsValue}`, '', '', '', ...(isPregrado ? [''] : [])]);
+          obsRow.height = 16;
+          Object.assign(obsRow.getCell(4), { font: { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF666666' } }, fill: fill('FAFAFA'), alignment: align('left', 'middle', true), border: bdr() });
+          [...[1,2,3,5,6,7], ...(isPregrado ? [8] : [])].forEach(col => { obsRow.getCell(col).fill = fill('FAFAFA'); obsRow.getCell(col).border = bdr(); });
+        }
+
+        currentRow++;
+      });
+
+      if (count > 1) {
+        ws.mergeCells(secStart, 1, secStart + count - 1, 1);
+        ws.mergeCells(secStart, 2, secStart + count - 1, 2);
+        ws.mergeCells(secStart, 3, secStart + count - 1, 3);
+      }
+
+      const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null, ...(isPregrado ? [''] : [])]);
+      stRow.height = 20;
+      stRow.getCell(7).value = { formula: `SUM(G${secStart}:G${currentRow - 1})` };
+      stRow.getCell(7).numFmt = '0.00';
+      sectionSubtotalRefs.push(`G${currentRow}`);
+      [1,2,3,4,5,6,7].forEach(col => Object.assign(stRow.getCell(col), { font: font(col === 4, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align(col === 4 ? 'right' : 'center', 'middle'), border: bdr() }));
+      if (isPregrado) {
+        const stG = `G${currentRow}`;
+        const secW = `B${secStart}`;
+        stRow.getCell(8).value = { formula: `IF(${stG}=0,"",IF(${stG}/${secW}*5>=4,"S — Suficiente",IF(${stG}/${secW}*5>=3,"P — Parcialmente suficiente","I — Insuficiente")))` };
+        Object.assign(stRow.getCell(8), { font: font(true, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align('center', 'middle'), border: bdr() });
+      }
+      currentRow++;
+
+      ws.addRow([]).height = 5;
+      currentRow++;
+    });
+
+    const finalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null, ...(isPregrado ? [''] : [])]);
+    finalRow.height = 30;
+    finalRow.getCell(7).value = { formula: `(${sectionSubtotalRefs.join('+')})/100*5` };
+    finalRow.getCell(7).numFmt = '0.0"  / 5.0"';
+    [...[1,2,3,4,5,6,7], ...(isPregrado ? [8] : [])].forEach(col => Object.assign(finalRow.getCell(col), { font: font(true, 13, COLOR.totalFg), fill: fill(COLOR.totalBg), alignment: align(col === 6 ? 'right' : 'center', 'middle'), border: bdr() }));
+
+    if (isFilled && existingEval.general_observations) {
+      ws.addRow([]).height = 8;
+      const goTitle = ws.addRow(['Observaciones Generales', '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+      ws.mergeCells(goTitle.number, 1, goTitle.number, maxCol);
+      Object.assign(goTitle.getCell(1), { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('left', 'middle'), border: bdr() });
+      const goRow = ws.addRow([existingEval.general_observations, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+      ws.mergeCells(goRow.number, 1, goRow.number, maxCol);
+      goRow.height = 40;
+      Object.assign(goRow.getCell(1), { font: font(false, 10), fill: fill('F9F9F9'), alignment: align('left', 'middle', true), border: bdr() });
+    }
+
+    ws.addRow([]).height = 8;
+    const instr = ws.addRow([isFilled ? '* Puntajes cargados desde la evaluación enviada. Los aportes se calculan automáticamente.' : '* Complete únicamente la columna "Puntaje Obtenido" (celdas en amarillo).']);
+    ws.mergeCells(instr.number, 1, instr.number, maxCol);
+    instr.getCell(1).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
+
+    const safeEvalName = evaluatorName.replace(/\s+/g, '_').substring(0, 20);
+    const filename = `Rubrica_${typeLabel}_${safeEvalName}_${(thesis.title || 'Tesis').replace(/\s+/g, '_').substring(0, 30)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    logger.error('Error generando XLSX admin:', err);
+    res.status(500).json({ error: 'Error generando el archivo' });
+  }
+});
+
 // GET /admin/program-rubrics/:programId/:evaluationType/download-xlsx — descargar rúbrica en xlsx
 app.get('/admin/program-rubrics/:programId/:evaluationType/download-xlsx', authMiddleware, async (req, res) => {
   const { programId, evaluationType } = req.params;
@@ -6563,7 +6829,8 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
     const align = (h = 'left', v = 'middle', wrap = false) => ({ horizontal: h, vertical: v, wrapText: wrap });
 
     // Helper: construye una hoja de rúbrica y retorna la celda con la nota final
-    const buildRubricSheet = (wb, sections, typeLabel, sheetName) => {
+    const buildRubricSheet = (wb, sections, typeLabel, sheetName, isPregrado) => {
+      const mxCol = isPregrado ? 8 : 7;
       const ws = wb.addWorksheet(sheetName, {
         pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
         views: [{ state: 'frozen', ySplit: 3 }],
@@ -6571,22 +6838,23 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
       ws.columns = [
         { width: 28 }, { width: 10 }, { width: 8 },
         { width: 42 }, { width: 16 }, { width: 18 }, { width: 20 },
+        ...(isPregrado ? [{ width: 26 }] : []),
       ];
 
       // Título
-      const titleRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '']);
-      ws.mergeCells(1, 1, 1, 7);
+      const titleRow = ws.addRow([`RÚBRICA DE EVALUACIÓN — ${typeLabel.toUpperCase()}`, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+      ws.mergeCells(1, 1, 1, mxCol);
       titleRow.height = 32;
       Object.assign(titleRow.getCell(1), { font: font(true, 14, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: thinBorder() });
 
       // Programa
-      const progRow = ws.addRow([programName, '', '', '', '', '', '']);
-      ws.mergeCells(2, 1, 2, 7);
+      const progRow = ws.addRow([programName, '', '', '', '', '', '', ...(isPregrado ? [''] : [])]);
+      ws.mergeCells(2, 1, 2, mxCol);
       progRow.height = 20;
       Object.assign(progRow.getCell(1), { font: font(false, 11, COLOR.titleFg), fill: fill(COLOR.titleBg), alignment: align('center'), border: thinBorder() });
 
       // Encabezados
-      const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado']);
+      const hRow = ws.addRow(['Sección', 'Peso (%)', 'Criterios', 'Criterio de Evaluación', 'Puntaje Máximo', 'Puntaje Obtenido', 'Aporte Ponderado', ...(isPregrado ? ['Clasificación'] : [])]);
       hRow.height = 28;
       hRow.eachCell(c => Object.assign(c, { font: font(true, 11, COLOR.headerFg), fill: fill(COLOR.headerBg), alignment: align('center', 'middle', true), border: thinBorder() }));
 
@@ -6607,6 +6875,7 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
             criterion.name,
             criterion.maxScore,
             null, null,
+            ...(isPregrado ? [''] : []),
           ]);
           row.height = 22;
 
@@ -6633,6 +6902,10 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
           cG.numFmt = '0.00';
           Object.assign(cG, { font: font(false, 11, COLOR.sectionFg), fill: fill(critBg), alignment: align('center', 'middle'), border: thinBorder() });
 
+          if (isPregrado) {
+            Object.assign(row.getCell(8), { fill: fill(critBg), alignment: align('center', 'middle'), border: thinBorder() });
+          }
+
           currentRow++;
         });
 
@@ -6643,7 +6916,7 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
         }
 
         // Subtotal sección
-        const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null]);
+        const stRow = ws.addRow(['', '', '', `Subtotal — ${section.name}`, '', '', null, ...(isPregrado ? [''] : [])]);
         stRow.height = 20;
         stRow.getCell(7).value = { formula: `SUM(G${secStart}:G${currentRow - 1})` };
         stRow.getCell(7).numFmt = '0.00';
@@ -6652,6 +6925,12 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
           const c = stRow.getCell(col);
           Object.assign(c, { font: font(col === 4, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align(col === 4 ? 'right' : 'center', 'middle'), border: thinBorder() });
         });
+        if (isPregrado) {
+          const stG = `G${currentRow}`;
+          const secW = `B${secStart}`;
+          stRow.getCell(8).value = { formula: `IF(${stG}=0,"",IF(${stG}/${secW}*5>=4,"S — Suficiente",IF(${stG}/${secW}*5>=3,"P — Parcialmente suficiente","I — Insuficiente")))` };
+          Object.assign(stRow.getCell(8), { font: font(true, 11, COLOR.subtotalFg), fill: fill(COLOR.subtotalBg), alignment: align('center', 'middle'), border: thinBorder() });
+        }
         currentRow++;
 
         // Separador
@@ -6660,12 +6939,12 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
       });
 
       // Nota final
-      const totalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null]);
+      const totalRow = ws.addRow(['', '', '', '', '', 'NOTA FINAL  (0.0 – 5.0)', null, ...(isPregrado ? [''] : [])]);
       const notaFinalRow = currentRow;
       totalRow.height = 30;
       totalRow.getCell(7).value = { formula: `(${sectionSubtotalRefs.join('+')})/100*5` };
       totalRow.getCell(7).numFmt = '0.0"  / 5.0"';
-      [1,2,3,4,5,6,7].forEach(col => {
+      [...[1,2,3,4,5,6,7], ...(isPregrado ? [8] : [])].forEach(col => {
         const c = totalRow.getCell(col);
         Object.assign(c, { font: font(true, 13, COLOR.totalFg), fill: fill(COLOR.totalBg), alignment: align(col === 6 ? 'right' : 'center', 'middle'), border: thinBorder() });
       });
@@ -6673,12 +6952,14 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
       // Instrucción al pie
       ws.addRow([]).height = 8;
       const instr = ws.addRow(['* Complete únicamente la columna "Puntaje Obtenido" (celdas en amarillo). Los aportes y la nota final se calculan automáticamente.']);
-      ws.mergeCells(instr.number, 1, instr.number, 7);
+      ws.mergeCells(instr.number, 1, instr.number, mxCol);
       instr.getCell(1).font = { name: 'Calibri', italic: true, size: 9, color: { argb: 'FF777777' } };
       instr.getCell(1).alignment = align('left', 'middle');
 
       return { sheetName, notaFinalRow }; // para referenciar desde el resumen
     };
+
+    const isPregradoFull = program && /^Ingenier/i.test(program.name);
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SisTesis';
@@ -6693,7 +6974,7 @@ app.get('/admin/program-rubrics/:programId/download-xlsx-full', authMiddleware, 
       const sections = JSON.parse(rubric.sections_json);
       const typeLabel = rubric.evaluation_type === 'document' ? 'Documento' : 'Sustentación';
       const sheetName = `Rúbrica ${typeLabel}`.substring(0, 31);
-      const ref = buildRubricSheet(wb, sections, typeLabel, sheetName);
+      const ref = buildRubricSheet(wb, sections, typeLabel, sheetName, isPregradoFull);
       sheetRefs[rubric.evaluation_type] = ref;
     }
 
@@ -6867,8 +7148,12 @@ app.post('/admin/program-rubrics/:programId/initialize', authMiddleware, (req, r
     if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
   }
 
-  // Rúbricas por defecto (hardcoded)
-  const defaultRubric = [
+  // Detectar si es programa de pregrado (nombre empieza con "Ingeniería")
+  const programRow = db.prepare('SELECT name FROM programs WHERE id = ?').get(programId);
+  const isPregrado = programRow && /^Ingenier/i.test(programRow.name);
+
+  // Rúbrica de documento para posgrado (default)
+  const defaultRubricPosgrado = [
     {
       id: "a",
       name: "Marco Teórico y Estado del Arte",
@@ -6911,6 +7196,102 @@ app.post('/admin/program-rubrics/:programId/initialize', authMiddleware, (req, r
       ]
     }
   ];
+
+  // Rúbrica de documento para pregrado (programas de Ingeniería)
+  const defaultRubricPregrado = [
+    {
+      id: "a",
+      name: "Formulación del problema de ingeniería",
+      weight: 10,
+      criteria: [
+        { id: "a1", name: "Claridad en la definición del problema", maxScore: 5 },
+        { id: "a2", name: "Justificación y relevancia", maxScore: 5 },
+        { id: "a3", name: "Delimitación del alcance", maxScore: 5 }
+      ]
+    },
+    {
+      id: "b",
+      name: "Complejidad del problema abordado",
+      weight: 10,
+      criteria: [
+        { id: "b1", name: "Nivel de dificultad técnica", maxScore: 5 },
+        { id: "b2", name: "Integración de múltiples variables", maxScore: 5 },
+        { id: "b3", name: "Pertinencia en un contexto real", maxScore: 5 }
+      ]
+    },
+    {
+      id: "c",
+      name: "Calidad de los objetivos del proyecto",
+      weight: 10,
+      criteria: [
+        { id: "c1", name: "Claridad de los objetivos", maxScore: 5 },
+        { id: "c2", name: "Coherencia entre objetivo general y específicos", maxScore: 5 },
+        { id: "c3", name: "Alineación con el problema", maxScore: 5 }
+      ]
+    },
+    {
+      id: "d",
+      name: "Claridad y calidad comunicativa del documento",
+      weight: 10,
+      criteria: [
+        { id: "d1", name: "Redacción y ortografía", maxScore: 5 },
+        { id: "d2", name: "Coherencia y organización", maxScore: 5 },
+        { id: "d3", name: "Uso adecuado de lenguaje técnico", maxScore: 5 }
+      ]
+    },
+    {
+      id: "e",
+      name: "Evidencia del cumplimiento de objetivos",
+      weight: 15,
+      criteria: [
+        { id: "e1", name: "Correspondencia entre objetivos y resultados", maxScore: 5 },
+        { id: "e2", name: "Evidencia presentada", maxScore: 5 },
+        { id: "e3", name: "Nivel de cumplimiento", maxScore: 5 }
+      ]
+    },
+    {
+      id: "f",
+      name: "Sustento de los resultados y las conclusiones",
+      weight: 15,
+      criteria: [
+        { id: "f1", name: "Relación entre resultados y conclusiones", maxScore: 5 },
+        { id: "f2", name: "Análisis de resultados", maxScore: 5 },
+        { id: "f3", name: "Identificación de limitaciones", maxScore: 5 }
+      ]
+    },
+    {
+      id: "g",
+      name: "Diseño y arquitectura de la solución",
+      weight: 10,
+      criteria: [
+        { id: "g1", name: "Claridad del diseño", maxScore: 5 },
+        { id: "g2", name: "Justificación de decisiones", maxScore: 5 },
+        { id: "g3", name: "Uso de buenas prácticas", maxScore: 5 }
+      ]
+    },
+    {
+      id: "h",
+      name: "Proceso de desarrollo y obtención del producto de software",
+      weight: 10,
+      criteria: [
+        { id: "h1", name: "Metodología de desarrollo", maxScore: 5 },
+        { id: "h2", name: "Uso de herramientas adecuadas", maxScore: 5 },
+        { id: "h3", name: "Documentación del proceso", maxScore: 5 }
+      ]
+    },
+    {
+      id: "i",
+      name: "Verificación, validación y evaluación del producto",
+      weight: 10,
+      criteria: [
+        { id: "i1", name: "Diseño de pruebas", maxScore: 5 },
+        { id: "i2", name: "Uso de métricas", maxScore: 5 },
+        { id: "i3", name: "Análisis de resultados", maxScore: 5 }
+      ]
+    }
+  ];
+
+  const defaultRubric = isPregrado ? defaultRubricPregrado : defaultRubricPosgrado;
 
   const presentationRubric = [
     {
@@ -6971,6 +7352,61 @@ app.post('/admin/program-rubrics/:programId/initialize', authMiddleware, (req, r
   } catch (e) {
     console.error('Error loading default rubrics:', e);
     res.status(500).json({ error: 'Error al cargar rúbricas por defecto' });
+  }
+});
+
+// POST /admin/program-rubrics/:programId/reset — reemplazar rúbricas por defecto (borra las existentes)
+app.post('/admin/program-rubrics/:programId/reset', authMiddleware, (req, res) => {
+  const programId = req.params.programId;
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperAdmin = roles.includes('superadmin');
+
+  if (!isSuperAdmin) {
+    const adminProg = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ? AND program_id = ?').get(req.user.id, programId);
+    if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
+  }
+
+  const programRow = db.prepare('SELECT name FROM programs WHERE id = ?').get(programId);
+  const isPregrado = programRow && /^Ingenier/i.test(programRow.name);
+
+  const defaultRubricPosgrado = [
+    { id: "a", name: "Marco Teórico y Estado del Arte", weight: 20, criteria: [{ id: "a1", name: "Comprensión del mercado actual", maxScore: 5 }, { id: "a2", name: "Explicación de construcciones clave", maxScore: 5 }, { id: "a3", name: "Claridad en la presentación de los antecedentes", maxScore: 5 }] },
+    { id: "b", name: "Aspectos Académicos", weight: 40, criteria: [{ id: "b1", name: "Originalidad de la solución propuesta", maxScore: 5 }, { id: "b2", name: "Rigur académico", maxScore: 5 }, { id: "b3", name: "Estructura lógica del documento", maxScore: 5 }, { id: "b4", name: "Coherencia entre objetivos y resultados", maxScore: 5 }] },
+    { id: "c", name: "Aspectos Disciplinares", weight: 30, criteria: [{ id: "c1", name: "Implementación técnica", maxScore: 5 }, { id: "c2", name: "Métricas y validación", maxScore: 5 }, { id: "c3", name: "Análisis de resultados", maxScore: 5 }, { id: "c4", name: "Discusión técnica", maxScore: 5 }] },
+    { id: "d", name: "Presentación del Documento", weight: 10, criteria: [{ id: "d1", name: "Redacción", maxScore: 5 }, { id: "d2", name: "Cumplimiento de normas", maxScore: 5 }] }
+  ];
+
+  const defaultRubricPregrado = [
+    { id: "a", name: "Formulación del problema de ingeniería", weight: 10, criteria: [{ id: "a1", name: "Claridad en la definición del problema", maxScore: 5 }, { id: "a2", name: "Justificación y relevancia", maxScore: 5 }, { id: "a3", name: "Delimitación del alcance", maxScore: 5 }] },
+    { id: "b", name: "Complejidad del problema abordado", weight: 10, criteria: [{ id: "b1", name: "Nivel de dificultad técnica", maxScore: 5 }, { id: "b2", name: "Integración de múltiples variables", maxScore: 5 }, { id: "b3", name: "Pertinencia en un contexto real", maxScore: 5 }] },
+    { id: "c", name: "Calidad de los objetivos del proyecto", weight: 10, criteria: [{ id: "c1", name: "Claridad de los objetivos", maxScore: 5 }, { id: "c2", name: "Coherencia entre objetivo general y específicos", maxScore: 5 }, { id: "c3", name: "Alineación con el problema", maxScore: 5 }] },
+    { id: "d", name: "Claridad y calidad comunicativa del documento", weight: 10, criteria: [{ id: "d1", name: "Redacción y ortografía", maxScore: 5 }, { id: "d2", name: "Coherencia y organización", maxScore: 5 }, { id: "d3", name: "Uso adecuado de lenguaje técnico", maxScore: 5 }] },
+    { id: "e", name: "Evidencia del cumplimiento de objetivos", weight: 15, criteria: [{ id: "e1", name: "Correspondencia entre objetivos y resultados", maxScore: 5 }, { id: "e2", name: "Evidencia presentada", maxScore: 5 }, { id: "e3", name: "Nivel de cumplimiento", maxScore: 5 }] },
+    { id: "f", name: "Sustento de los resultados y las conclusiones", weight: 15, criteria: [{ id: "f1", name: "Relación entre resultados y conclusiones", maxScore: 5 }, { id: "f2", name: "Análisis de resultados", maxScore: 5 }, { id: "f3", name: "Identificación de limitaciones", maxScore: 5 }] },
+    { id: "g", name: "Diseño y arquitectura de la solución", weight: 10, criteria: [{ id: "g1", name: "Claridad del diseño", maxScore: 5 }, { id: "g2", name: "Justificación de decisiones", maxScore: 5 }, { id: "g3", name: "Uso de buenas prácticas", maxScore: 5 }] },
+    { id: "h", name: "Proceso de desarrollo y obtención del producto de software", weight: 10, criteria: [{ id: "h1", name: "Metodología de desarrollo", maxScore: 5 }, { id: "h2", name: "Uso de herramientas adecuadas", maxScore: 5 }, { id: "h3", name: "Documentación del proceso", maxScore: 5 }] },
+    { id: "i", name: "Verificación, validación y evaluación del producto", weight: 10, criteria: [{ id: "i1", name: "Diseño de pruebas", maxScore: 5 }, { id: "i2", name: "Uso de métricas", maxScore: 5 }, { id: "i3", name: "Análisis de resultados", maxScore: 5 }] }
+  ];
+
+  const presentationRubric = [
+    { id: "p1", name: "Claridad y Dominio del Problema", weight: 25, criteria: [{ id: "p1a", name: "Presentación clara del problema de investigación", maxScore: 5 }, { id: "p1b", name: "Justificación bien argumentada", maxScore: 5 }, { id: "p1c", name: "Coherencia entre problema, objetivos y resultados", maxScore: 5 }] },
+    { id: "p2", name: "Dominio Metodológico", weight: 25, criteria: [{ id: "p2a", name: "Explicación clara de la metodología utilizada", maxScore: 5 }, { id: "p2b", name: "Coherencia técnica en las decisiones tomadas", maxScore: 5 }, { id: "p2c", name: "Capacidad para justificar el enfoque seleccionado", maxScore: 5 }] },
+    { id: "p3", name: "Dominio Técnico y Resultados", weight: 30, criteria: [{ id: "p3a", name: "Explicación clara de la implementación", maxScore: 5 }, { id: "p3b", name: "Interpretación adecuada de métricas y resultados", maxScore: 5 }, { id: "p3c", name: "Capacidad de análisis crítico", maxScore: 5 }, { id: "p3d", name: "Responde preguntas técnicas con solvencia", maxScore: 5 }] },
+    { id: "p4", name: "Comunicación y Presentación", weight: 20, criteria: [{ id: "p4a", name: "Claridad expositiva", maxScore: 5 }, { id: "p4b", name: "Uso adecuado del tiempo", maxScore: 5 }, { id: "p4c", name: "Calidad de diapositivas", maxScore: 5 }, { id: "p4d", name: "Seguridad y argumentación", maxScore: 5 }] }
+  ];
+
+  const docRubric = isPregrado ? defaultRubricPregrado : defaultRubricPosgrado;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    db.prepare('DELETE FROM program_rubrics WHERE program_id = ?').run(programId);
+    db.prepare('INSERT INTO program_rubrics (id, program_id, evaluation_type, sections_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(crypto.randomUUID(), programId, 'document', JSON.stringify(docRubric), now, now);
+    db.prepare('INSERT INTO program_rubrics (id, program_id, evaluation_type, sections_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(crypto.randomUUID(), programId, 'presentation', JSON.stringify(presentationRubric), now, now);
+    res.json({ success: true, message: 'Rúbricas reemplazadas por defecto' });
+  } catch (e) {
+    console.error('Error resetting rubrics:', e);
+    res.status(500).json({ error: 'Error al reemplazar rúbricas' });
   }
 });
 
@@ -7176,50 +7612,155 @@ app.post('/notifications/:id/read', authMiddleware, (req, res) => {
 app.get('/admin/reports/theses', authMiddleware, requireRole('admin'), (req, res) => {
   const rows = db.prepare(`
     SELECT
+      t.id,
       t.title,
       t.status,
       t.created_at,
-      GROUP_CONCAT(DISTINCT us.full_name) AS students,
-      GROUP_CONCAT(DISTINCT ue.full_name) AS evaluators,
-      GROUP_CONCAT(DISTINCT p.name) AS programs,
-      MAX(te.due_date) AS due_date
+      t.defense_date,
+      t.final_weighted_override
     FROM theses t
-    LEFT JOIN thesis_students ts ON ts.thesis_id = t.id
-    LEFT JOIN users us ON us.id = ts.student_id
-    LEFT JOIN thesis_evaluators te ON te.thesis_id = t.id
-    LEFT JOIN users ue ON ue.id = te.evaluator_id
-    LEFT JOIN thesis_programs tp ON tp.thesis_id = t.id
-    LEFT JOIN programs p ON p.id = tp.program_id
     WHERE t.status != 'deleted'
-    GROUP BY t.id
     ORDER BY t.created_at DESC
   `).all();
 
+  const studentsByThesis = {};
+  db.prepare(`
+    SELECT ts.thesis_id, u.full_name, u.cedula, u.institutional_email, u.student_code, u.cvlac
+    FROM thesis_students ts JOIN users u ON u.id = ts.student_id
+  `).all().forEach(r => {
+    if (!studentsByThesis[r.thesis_id]) studentsByThesis[r.thesis_id] = [];
+    studentsByThesis[r.thesis_id].push(r);
+  });
+
+  const directorsByThesis = {};
+  db.prepare(`
+    SELECT td.thesis_id, u.full_name, u.cedula, u.institutional_email
+    FROM thesis_directors td JOIN users u ON u.id = td.user_id
+  `).all().forEach(r => {
+    if (!directorsByThesis[r.thesis_id]) directorsByThesis[r.thesis_id] = [];
+    directorsByThesis[r.thesis_id].push(r);
+  });
+
+  const programsByThesis = {};
+  db.prepare(`
+    SELECT tp.thesis_id, p.name FROM thesis_programs tp JOIN programs p ON p.id = tp.program_id
+  `).all().forEach(r => {
+    if (!programsByThesis[r.thesis_id]) programsByThesis[r.thesis_id] = [];
+    programsByThesis[r.thesis_id].push(r.name);
+  });
+
+  const dueDateByThesis = {};
+  db.prepare(`SELECT thesis_id, MAX(due_date) as due_date FROM thesis_evaluators GROUP BY thesis_id`).all()
+    .forEach(r => { dueDateByThesis[r.thesis_id] = r.due_date; });
+
+  const evalScores = db.prepare(`
+    SELECT te.thesis_id, e.evaluation_type, e.final_score, e.concept
+    FROM evaluations e
+    JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+    WHERE e.final_score IS NOT NULL
+  `).all();
+  const scoresByThesis = {};
+  for (const s of evalScores) {
+    if (!scoresByThesis[s.thesis_id]) scoresByThesis[s.thesis_id] = { doc: [], pres: [], concepts: [] };
+    if (s.evaluation_type === 'document') scoresByThesis[s.thesis_id].doc.push(Number(s.final_score));
+    else if (s.evaluation_type === 'presentation') scoresByThesis[s.thesis_id].pres.push(Number(s.final_score));
+    if (s.concept) scoresByThesis[s.thesis_id].concepts.push(s.concept);
+  }
+  const avg = arr => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : '';
+
   const STATUS_LABELS = {
-    draft: 'Borrador', submitted: 'Enviada', evaluators_assigned: 'Evaluadores asignados',
-    revision_cuidados: 'Rev. con cuidados', revision_minima: 'Rev. mínima',
-    sustentacion: 'Sustentación', finalized: 'Finalizada',
+    draft: 'Borrador', submitted: 'Enviada', under_review: 'En revisión',
+    returned: 'Devuelta', approved: 'Aprobada', assigned: 'Evaluadores asignados',
+    evaluated: 'Evaluada', defended: 'Defendida', finalized: 'Finalizada',
+    evaluators_assigned: 'Evaluadores asignados', revision_cuidados: 'Rev. con cuidados',
+    revision_minima: 'Rev. mínima', sustentacion: 'Sustentación',
   };
 
-  const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const header = ['Título', 'Estado', 'Estudiantes', 'Evaluadores', 'Programas', 'Fecha envío', 'Fecha límite evaluación'];
-  const lines = rows.map(r => [
-    escape(r.title),
-    escape(STATUS_LABELS[r.status] || r.status),
-    escape(r.students || ''),
-    escape(r.evaluators || ''),
-    escape(r.programs || ''),
-    escape(r.created_at ? new Date(r.created_at * 1000).toLocaleDateString('es-CO') : ''),
-    escape(r.due_date ? new Date(r.due_date * 1000).toLocaleDateString('es-CO') : ''),
-  ].join(','));
+  const e = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
-  const csv = '\uFEFF' + [header.join(','), ...lines].join('\n'); // BOM para Excel
+  const header = [
+    'Título', 'Estado', 'Programa(s)',
+    'Estudiante(s)', 'Cédula(s) estudiante', 'Correo(s) estudiante', 'Código(s) estudiante', 'CvLAC(s)',
+    'Director(es)', 'Cédula(s) director', 'Correo(s) director',
+    'Fecha envío', 'Fecha defensa', 'Fecha límite evaluación',
+    'Nota doc.', 'Nota pres.', 'Nota final', 'Concepto',
+  ];
+
+  const csvLines = rows.map(r => {
+    const sc = scoresByThesis[r.id] || { doc: [], pres: [], concepts: [] };
+    const notaFinal = r.final_weighted_override != null
+      ? Number(r.final_weighted_override).toFixed(2)
+      : avg([...sc.doc, ...sc.pres]);
+    const sts = studentsByThesis[r.id] || [];
+    const dirs = directorsByThesis[r.id] || [];
+    return [
+      e(r.title),
+      e(STATUS_LABELS[r.status] || r.status),
+      e((programsByThesis[r.id] || []).join('; ')),
+      e(sts.map(s => s.full_name).join('; ')),
+      e(sts.map(s => s.cedula || '').join('; ')),
+      e(sts.map(s => s.institutional_email || '').join('; ')),
+      e(sts.map(s => s.student_code || '').join('; ')),
+      e(sts.map(s => s.cvlac || '').join('; ')),
+      e(dirs.map(d => d.full_name).join('; ')),
+      e(dirs.map(d => d.cedula || '').join('; ')),
+      e(dirs.map(d => d.institutional_email || '').join('; ')),
+      e(r.created_at ? new Date(r.created_at * 1000).toLocaleDateString('es-CO') : ''),
+      e(r.defense_date ? new Date(r.defense_date * 1000).toLocaleDateString('es-CO') : ''),
+      e(dueDateByThesis[r.id] ? new Date(dueDateByThesis[r.id]).toLocaleDateString('es-CO') : ''),
+      e(avg(sc.doc)),
+      e(avg(sc.pres)),
+      e(notaFinal),
+      e([...new Set(sc.concepts)].join(', ')),
+    ].join(',');
+  });
+
+  const csv = '\uFEFF' + [header.join(','), ...csvLines].join('\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="tesis-${Date.now()}.csv"`);
   res.send(csv);
 });
 
-// ============================================================================
+app.get('/admin/reports/evaluators', authMiddleware, requireRole('admin'), (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      u.full_name,
+      u.email,
+      COUNT(te.id) as total_asignadas,
+      COUNT(e.id) as completadas,
+      SUM(CASE WHEN e.id IS NULL AND te.due_date IS NOT NULL AND te.due_date < ? THEN 1 ELSE 0 END) as vencidas,
+      ROUND(AVG(CASE WHEN e.final_score IS NOT NULL THEN CAST(e.final_score AS REAL) ELSE NULL END), 2) as promedio_nota,
+      ROUND(AVG(CASE WHEN e.submitted_at IS NOT NULL AND te.assigned_at IS NOT NULL THEN (CAST(e.submitted_at AS REAL) - CAST(te.assigned_at AS REAL)) / 86400000.0 ELSE NULL END), 1) as dias_promedio
+    FROM thesis_evaluators te
+    JOIN users u ON u.id = te.evaluator_id
+    LEFT JOIN evaluations e ON e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
+    GROUP BY te.evaluator_id
+    ORDER BY vencidas DESC, total_asignadas DESC
+  `).all(Date.now());
+  res.json(rows);
+});
+
+app.get('/admin/reports/discrepancies', authMiddleware, requireRole('admin'), (req, res) => {
+  const threshold = parseFloat(req.query.threshold) || 1.0;
+  const rows = db.prepare(`
+    SELECT
+      t.id as thesis_id,
+      t.title,
+      GROUP_CONCAT(u.full_name, ' | ') as evaluadores,
+      ROUND(MAX(CAST(e.final_score AS REAL)), 2) as nota_max,
+      ROUND(MIN(CAST(e.final_score AS REAL)), 2) as nota_min,
+      ROUND(MAX(CAST(e.final_score AS REAL)) - MIN(CAST(e.final_score AS REAL)), 2) as diferencia
+    FROM evaluations e
+    JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+    JOIN theses t ON t.id = te.thesis_id
+    JOIN users u ON u.id = te.evaluator_id
+    WHERE e.evaluation_type = 'document' AND e.final_score IS NOT NULL
+    GROUP BY te.thesis_id
+    HAVING COUNT(e.id) >= 2 AND diferencia >= ?
+    ORDER BY diferencia DESC
+  `).all(threshold);
+  res.json(rows);
+});
 
 // Middleware de manejo de errores global
 app.use((err, req, res, next) => {
@@ -7376,6 +7917,45 @@ app.post('/chat', authMiddleware, async (req, res) => {
       }).filter(Boolean);
 
       contextData = `\n\nLISTA DE TESIS (${theses.length} proyectos):\n${JSON.stringify(theses)}`;
+    } else if (contextType === 'admin') {
+      const isAdmin = roles.includes('admin') || roles.includes('superadmin');
+      if (isAdmin) {
+        const byStatus = db.prepare(`SELECT status, COUNT(*) as count FROM theses GROUP BY status`).all();
+        const overdueEvals = db.prepare(`
+          SELECT t.title, u.full_name as evaluador, te.due_date
+          FROM thesis_evaluators te
+          JOIN theses t ON t.id = te.thesis_id
+          JOIN users u ON u.id = te.evaluator_id
+          LEFT JOIN evaluations e ON e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
+          WHERE e.id IS NULL AND te.due_date IS NOT NULL AND te.due_date < ?
+          ORDER BY te.due_date ASC LIMIT 20
+        `).all(Date.now());
+        const stuckTheses = db.prepare(`
+          SELECT title, status, updated_at FROM theses
+          WHERE status NOT IN ('finalized','defended')
+          AND updated_at < ?
+          ORDER BY updated_at ASC LIMIT 10
+        `).all(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const evaluatorLoad = db.prepare(`
+          SELECT u.full_name,
+            COUNT(te.id) as total_asignadas,
+            SUM(CASE WHEN e.id IS NULL THEN 1 ELSE 0 END) as pendientes
+          FROM thesis_evaluators te
+          JOIN users u ON u.id = te.evaluator_id
+          LEFT JOIN evaluations e ON e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
+          GROUP BY te.evaluator_id
+          ORDER BY pendientes DESC
+        `).all();
+        const overdueWithDates = overdueEvals.map(r => ({
+          ...r,
+          due_date: r.due_date ? new Date(r.due_date).toLocaleDateString('es-CO') : null,
+        }));
+        const stuckWithDates = stuckTheses.map(r => ({
+          ...r,
+          updated_at: r.updated_at ? new Date(r.updated_at * 1000).toLocaleDateString('es-CO') : null,
+        }));
+        contextData = `\n\nESTADO ACTUAL DEL SISTEMA (datos en tiempo real):\n${JSON.stringify({ distribucion_por_estado: byStatus, evaluaciones_vencidas: overdueWithDates, tesis_sin_movimiento_30dias: stuckWithDates, carga_evaluadores: evaluatorLoad }, null, 2)}`;
+      }
     }
   } catch (dbErr) {
     console.error('GioBot DB error:', dbErr);

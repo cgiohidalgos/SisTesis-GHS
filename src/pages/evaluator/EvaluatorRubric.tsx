@@ -389,23 +389,40 @@ export default function EvaluatorRubric() {
         <div className="space-y-4">
           <h3 className="text-lg font-bold tracking-tight">Rúbricas de Evaluación</h3>
           <Accordion type="single" collapsible className="w-full border rounded-xl overflow-hidden bg-white dark:bg-slate-950">
-            <AccordionItem value="doc" className="border-b px-2">
-              <AccordionTrigger className="hover:no-underline py-4">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-left w-full">
-                  <span>Rúbrica de Documento</span>
-                  {currentRound > 0 && (
-                    <span className="text-xs text-muted-foreground">Ronda {currentRound}</span>
-                  )}
-                  {myEvaluator?.due_date && (
-                    <span className="text-xs text-muted-foreground">Vence: {new Date(myEvaluator.due_date).toLocaleDateString('es-CO')}</span>
-                  )}
-                  {docEval ? (
-                    <span className="inline-flex items-center gap-1 text-xs bg-success/10 text-success px-2 py-1 rounded">✓ Enviada</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-1 rounded">⏳ Pendiente</span>
-                  )}
+            <AccordionItem value="doc" className="border-b">
+              <AccordionTrigger className="hover:no-underline px-5 py-5">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-left w-full">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                      <svg className="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-base text-foreground">Rúbrica de Documento</p>
+                      {myEvaluator?.due_date && (
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          Fecha límite: <span className="font-medium text-foreground">{new Date(myEvaluator.due_date * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {currentRound > 0 && (
+                      <span className="text-xs bg-muted text-muted-foreground px-2.5 py-1 rounded-full font-medium">Ronda {currentRound}</span>
+                    )}
+                    {docEval ? (
+                      <span className="inline-flex items-center gap-1.5 text-sm bg-success/10 text-success px-3 py-1.5 rounded-full font-medium">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                        Enviada
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-sm bg-warning/10 text-warning px-3 py-1.5 rounded-full font-medium">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        Pendiente
+                      </span>
+                    )}
+                  </div>
                 </div>
-                </AccordionTrigger>
+              </AccordionTrigger>
               <AccordionContent className="pb-6">
                 <div className="flex justify-end mb-3">
                   <Button
@@ -448,21 +465,38 @@ export default function EvaluatorRubric() {
               </AccordionContent>
             </AccordionItem>
             {thesis.defense_date && (
-              <AccordionItem value="pres" className="border-none px-2">
-                <AccordionTrigger className="hover:no-underline py-4">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-left w-full">
-                    <span>Rúbrica de Sustentación</span>
-                    {currentRound > 0 && (
-                      <span className="text-xs text-muted-foreground">Ronda {currentRound}</span>
-                    )}
-                    {myEvaluator?.due_date && (
-                      <span className="text-xs text-muted-foreground">Vence: {new Date(myEvaluator.due_date).toLocaleDateString('es-CO')}</span>
-                    )}
-                    {presEval ? (
-                      <span className="inline-flex items-center gap-1 text-xs bg-success/10 text-success px-2 py-1 rounded">✓ Enviada</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-1 rounded">⏳ Pendiente</span>
-                    )}
+              <AccordionItem value="pres" className="border-none">
+                <AccordionTrigger className="hover:no-underline px-5 py-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-left w-full">
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" /></svg>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-base text-foreground">Rúbrica de Sustentación</p>
+                        {myEvaluator?.due_date && (
+                          <p className="text-sm text-muted-foreground mt-0.5">
+                            Fecha límite: <span className="font-medium text-foreground">{new Date(myEvaluator.due_date * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {currentRound > 0 && (
+                        <span className="text-xs bg-muted text-muted-foreground px-2.5 py-1 rounded-full font-medium">Ronda {currentRound}</span>
+                      )}
+                      {presEval ? (
+                        <span className="inline-flex items-center gap-1.5 text-sm bg-success/10 text-success px-3 py-1.5 rounded-full font-medium">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                          Enviada
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-sm bg-warning/10 text-warning px-3 py-1.5 rounded-full font-medium">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          Pendiente
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </AccordionTrigger>
                 <AccordionContent className="pb-6">
@@ -614,14 +648,30 @@ export default function EvaluatorRubric() {
           </div>
         )}
 
-        {id && user && (
-          <DigitalSignSection
-            thesisId={id}
-            userName={user.full_name || ""}
-            myRole="evaluator"
-            myUserId={user.id}
-          />
-        )}
+        {id && user && (() => {
+          // Only show digital signing once ALL assigned evaluators have submitted BOTH doc AND presentation evaluations
+          const assignedIds: string[] = (thesis.evaluators || []).map((e: any) => e.id).filter(Boolean);
+          const allEvals: any[] = thesis.evaluations || [];
+          const docEvalIds = new Set(
+            allEvals.filter((e: any) => e.evaluation_type === 'document' || e.type === 'document').map((e: any) => e.evaluator_id)
+          );
+          const presEvalIds = new Set(
+            allEvals.filter((e: any) => e.evaluation_type === 'presentation' || e.type === 'presentation').map((e: any) => e.evaluator_id)
+          );
+          const hasDefense = !!thesis.defense_date;
+          const allDocDone = assignedIds.length > 0 && assignedIds.every(eid => docEvalIds.has(eid));
+          // presentation evals are required (defense must exist AND all evaluators must have submitted)
+          const allPresDone = hasDefense && assignedIds.length > 0 && assignedIds.every(eid => presEvalIds.has(eid));
+          if (!allDocDone || !allPresDone) return null;
+          return (
+            <DigitalSignSection
+              thesisId={id}
+              userName={user.full_name || ""}
+              myRole="evaluator"
+              myUserId={user.id}
+            />
+          );
+        })()}
       </div>
     </AppLayout>
   );

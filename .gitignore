@@ -31,3 +31,4 @@ server/thesis.db
 server/test*.js
 test_template.js
 tmp_check_export.sh
+.env

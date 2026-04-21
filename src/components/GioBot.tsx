@@ -68,7 +68,7 @@ interface Message {
   content: string;
 }
 
-function getContext(pathname: string): { thesisId?: string; contextType: "single" | "list" | "none" } {
+function getContext(pathname: string): { thesisId?: string; contextType: "single" | "list" | "none" | "admin" } {
   const singlePatterns = [
     /^\/evaluator\/directed-thesis\/([^/]+)/,
     /^\/evaluator\/student\/([^/]+)/,
@@ -87,6 +87,24 @@ function getContext(pathname: string): { thesisId?: string; contextType: "single
   if (listPaths.some(p => pathname === p || pathname.startsWith(p + "?"))) {
     return { contextType: "list" };
   }
+  const adminPaths = [
+    "/admin",
+    "/admin/evaluators",
+    "/admin/programs",
+    "/admin/rubrics",
+    "/admin/weights",
+    "/admin/review-items",
+    "/admin/notifications",
+    "/admin/evaluations",
+    "/admin/reports",
+    "/admin/users",
+    "/admin/smtp-config",
+    "/admin/notification-rules",
+    "/admin/as-evaluator",
+  ];
+  if (adminPaths.some(p => pathname === p || pathname.startsWith(p + "/"))) {
+    return { contextType: "admin" };
+  }
   return { contextType: "none" };
 }
 
@@ -94,7 +112,12 @@ const POLL_INTERVAL = 3 * 60 * 1000; // 3 minutes
 
 export default function GioBot() {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const saved = sessionStorage.getItem("giobot_messages");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [alerts, setAlerts] = useState<string[]>([]);
@@ -127,10 +150,12 @@ export default function GioBot() {
     return () => clearInterval(id);
   }, [fetchAlerts]);
 
-  // Reset conversation when navigating to a different context
+  // Persist messages in sessionStorage across navigation
   useEffect(() => {
-    setMessages([]);
-  }, [location.pathname]);
+    try {
+      sessionStorage.setItem("giobot_messages", JSON.stringify(messages));
+    } catch {}
+  }, [messages]);
 
   // When opening chat: mark alerts read and inject them as first message if not shown yet
   useEffect(() => {
@@ -176,6 +201,7 @@ export default function GioBot() {
 
   const clearChat = () => {
     setMessages([]);
+    sessionStorage.removeItem("giobot_messages");
     setAlertsRead(false);
   };
 
@@ -190,7 +216,7 @@ export default function GioBot() {
       {/* Floating button */}
       <button
         onClick={() => setOpen(o => !o)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200 flex items-center justify-center"
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200 flex items-center justify-center"
         title="GioBot — Asistente IA"
         aria-label="Abrir GioBot"
       >
@@ -216,7 +242,7 @@ export default function GioBot() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 w-80 sm:w-96 flex flex-col rounded-2xl border border-border bg-card shadow-2xl overflow-hidden" style={{ maxHeight: "70vh" }}>
+        <div className="fixed bottom-0 right-0 left-0 sm:bottom-24 sm:right-6 sm:left-auto sm:w-96 z-50 flex flex-col sm:rounded-2xl rounded-t-2xl border border-border bg-card shadow-2xl overflow-hidden" style={{ maxHeight: "92vh" }}>
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground">
             <div className="flex items-center gap-2">

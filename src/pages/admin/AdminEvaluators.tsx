@@ -358,7 +358,7 @@ export default function AdminEvaluators() {
                   Asignar al proyecto de grado
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-lg">
+              <DialogContent className="max-w-lg w-[calc(100vw-2rem)]">
                 <div className="mb-4">
                   <h3 className="font-heading text-2xl font-bold">Evaluadores</h3>
                   <p className="text-sm text-muted-foreground">Profesores registrados como evaluadores de proyectos de grado.</p>
@@ -529,7 +529,7 @@ export default function AdminEvaluators() {
         <Dialog open={selectedEvaluatorId !== null} onOpenChange={(open) => {
           if (!open) setSelectedEvaluatorId(null);
         }}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl w-[calc(100vw-2rem)]">
             <DialogHeader>
               <DialogTitle className="font-heading">
                 Proyectos evaluados por {evaluators.find(e => e.id === selectedEvaluatorId)?.name || 'Evaluador'}
