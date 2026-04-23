@@ -122,38 +122,41 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
           </button>
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {items.map((item) => {
-            const [itemPath, itemHash] = item.href.split('#');
-            const currentHash = location.hash.replace('#', '');
-            const isActive = itemHash
-              ? location.pathname === itemPath && currentHash === itemHash
-              : location.pathname === itemPath && !currentHash;
-            return (
-              <Link
-                key={item.href}
-                to={item.href}
-                onClick={() => {
-                  if (itemHash) {
-                    setTimeout(() => {
-                      document.getElementById(itemHash)?.scrollIntoView({ behavior: 'smooth' });
-                    }, 50);
-                  }
-                  setSidebarOpen(false);
-                }}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
-                )}
-              >
-                <item.icon className="w-4 h-4" />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
+
+        <div className="flex-1 min-h-0">
+          <nav className="h-full overflow-y-auto px-3 py-4 space-y-1 pr-2">
+            {items.map((item) => {
+              const [itemPath, itemHash] = item.href.split('#');
+              const currentHash = location.hash.replace('#', '');
+              const isActive = itemHash
+                ? location.pathname === itemPath && currentHash === itemHash
+                : location.pathname === itemPath && !currentHash;
+              return (
+                <Link
+                  key={item.href}
+                  to={item.href}
+                  onClick={() => {
+                    if (itemHash) {
+                      setTimeout(() => {
+                        document.getElementById(itemHash)?.scrollIntoView({ behavior: 'smooth' });
+                      }, 50);
+                    }
+                    setSidebarOpen(false);
+                  }}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                  )}
+                >
+                  <item.icon className="w-4 h-4" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
 
         <div className="p-4 border-t border-sidebar-border space-y-2">
           {profile && (

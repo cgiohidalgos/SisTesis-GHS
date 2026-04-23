@@ -51,16 +51,27 @@ async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
   
   try {
     const transporter = createTransport(config);
+    // Generar versión de texto plano a partir del HTML
+    const textBody = body
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/h[1-6]>/gi, '\n\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<li>/gi, '  • ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
     const info = await transporter.sendMail({
-      from: `"SisTesis USB Cali" <${config.username}>`,
+      from: `"${config.display_name || 'SisTesis - Universidad de San Buenaventura Cali'}" <${config.username}>`,
       to: toEmail,
       subject,
       html: body,
-      headers: {
-        'X-Mailer': 'SisTesis-Notifier',
-        'Precedence': 'bulk',
-        'List-Unsubscribe': `<mailto:${config.username}?subject=unsubscribe>`,
-      },
+      text: textBody,
     });
     console.log('[notify] Email enviado:', info.messageId);
     return true;
@@ -121,7 +132,7 @@ async function notifyEvaluatorRemoved(db, thesisId, evaluatorId, triggeredBy) {
   logNotification(db, evaluator.id, 'evaluator_removed', subject, body, thesisId, success ? null : 'failed');
 }
 
-async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy) {
+async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy, dueDateSec) {
   const evaluator = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(evaluatorId);
   if (!evaluator || !evaluator.institutional_email) return;
 
@@ -151,6 +162,7 @@ async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy) {
         <p style="margin:4px 0"><strong>Tesis:</strong> ${thesis.title}</p>
         <p style="margin:4px 0"><strong>Estudiantes:</strong></p>
         ${studentList}
+        ${dueDateSec ? `<p style="margin:12px 0 4px 0"><strong>Fecha límite para evaluar:</strong></p><p style="margin:4px 0;font-size:16px;font-weight:bold;color:#c0392b;background:#fdecea;border:1px solid #f5c6cb;border-radius:4px;display:inline-block;padding:4px 12px">${new Date(dueDateSec * 1000).toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>` : ''}
       </div>
       <h3 style="margin-top:24px;color:#1a1a2e">Datos de acceso al sistema</h3>
       <ul style="padding-left:18px;">

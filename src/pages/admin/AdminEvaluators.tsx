@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { getApiBase } from "@/lib/utils";
 
 const API_BASE = getApiBase();
 import AppLayout from "@/components/layout/AppLayout";
-import { User, Mail, BookOpen, Plus, EyeOff, UserPlus, Send } from "lucide-react";
+import { User, Mail, BookOpen, Plus, EyeOff, UserPlus, Send, AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -271,19 +271,74 @@ export default function AdminEvaluators() {
     }
   };
 
-  const handleDeleteEvaluator = async (id: string) => {
-    if (!confirm("¿Eliminar este evaluador? Esta acción no se puede deshacer.")) return;
+  const [deleteEvalModal, setDeleteEvalModal] = useState<{ id: string; name: string } | null>(null);
+  const [evalCaptchaCode, setEvalCaptchaCode] = useState('');
+  const [evalCaptchaInput, setEvalCaptchaInput] = useState('');
+  const [evalDeleting, setEvalDeleting] = useState(false);
+  const evalCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  const generateEvalCaptcha = useCallback(() => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    setEvalCaptchaCode(code);
+    setEvalCaptchaInput('');
+    setTimeout(() => {
+      const canvas = evalCanvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < 6; i++) {
+        ctx.strokeStyle = `hsl(${Math.random()*360},50%,60%)`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(Math.random() * canvas.width, Math.random() * canvas.height);
+        ctx.lineTo(Math.random() * canvas.width, Math.random() * canvas.height);
+        ctx.stroke();
+      }
+      const fonts = ['bold 28px monospace', 'bold 26px serif', 'bold 28px sans-serif'];
+      for (let i = 0; i < code.length; i++) {
+        ctx.save();
+        ctx.font = fonts[i % fonts.length];
+        ctx.fillStyle = `hsl(${Math.random()*60+200},60%,35%)`;
+        ctx.translate(20 + i * 30, 38);
+        ctx.rotate((Math.random() - 0.5) * 0.4);
+        ctx.fillText(code[i], 0, 0);
+        ctx.restore();
+      }
+    }, 0);
+  }, []);
+
+  const openDeleteEvalModal = (ev: Evaluator) => {
+    setDeleteEvalModal({ id: ev.id, name: ev.name });
+    generateEvalCaptcha();
+  };
+
+  const handleDeleteEvaluator = async () => {
+    if (!deleteEvalModal) return;
+    if (evalCaptchaInput.toUpperCase() !== evalCaptchaCode) {
+      toast.error('El código ingresado no coincide. Intenta de nuevo.');
+      generateEvalCaptcha();
+      return;
+    }
+    setEvalDeleting(true);
     try {
       const token = localStorage.getItem('token');
-      const resp = await fetch(`${API_BASE}/users/${id}`, {
+      const resp = await fetch(`${API_BASE}/users/${deleteEvalModal.id}`, {
         method: 'DELETE',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (!resp.ok) throw new Error('Error eliminando evaluador');
       toast.success('Evaluador eliminado');
+      setDeleteEvalModal(null);
       fetchEvaluators();
     } catch (e: any) {
       toast.error(e.message);
+    } finally {
+      setEvalDeleting(false);
     }
   };
 
@@ -516,7 +571,7 @@ export default function AdminEvaluators() {
                     <Send className="w-3 h-3 mr-1" />
                     {sendingCredentials === ev.id ? 'Enviando...' : 'Enviar acceso'}
                   </Button>
-                  <Button size="sm" variant="destructive" onClick={() => handleDeleteEvaluator(ev.id)}>
+                  <Button size="sm" variant="destructive" onClick={() => openDeleteEvalModal(ev)}>
                     Eliminar
                   </Button>
                 </div>
@@ -579,6 +634,59 @@ export default function AdminEvaluators() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Modal de confirmación con captcha para eliminar evaluador */}
+        {deleteEvalModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="bg-card border rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+              <div className="flex items-center gap-3 text-destructive">
+                <AlertTriangle className="w-7 h-7 shrink-0" />
+                <h3 className="text-lg font-bold">¿Eliminar este evaluador?</h3>
+              </div>
+              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 text-sm space-y-1">
+                <p className="font-semibold text-destructive">⚠️ Esta acción es irreversible.</p>
+                <p className="text-muted-foreground">Se eliminará permanentemente a <strong>{deleteEvalModal.name}</strong> y toda su información asociada:</p>
+                <ul className="list-disc list-inside text-muted-foreground space-y-0.5 mt-1">
+                  <li>Cuenta de acceso al sistema</li>
+                  <li>Historial de evaluaciones realizadas</li>
+                  <li>Asignaciones a proyectos activos</li>
+                  <li>Firmas de actas registradas</li>
+                </ul>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Escribe el código que aparece para confirmar:</p>
+                <div className="flex items-center gap-2">
+                  <canvas ref={evalCanvasRef} width={210} height={54} className="rounded border bg-slate-100" />
+                  <button type="button" onClick={generateEvalCaptcha} className="p-1.5 rounded hover:bg-muted" title="Nuevo código">
+                    <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                  </button>
+                </div>
+                <Input
+                  value={evalCaptchaInput}
+                  onChange={e => setEvalCaptchaInput(e.target.value.toUpperCase())}
+                  placeholder="Escribe el código aquí"
+                  className="font-mono tracking-widest uppercase"
+                  maxLength={6}
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') handleDeleteEvaluator(); }}
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={() => { setDeleteEvalModal(null); setEvalCaptchaInput(''); }} disabled={evalDeleting}>
+                  Cancelar
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  onClick={handleDeleteEvaluator}
+                  disabled={evalDeleting || evalCaptchaInput.length < 6}
+                >
+                  {evalDeleting ? 'Eliminando…' : 'Eliminar definitivamente'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppLayout>
   );

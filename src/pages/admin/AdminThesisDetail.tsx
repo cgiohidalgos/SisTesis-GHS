@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import AppLayout from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { User, AlertTriangle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import ThesisTimeline from "@/components/thesis/ThesisTimeline";
 import { useAuth } from "@/hooks/useAuth";
@@ -74,6 +76,8 @@ export default function AdminThesisDetail() {
   const [meritoriaSignerName, setMeritoriaSignerName] = useState<string>("");
   const [meritoriaSignerTitle, setMeritoriaSignerTitle] = useState<string>("");
   const [loadingMeritoria, setLoadingMeritoria] = useState(false);
+  const [editingDueDate, setEditingDueDate] = useState<Record<string, string>>({});
+  const [savingDueDate, setSavingDueDate] = useState<string | null>(null);
   const [showReplaceDialog, setShowReplaceDialog] = useState(false);
   const [isAddingEvaluator, setIsAddingEvaluator] = useState(false);
   const [replacingEvaluator, setReplacingEvaluator] = useState<any | null>(null);
@@ -81,6 +85,7 @@ export default function AdminThesisDetail() {
   const [selectedReplacementId, setSelectedReplacementId] = useState<string | null>(null);
   const [loadingAvailableEvaluators, setLoadingAvailableEvaluators] = useState(false);
   const [replacingEvaluatorLoading, setReplacingEvaluatorLoading] = useState(false);
+  const [evaluatorSearchQuery, setEvaluatorSearchQuery] = useState("");
 
   // Estado para enlaces de firma compartibles
   const [generatedSigningLinks, setGeneratedSigningLinks] = useState<Record<string, {url: string; copied: boolean}>>({});
@@ -176,11 +181,34 @@ export default function AdminThesisDetail() {
     return String(value);
   };
 
+  const saveDueDate = async (ev: any) => {
+    const newDate = editingDueDate[ev.id];
+    if (!newDate) return;
+    setSavingDueDate(ev.id);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/evaluators/${ev.id}/due-date`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ due_date: newDate }),
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => null))?.error || 'Error');
+      toast.success('Fecha límite actualizada');
+      setEditingDueDate(prev => { const n = { ...prev }; delete n[ev.id]; return n; });
+      fetchThesis();
+    } catch (err: any) {
+      toast.error(err.message || 'No se pudo actualizar la fecha');
+    } finally {
+      setSavingDueDate(null);
+    }
+  };
+
   const openReplaceEvaluatorDialog = async (ev: any) => {
     setReplacingEvaluator(ev);
     setIsAddingEvaluator(false);
     setShowReplaceDialog(true);
     setSelectedReplacementId(null);
+    setEvaluatorSearchQuery("");
     setLoadingAvailableEvaluators(true);
     try {
       const token = localStorage.getItem('token');
@@ -193,7 +221,7 @@ export default function AdminThesisDetail() {
       const assignedIds = new Set((thesis?.evaluators || []).map((x: any) => x.id));
       assignedIds.delete(ev.id);
       // Exclude directors of this thesis
-      const dirNamesUpper = (thesis?.directors || []).map((d: string) => d.toUpperCase());
+      const dirNamesUpper = (thesis?.directors || []).map((d: any) => normalizePersonName(d).toUpperCase());
       setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)).map((u: any) => ({
         ...u,
         _isDirector: dirNamesUpper.includes((u.full_name || '').toUpperCase()),
@@ -211,6 +239,7 @@ export default function AdminThesisDetail() {
     setIsAddingEvaluator(true);
     setShowReplaceDialog(true);
     setSelectedReplacementId(null);
+    setEvaluatorSearchQuery("");
     setLoadingAvailableEvaluators(true);
     try {
       const token = localStorage.getItem('token');
@@ -221,7 +250,7 @@ export default function AdminThesisDetail() {
       const list = await resp.json();
       const assignedIds = new Set((thesis?.evaluators || []).map((x: any) => x.id));
       // Exclude directors of this thesis
-      const dirNamesUpper = (thesis?.directors || []).map((d: string) => d.toUpperCase());
+      const dirNamesUpper = (thesis?.directors || []).map((d: any) => normalizePersonName(d).toUpperCase());
       setAvailableEvaluators(list.filter((u: any) => !assignedIds.has(u.id)).map((u: any) => ({
         ...u,
         _isDirector: dirNamesUpper.includes((u.full_name || '').toUpperCase()),
@@ -624,9 +653,73 @@ export default function AdminThesisDetail() {
     );
   };
 
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetModalTarget, setResetModalTarget] = useState<{ url: string; label: string; successMessage: string } | null>(null);
+  const [captchaCode, setCaptchaCode] = useState('');
+  const [captchaInput, setCaptchaInput] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const generateCaptcha = useCallback(() => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    setCaptchaCode(code);
+    setCaptchaInput('');
+    // Dibujar en canvas en el siguiente tick
+    setTimeout(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Fondo
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Líneas de ruido
+      for (let i = 0; i < 6; i++) {
+        ctx.strokeStyle = `hsl(${Math.random()*360},50%,60%)`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(Math.random() * canvas.width, Math.random() * canvas.height);
+        ctx.lineTo(Math.random() * canvas.width, Math.random() * canvas.height);
+        ctx.stroke();
+      }
+      // Letras
+      const fonts = ['bold 28px monospace', 'bold 26px serif', 'bold 28px sans-serif'];
+      for (let i = 0; i < code.length; i++) {
+        ctx.save();
+        ctx.font = fonts[i % fonts.length];
+        ctx.fillStyle = `hsl(${Math.random()*60+200},60%,35%)`;
+        ctx.translate(20 + i * 30, 38);
+        ctx.rotate((Math.random() - 0.5) * 0.4);
+        ctx.fillText(code[i], 0, 0);
+        ctx.restore();
+      }
+    }, 0);
+  }, []);
+
+  const openDeleteModal = () => {
+    setDeleteModalOpen(true);
+    generateCaptcha();
+  };
+
+  const openResetModal = (url: string, label: string, successMessage: string) => {
+    setResetModalTarget({ url, label, successMessage });
+    setResetModalOpen(true);
+    generateCaptcha();
+  };
+
   const handleDelete = async () => {
     if (!thesis) return;
-    if (!confirm("¿Eliminar esta tesis? Esta acción no se puede deshacer.")) return;
+    if (captchaInput.toUpperCase() !== captchaCode) {
+      toast.error('El código ingresado no coincide. Intenta de nuevo.');
+      generateCaptcha();
+      return;
+    }
+    setDeleting(true);
     try {
       const token = localStorage.getItem('token');
       const resp = await fetch(`${API_BASE}/theses/${thesis.id}`, {
@@ -638,6 +731,35 @@ export default function AdminThesisDetail() {
       navigate('/admin/theses');
     } catch (e:any) {
       toast.error(e.message);
+      setDeleting(false);
+    }
+  };
+
+  const handleResetEvaluation = async () => {
+    if (!resetModalTarget) return;
+    if (captchaInput.toUpperCase() !== captchaCode) {
+      toast.error('El código ingresado no coincide. Intenta de nuevo.');
+      generateCaptcha();
+      return;
+    }
+    setResetting(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}${resetModalTarget.url}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        throw new Error(err?.error || 'Error al resetear');
+      }
+      toast.success(resetModalTarget.successMessage);
+      setResetModalOpen(false);
+      setCaptchaInput('');
+      fetchThesis();
+    } catch (e:any) {
+      toast.error(e.message);
+      setResetting(false);
     }
   };
 
@@ -659,7 +781,7 @@ export default function AdminThesisDetail() {
         <div className="mb-6 bg-card p-6 rounded-lg shadow-card">
           <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
             <h2 className="font-heading text-2xl font-bold">Detalle de Tesis</h2>
-            <Button variant="destructive" size="sm" onClick={handleDelete}>Eliminar tesis</Button>
+            <Button variant="destructive" size="sm" onClick={openDeleteModal}>Eliminar tesis</Button>
           </div>
           <p className="text-sm text-muted-foreground mb-2">
             <strong>Estado:</strong> <span className="capitalize">{safeRender(thesis.status)}</span>
@@ -667,6 +789,105 @@ export default function AdminThesisDetail() {
           <p className="text-lg font-semibold mb-2">
             <strong>Título:</strong> {safeRender(thesis.title)}
           </p>
+
+          {/* Modal de confirmación con captcha */}
+          {deleteModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+              <div className="bg-card border rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center gap-3 text-destructive">
+                  <AlertTriangle className="w-7 h-7 shrink-0" />
+                  <h3 className="text-lg font-bold">¿Eliminar esta tesis?</h3>
+                </div>
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 text-sm space-y-1">
+                  <p className="font-semibold text-destructive">⚠️ Esta acción es irreversible.</p>
+                  <p className="text-muted-foreground">Se perderá permanentemente toda la información asociada:</p>
+                  <ul className="list-disc list-inside text-muted-foreground space-y-0.5 mt-1">
+                    <li>Documentos y archivos subidos</li>
+                    <li>Evaluaciones y rúbricas</li>
+                    <li>Línea de tiempo e historial</li>
+                    <li>Firmas de acta</li>
+                    <li>Notificaciones y comentarios</li>
+                  </ul>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Escribe el código que aparece para confirmar:</p>
+                  <div className="flex items-center gap-2">
+                    <canvas ref={canvasRef} width={210} height={54} className="rounded border bg-slate-100" />
+                    <button type="button" onClick={generateCaptcha} className="p-1.5 rounded hover:bg-muted" title="Nuevo código">
+                      <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                  </div>
+                  <Input
+                    value={captchaInput}
+                    onChange={e => setCaptchaInput(e.target.value.toUpperCase())}
+                    placeholder="Escribe el código aquí"
+                    className="font-mono tracking-widest uppercase"
+                    maxLength={6}
+                    autoFocus
+                    onKeyDown={e => { if (e.key === 'Enter') handleDelete(); }}
+                  />
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" className="flex-1" onClick={() => { setDeleteModalOpen(false); setCaptchaInput(''); }} disabled={deleting}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="flex-1"
+                    onClick={handleDelete}
+                    disabled={deleting || captchaInput.length < 6}
+                  >
+                    {deleting ? 'Eliminando…' : 'Eliminar definitivamente'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+          {resetModalOpen && resetModalTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+              <div className="bg-card border rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center gap-3 text-destructive">
+                  <AlertTriangle className="w-7 h-7 shrink-0" />
+                  <h3 className="text-lg font-bold">¿Resetear {resetModalTarget.label}?</h3>
+                </div>
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 text-sm space-y-1">
+                  <p className="font-semibold text-destructive">⚠️ Esta acción no se puede deshacer.</p>
+                  <p className="text-muted-foreground">El evaluador podrá volver a llenar esta rúbrica, pero el envío actual se perderá.</p>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Escribe el código que aparece para confirmar:</p>
+                  <div className="flex items-center gap-2">
+                    <canvas ref={canvasRef} width={210} height={54} className="rounded border bg-slate-100" />
+                    <button type="button" onClick={generateCaptcha} className="p-1.5 rounded hover:bg-muted" title="Nuevo código">
+                      <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                  </div>
+                  <Input
+                    value={captchaInput}
+                    onChange={e => setCaptchaInput(e.target.value.toUpperCase())}
+                    placeholder="Escribe el código aquí"
+                    className="font-mono tracking-widest uppercase"
+                    maxLength={6}
+                    autoFocus
+                    onKeyDown={e => { if (e.key === 'Enter') handleResetEvaluation(); }}
+                  />
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" className="flex-1" onClick={() => { setResetModalOpen(false); setCaptchaInput(''); }} disabled={resetting}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="flex-1"
+                    onClick={handleResetEvaluation}
+                    disabled={resetting || captchaInput.length < 6}
+                  >
+                    {resetting ? 'Reseteando…' : 'Resetear definitivamente'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
           {thesis.students && thesis.students.length > 0 && (
             <div className="mb-3">
               <p className="text-sm text-muted-foreground mb-2">
@@ -744,15 +965,54 @@ export default function AdminThesisDetail() {
                 );
               })}
             </div>
-            {thesis.evaluators.some((e:any) => e.due_date) && (
-              <p className="text-sm text-muted-foreground">
-                <strong>Fecha(s) límite:</strong> {thesis.evaluators
-                  .map((e:any) => e.due_date)
-                  .filter(Boolean)
-                  .map((d:any) => { const ms = d > 1e12 ? d : d * 1000; return new Date(ms).toLocaleDateString('es-CO'); })
-                  .join(', ')}
-              </p>
-            )}
+            <div className="mt-2 space-y-1">
+              {thesis.evaluators.map((e:any) => (
+                <div key={e.id} className="flex items-center gap-2 flex-wrap text-sm">
+                  <span className="text-muted-foreground font-medium">{normalizePersonName(e)}:</span>
+                  {e.id in editingDueDate ? (
+                    <>
+                      <input
+                        type="date"
+                        className="border rounded px-2 py-0.5 text-xs"
+                        value={editingDueDate[e.id]}
+                        onChange={ev => setEditingDueDate(prev => ({ ...prev, [e.id]: ev.target.value }))}
+                      />
+                      <button
+                        className="text-xs px-2 py-0.5 rounded bg-primary text-white hover:bg-primary/90 disabled:opacity-50"
+                        disabled={savingDueDate === e.id}
+                        onClick={() => saveDueDate(e)}
+                      >
+                        {savingDueDate === e.id ? 'Guardando…' : 'Guardar'}
+                      </button>
+                      <button
+                        className="text-xs px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200"
+                        onClick={() => setEditingDueDate(prev => { const n = { ...prev }; delete n[e.id]; return n; })}
+                      >
+                        Cancelar
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground">
+                        {e.due_date
+                          ? new Date(e.due_date > 1e12 ? e.due_date : e.due_date * 1000).toLocaleDateString('es-CO')
+                          : 'Sin fecha'}
+                      </span>
+                      <button
+                        className="text-xs px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200"
+                        onClick={() => {
+                          const ms = e.due_date > 1e12 ? e.due_date : e.due_date * 1000;
+                          const iso = e.due_date ? new Date(ms).toISOString().slice(0, 10) : '';
+                          setEditingDueDate(prev => ({ ...prev, [e.id]: iso }));
+                        }}
+                      >
+                        ✏️ Editar fecha límite
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
 
             {/* per-evaluator status accordions */}
             <Accordion type="single" collapsible className="mt-4 w-full border rounded-xl overflow-hidden bg-white dark:bg-slate-950">
@@ -764,23 +1024,32 @@ export default function AdminThesisDetail() {
                 const presEval = thesis.evaluations?.find((x:any) => x.evaluator_id===ev.id && x.evaluation_type==='presentation');
                 // compute due-date status badge when evaluation still pending
                 let dueStatus: JSX.Element | null = null;
-                if (ev.due_date && !(docSent && (thesis.defense_date ? docSent && presSent : docSent))) {
-                  const now = new Date();
-                  const duems = ev.due_date > 1e12 ? ev.due_date : ev.due_date * 1000;
-                  const due = new Date(duems);
-                  const diff = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-                  if (diff < 0) {
-                    dueStatus = (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-100 text-red-600 border border-red-200">
-                        Atrasado
-                      </span>
-                    );
-                  } else if (diff <= 4) {
-                    dueStatus = (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 border border-yellow-200">
-                        Casi vence
-                      </span>
-                    );
+                const evalPending = !(docSent && (thesis.defense_date ? docSent && presSent : docSent));
+                if (evalPending) {
+                  if (ev.due_date) {
+                    const now = new Date();
+                    const duems = ev.due_date > 1e12 ? ev.due_date : ev.due_date * 1000;
+                    const due = new Date(duems);
+                    const diff = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+                    if (diff < 0) {
+                      dueStatus = (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-100 text-red-600 border border-red-200">
+                          Atrasado
+                        </span>
+                      );
+                    } else if (diff <= 4) {
+                      dueStatus = (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 border border-yellow-200">
+                          Casi vence
+                        </span>
+                      );
+                    } else {
+                      dueStatus = (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-100 text-muted-foreground border border-border">
+                          Pendiente
+                        </span>
+                      );
+                    }
                   } else {
                     dueStatus = (
                       <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-100 text-muted-foreground border border-border">
@@ -850,6 +1119,13 @@ export default function AdminThesisDetail() {
                                 >
                                   📥 XLSX
                                 </button>
+                                <button
+                                  className="text-xs px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 font-medium"
+                                  title="Resetear rúbrica para que el evaluador la vuelva a llenar"
+                                  onClick={() => openResetModal(`/theses/${thesis.id}/evaluators/${ev.id}/reset-evaluation?evaluation_type=document`, `rúbrica de documento de ${ev.name || 'este evaluador'}`, 'Rúbrica reseteada. El evaluador puede volver a enviarla.')}
+                                >
+                                  🔄 Resetear
+                                </button>
                                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
                               </div>
                             </AccordionTrigger>
@@ -890,6 +1166,13 @@ export default function AdminThesisDetail() {
                                   onClick={() => downloadFile(`/admin/theses/${thesis.id}/rubric-xlsx?evaluator_id=${ev.id}&evaluation_type=presentation`, `Rubrica_Sustentacion_${(ev.name || 'evaluador').replace(/\s+/g,'_')}.xlsx`)}
                                 >
                                   📥 XLSX
+                                </button>
+                                <button
+                                  className="text-xs px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 font-medium"
+                                  title="Resetear rúbrica para que el evaluador la vuelva a llenar"
+                                  onClick={() => openResetModal(`/theses/${thesis.id}/evaluators/${ev.id}/reset-evaluation?evaluation_type=presentation`, `rúbrica de sustentación de ${ev.name || 'este evaluador'}`, 'Rúbrica reseteada. El evaluador puede volver a enviarla.')}
+                                >
+                                  🔄 Resetear
                                 </button>
                                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Enviada</span>
                               </div>
@@ -1196,7 +1479,7 @@ export default function AdminThesisDetail() {
         {thesis.timeline && thesis.timeline.length > 0 && (
           <div className="mb-6">
             <h3 className="font-semibold mb-2">Historial</h3>
-            <ThesisTimeline events={thesis.timeline} isAdmin={true} />
+            <ThesisTimeline events={thesis.timeline} isAdmin={true} programDocRubric={programDocRubric ?? undefined} programPresRubric={programPresRubric ?? undefined} />
           </div>
         )}
         {thesis.status === 'submitted' && (
@@ -1811,7 +2094,7 @@ export default function AdminThesisDetail() {
             <DialogTitle>{isAddingEvaluator ? 'Agregar evaluador' : 'Reemplazar evaluador'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p>
+            <p className="text-sm text-muted-foreground">
               {isAddingEvaluator
                 ? 'Selecciona un evaluador para agregar a esta tesis.'
                 : (
@@ -1823,30 +2106,60 @@ export default function AdminThesisDetail() {
             {loadingAvailableEvaluators ? (
               <p className="text-sm text-muted-foreground">Cargando evaluadores...</p>
             ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {availableEvaluators.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No hay evaluadores disponibles.</p>
-                ) : (
-                  availableEvaluators.map((ev: any) => (
-                    <label key={ev.id} className={`flex items-center gap-2 p-2 border rounded ${ev._isDirector ? 'opacity-50 cursor-not-allowed border-red-200 bg-red-50' : 'cursor-pointer'}`}>
-                      <input
-                        type="radio"
-                        name="replacement"
-                        value={ev.id}
-                        checked={selectedReplacementId === ev.id}
-                        onChange={() => setSelectedReplacementId(ev.id)}
+              <>
+                <Input
+                  placeholder="Buscar evaluadores..."
+                  value={evaluatorSearchQuery}
+                  onChange={(e) => setEvaluatorSearchQuery(e.target.value)}
+                  className="w-full"
+                />
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {availableEvaluators.filter((ev: any) => {
+                    const q = evaluatorSearchQuery.trim().toLowerCase();
+                    if (!q) return true;
+                    return (ev.full_name || '').toLowerCase().includes(q) ||
+                      (ev.institutional_email || '').toLowerCase().includes(q) ||
+                      (ev.specialty || '').toLowerCase().includes(q);
+                  }).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No hay evaluadores disponibles.</p>
+                  ) : (
+                    availableEvaluators.filter((ev: any) => {
+                      const q = evaluatorSearchQuery.trim().toLowerCase();
+                      if (!q) return true;
+                      return (ev.full_name || '').toLowerCase().includes(q) ||
+                        (ev.institutional_email || '').toLowerCase().includes(q) ||
+                        (ev.specialty || '').toLowerCase().includes(q);
+                    }).map((ev: any) => (
+                      <button
+                        key={ev.id}
+                        onClick={() => !ev._isDirector && setSelectedReplacementId(ev.id)}
                         disabled={ev._isDirector}
-                      />
-                      <div>
-                        <span>{ev.full_name || ev.institutional_email}</span>
-                        {ev._isDirector && (
-                          <p className="text-xs text-red-500 font-medium">Director(a) de esta tesis</p>
+                        className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all text-left ${
+                          ev._isDirector
+                            ? 'border-red-200 bg-red-50 opacity-60 cursor-not-allowed'
+                            : selectedReplacementId === ev.id
+                            ? 'border-accent bg-accent/10'
+                            : 'border-border hover:border-accent/30'
+                        }`}
+                      >
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                          <User className="w-4 h-4 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-foreground">{ev.full_name || ev.institutional_email}</p>
+                          <p className="text-xs text-muted-foreground truncate">{ev.specialty || ev.institutional_email}</p>
+                          {ev._isDirector && (
+                            <p className="text-xs text-red-500 font-medium mt-0.5">Director(a) de esta tesis — no puede ser evaluador(a)</p>
+                          )}
+                        </div>
+                        {selectedReplacementId === ev.id && (
+                          <span className="text-xs font-bold text-accent">✓</span>
                         )}
-                      </div>
-                    </label>
-                  ))
-                )}
-              </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
             )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setShowReplaceDialog(false)}>

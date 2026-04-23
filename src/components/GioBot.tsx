@@ -242,7 +242,7 @@ export default function GioBot() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-0 right-0 left-0 sm:bottom-24 sm:right-6 sm:left-auto sm:w-96 z-50 flex flex-col sm:rounded-2xl rounded-t-2xl border border-border bg-card shadow-2xl overflow-hidden" style={{ maxHeight: "92vh" }}>
+        <div className="fixed bottom-0 right-0 left-0 sm:bottom-24 sm:right-6 sm:left-auto sm:w-96 z-50 flex flex-col sm:rounded-2xl rounded-t-2xl border border-border bg-card shadow-2xl overflow-hidden" style={{ maxHeight: "75vh" }}>
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground">
             <div className="flex items-center gap-2">

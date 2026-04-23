@@ -16,7 +16,7 @@ const Docxtemplater = require('docxtemplater');
 const PizZip = require('pizzip');
 const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
-const { notifyTimeline, startReminderCron, startBackupCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned, logNotification } = require('./notifications');
+const { notifyTimeline, startReminderCron, startBackupCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned, notifyEvaluatorRemoved, logNotification } = require('./notifications');
 const Anthropic = require('@anthropic-ai/sdk');
 const logger = require('./logger');
 
@@ -1018,7 +1018,7 @@ app.post('/theses/:id/assign-evaluator', authMiddleware, requireRole('admin'), (
   db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(uuidv4(), thesis_id, 'evaluators_assigned', desc, 1, nowSec());
   notifyTimeline(db, thesis_id, 'evaluators_assigned', desc, req.user.id).catch(console.error);
-  notifyEvaluatorAssigned(db, thesis_id, evaluator_id, req.user.id).catch(console.error);
+  notifyEvaluatorAssigned(db, thesis_id, evaluator_id, req.user.id, dueDateInt).catch(console.error);
   res.json({ ok: true });
 });
 
@@ -1063,7 +1063,7 @@ app.post('/theses/:id/assign-evaluators', authMiddleware, requireRole('admin'), 
     notifyTimeline(db, thesis_id, 'evaluators_assigned', `Evaluadores asignados (${evaluator_ids.length})`, req.user.id).catch(console.error);
     // Notificar a cada evaluador individualmente con sus credenciales
     for (const evId of evaluator_ids) {
-      notifyEvaluatorAssigned(db, thesis_id, evId, req.user.id).catch(console.error);
+      notifyEvaluatorAssigned(db, thesis_id, evId, req.user.id, dueDateInt).catch(console.error);
     }
     res.json({ ok: true });
   } catch (err) {
@@ -1127,6 +1127,51 @@ app.post('/theses/:id/replace-evaluator', authMiddleware, requireRole('admin'), 
 });
 
 // Remover un evaluador asignado si aún no ha enviado evaluación de documento
+app.put('/theses/:id/evaluators/:evaluatorId/due-date', authMiddleware, requireRole('admin'), (req, res) => {
+  const thesis_id = req.params.id;
+  const evaluator_id = req.params.evaluatorId;
+  const { due_date } = req.body;
+  const te = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, evaluator_id);
+  if (!te) return res.status(404).json({ error: 'assignment not found' });
+  const dueDateInt = due_date ? Math.floor(Date.parse(due_date) / 1000) || null : null;
+  db.prepare('UPDATE thesis_evaluators SET due_date = ? WHERE id = ?').run(dueDateInt, te.id);
+  const evaluatorRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(evaluator_id);
+  const desc = `Fecha límite actualizada para evaluador ${evaluatorRow?.full_name || ''}: ${due_date || 'sin fecha'}`;
+  db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(uuidv4(), thesis_id, 'evaluator_due_date_updated', desc, 1, nowSec());
+  res.json({ ok: true });
+});
+
+app.delete('/theses/:id/evaluators/:evaluatorId/reset-evaluation', authMiddleware, requireRole('admin'), (req, res) => {
+  const thesis_id = req.params.id;
+  const evaluator_id = req.params.evaluatorId;
+  const { evaluation_type } = req.query; // 'document' | 'presentation' | undefined (all)
+  const te = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, evaluator_id);
+  if (!te) return res.status(404).json({ error: 'Asignación no encontrada' });
+
+  let evalIds;
+  if (evaluation_type) {
+    evalIds = db.prepare('SELECT id FROM evaluations WHERE thesis_evaluator_id = ? AND evaluation_type = ?').all(te.id, evaluation_type).map(r => r.id);
+  } else {
+    evalIds = db.prepare('SELECT id FROM evaluations WHERE thesis_evaluator_id = ?').all(te.id).map(r => r.id);
+  }
+
+  if (!evalIds.length) return res.status(404).json({ error: 'No hay evaluaciones enviadas para resetear' });
+
+  const ph = evalIds.map(() => '?').join(',');
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM evaluation_scores WHERE evaluation_id IN (${ph})`).run(...evalIds);
+    db.prepare(`DELETE FROM evaluation_files WHERE evaluation_id IN (${ph})`).run(...evalIds);
+    db.prepare(`DELETE FROM evaluations WHERE id IN (${ph})`).run(...evalIds);
+  });
+  try {
+    tx();
+    res.json({ ok: true, deleted: evalIds.length });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 app.delete('/theses/:id/evaluators/:evaluatorId', authMiddleware, requireRole('admin'), (req, res) => {
   const thesis_id = req.params.id;
   const evaluator_id = req.params.evaluatorId;
@@ -1161,6 +1206,7 @@ app.delete('/theses/:id/evaluators/:evaluatorId', authMiddleware, requireRole('a
   try {
     tx();
     notifyTimeline(db, thesis_id, 'evaluator_removed', desc, req.user.id).catch(console.error);
+    notifyEvaluatorRemoved(db, thesis_id, evaluator_id, req.user.id).catch(console.error);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -2108,6 +2154,86 @@ app.post('/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// Rate limiter estricto para recuperación de contraseña (5 intentos / 15 min por IP)
+const recoverLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Demasiados intentos de recuperación, intente más tarde.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.post('/auth/recover-password', recoverLimiter, [
+  body('cedula').trim().notEmpty().withMessage('Cédula requerida').isLength({ max: 20 }),
+  body('email').trim().notEmpty().withMessage('Correo requerido').isEmail().withMessage('Correo inválido').isLength({ max: 200 }),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ error: 'Datos de entrada inválidos', details: errors.array() });
+  }
+
+  // Siempre responder de la misma forma para no revelar si el usuario existe
+  const GENERIC_OK = { ok: true, message: 'Si los datos coinciden, recibirás un correo con tus datos de acceso.' };
+
+  const { cedula, email } = req.body;
+
+  try {
+    const user = db.prepare(
+      'SELECT id, full_name, student_code, cedula, institutional_email FROM users WHERE cedula = ? AND LOWER(institutional_email) = LOWER(?)'
+    ).get(cedula.trim(), email.trim());
+
+    if (!user || !user.institutional_email) {
+      // No revelar que el usuario no existe
+      return res.json(GENERIC_OK);
+    }
+
+    // Determinar rol para calcular el formato de contraseña
+    const roleRow = db.prepare('SELECT role FROM user_roles WHERE user_id = ? LIMIT 1').get(user.id);
+    const role = roleRow ? roleRow.role : 'student';
+
+    const firstName = (user.full_name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '') || 'usuario';
+    const userCedula = user.cedula || '';
+
+    // Estudiante: primer_nombre_cedula  |  Evaluador/Admin: primer_nombrecedula
+    const tempPassword = role === 'student'
+      ? `${firstName}_${userCedula}`
+      : `${firstName}${userCedula}`;
+
+    const hash = await bcrypt.hash(tempPassword, 12);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+
+    const identifier = user.institutional_email;
+    const fullName = user.full_name || 'Usuario';
+
+    const subject = 'Recuperación de contraseña – SisTesis USB Cali';
+    const body = `
+      <div style="font-family:sans-serif;max-width:600px;">
+        <h2 style="color:#1a1a2e;">Recuperación de contraseña</h2>
+        <p>Hola <strong>${fullName}</strong>,</p>
+        <p>Recibimos una solicitud de recuperación de contraseña para tu cuenta en <strong>SisTesis</strong>.</p>
+        <h3 style="color:#1a1a2e;margin-top:20px;">Datos de acceso</h3>
+        <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px;">
+          <p style="margin:4px 0;"><strong>URL:</strong> <a href="https://sistesis.site/">https://sistesis.site/</a></p>
+          <p style="margin:4px 0;"><strong>Usuario:</strong> ${identifier}</p>
+          <p style="margin:4px 0;"><strong>Contraseña temporal:</strong> ${tempPassword}</p>
+        </div>
+        <p>Te recomendamos cambiar tu contraseña después de ingresar.</p>
+        <p style="color:#888;font-size:13px;">⚠️ Si no solicitaste este correo, alguien más podría haber ingresado tus datos. Contacta al administrador.</p>
+        <p style="color:#aaa;font-size:12px;margin-top:20px;">Si no encuentras este correo en tu bandeja de entrada, revisa la carpeta de <strong>spam o correo no deseado</strong>.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:20px 0;" />
+        <p style="color:#aaa;font-size:11px;">Correo enviado automáticamente por SisTesis – Universidad de San Buenaventura Cali.</p>
+      </div>
+    `;
+
+    await sendEmail(db, user.institutional_email, subject, body, null);
+
+    return res.json({ ok: true, fullName: user.full_name || '' });
+  } catch (err) {
+    logger.error('Error en recuperación de contraseña', { error: err.message });
+    return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
 app.get('/auth/session', (req, res) => {
   const auth = req.headers.authorization || '';
   const token = auth.replace(/^Bearer\s+/, '');
@@ -2149,28 +2275,56 @@ app.get('/user_roles', authMiddleware, (req, res) => {
 // without requiring users to be logged in.
 app.get('/programs', (req, res) => {
   let isAdmin = false;
+  let isSuper = false;
+  let userId = null;
   const auth = req.headers.authorization || '';
   const token = auth.replace(/^Bearer\s+/, '');
   if (token) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      const userId = decoded.id;
+      userId = decoded.id;
       if (userId) {
         const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(userId).map(r => r.role);
         isAdmin = roles.includes('admin') || roles.includes('superadmin');
+        isSuper = roles.includes('superadmin');
       }
     } catch (e) { /* token inválido — mostrar solo visibles */ }
   }
 
-  const rows = db.prepare(
-    `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
-            GROUP_CONCAT(pa.user_id) as admin_user_ids
-     FROM programs p
-     LEFT JOIN program_admins pa ON pa.program_id = p.id
-     WHERE (p.hidden = 0 OR p.hidden IS NULL OR ? = 1)
-     GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden
-     ORDER BY p.name`
-  ).all(isAdmin ? 1 : 0);
+  let rows;
+  if (isSuper) {
+    // Superadmin ve todos los programas (incluso ocultos)
+    rows = db.prepare(
+      `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
+              GROUP_CONCAT(pa.user_id) as admin_user_ids
+       FROM programs p
+       LEFT JOIN program_admins pa ON pa.program_id = p.id
+       GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden
+       ORDER BY p.name`
+    ).all();
+  } else if (isAdmin && userId) {
+    // Admin regular: solo los programas que le fueron asignados
+    rows = db.prepare(
+      `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
+              GROUP_CONCAT(pa2.user_id) as admin_user_ids
+       FROM programs p
+       JOIN program_admins pa ON pa.program_id = p.id AND pa.user_id = ?
+       LEFT JOIN program_admins pa2 ON pa2.program_id = p.id
+       GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden
+       ORDER BY p.name`
+    ).all(userId);
+  } else {
+    // Usuarios no autenticados o estudiantes: solo programas visibles
+    rows = db.prepare(
+      `SELECT p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden,
+              GROUP_CONCAT(pa.user_id) as admin_user_ids
+       FROM programs p
+       LEFT JOIN program_admins pa ON pa.program_id = p.id
+       WHERE (p.hidden = 0 OR p.hidden IS NULL)
+       GROUP BY p.id, p.name, p.reception_start, p.reception_end, p.max_evaluators, p.hidden
+       ORDER BY p.name`
+    ).all();
+  }
 
   const data = rows
     .map(r => ({
@@ -3190,6 +3344,32 @@ app.get('/theses', authMiddleware, (req, res) => {
     const weighted = computeFinalWeightedForThesis(t.id);
     return { ...t, students, evaluators, directors, programs, timeline: enrichedTimeline, files, evaluations, weighted };
   });
+
+  // Calcular hasActa en batch (una sola query) para evitar N peticiones desde el frontend
+  if (enriched.length > 0) {
+    const thesisIds = enriched.map(t => t.id);
+    const placeholders = thesisIds.map(() => '?').join(',');
+    // Contar firmas digitales por tesis
+    const sigCounts = db.prepare(
+      `SELECT thesis_id, COUNT(*) as cnt FROM digital_signatures WHERE thesis_id IN (${placeholders}) GROUP BY thesis_id`
+    ).all(...thesisIds);
+    const sigMap = Object.fromEntries(sigCounts.map(r => [r.thesis_id, r.cnt]));
+    // Contar evaluadores requeridos por tesis
+    const evalCounts = db.prepare(
+      `SELECT thesis_id, COUNT(*) as cnt FROM thesis_evaluators WHERE thesis_id IN (${placeholders}) GROUP BY thesis_id`
+    ).all(...thesisIds);
+    const evalMap = Object.fromEntries(evalCounts.map(r => [r.thesis_id, r.cnt]));
+    // Contar directores por tesis
+    const dirCounts = db.prepare(
+      `SELECT thesis_id, COUNT(*) as cnt FROM thesis_directors WHERE thesis_id IN (${placeholders}) GROUP BY thesis_id`
+    ).all(...thesisIds);
+    const dirMap = Object.fromEntries(dirCounts.map(r => [r.thesis_id, r.cnt]));
+    enriched.forEach(t => {
+      const required = (evalMap[t.id] || 0) + (dirMap[t.id] || 0) + 1; // +1 director de programa
+      const signed = sigMap[t.id] || 0;
+      t.hasActa = required > 0 && signed >= required;
+    });
+  }
 
   res.json(enriched);
 });
@@ -6252,9 +6432,11 @@ app.get('/admin/program-rubrics/:programId', authMiddleware, (req, res) => {
   const programId = req.params.programId;
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
   const isSuperAdmin = roles.includes('superadmin');
-  
-  // Si no es superadmin, verificar que el admin esté asociado al programa
-  if (!isSuperAdmin) {
+  const isEvaluatorOrDirector = roles.includes('evaluator') || roles.includes('director');
+
+  // Evaluadores, directores y estudiantes pueden leer rúbricas (necesitan verlas)
+  const isStudent = roles.includes('student');
+  if (!isSuperAdmin && !isEvaluatorOrDirector && !isStudent) {
     const adminProg = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ? AND program_id = ?').get(req.user.id, programId);
     if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
   }
@@ -7844,10 +8026,10 @@ app.post('/chat', authMiddleware, async (req, res) => {
           FROM thesis_students ts JOIN users u ON ts.student_id = u.id WHERE ts.thesis_id = ?
         `).all(thesisId);
         const directors = db.prepare(`
-          SELECT u.full_name FROM thesis_directors td JOIN users u ON td.user_id = u.id WHERE td.thesis_id = ?
+          SELECT u.full_name, u.institutional_email, u.email FROM thesis_directors td JOIN users u ON td.user_id = u.id WHERE td.thesis_id = ?
         `).all(thesisId);
         const evaluators = db.prepare(`
-          SELECT u.full_name, te.is_blind FROM thesis_evaluators te JOIN users u ON te.evaluator_id = u.id WHERE te.thesis_id = ?
+          SELECT u.full_name, u.institutional_email, u.email, te.is_blind, te.due_date FROM thesis_evaluators te JOIN users u ON te.evaluator_id = u.id WHERE te.thesis_id = ?
         `).all(thesisId);
         const evaluations = db.prepare(`
           SELECT e.evaluation_type, e.final_score, e.concept, u.full_name as evaluator_name
@@ -7895,8 +8077,11 @@ app.post('/chat', authMiddleware, async (req, res) => {
           FROM thesis_students ts JOIN users u ON ts.student_id = u.id WHERE ts.thesis_id = ?
         `).all(id);
         const directors = db.prepare(`
-          SELECT u.full_name FROM thesis_directors td JOIN users u ON td.user_id = u.id WHERE td.thesis_id = ?
-        `).all(id).map(d => d.full_name);
+          SELECT u.full_name, u.institutional_email, u.email FROM thesis_directors td JOIN users u ON td.user_id = u.id WHERE td.thesis_id = ?
+        `).all(id).map(d => ({ nombre: d.full_name, correo: d.institutional_email || d.email }));
+        const evaluators = db.prepare(`
+          SELECT u.full_name, u.institutional_email, u.email, te.is_blind, te.due_date FROM thesis_evaluators te JOIN users u ON te.evaluator_id = u.id WHERE te.thesis_id = ?
+        `).all(id).map(e => ({ nombre: e.full_name, correo: e.institutional_email || e.email, ciego: e.is_blind }));
         const programs = db.prepare(`
           SELECT p.name FROM thesis_programs tp JOIN programs p ON tp.program_id = p.id WHERE tp.thesis_id = ?
         `).all(id).map(p => p.name);
@@ -7906,6 +8091,7 @@ app.post('/chat', authMiddleware, async (req, res) => {
           fecha_defensa: t.defense_date ? new Date(t.defense_date * 1000).toLocaleString('es-CO') : null,
           programas: programs,
           directores: directors,
+          evaluadores: evaluators,
           estudiantes: students.map(s => ({
             nombre: s.full_name,
             cedula: s.cedula,
