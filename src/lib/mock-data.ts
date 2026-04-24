@@ -2,6 +2,7 @@ export type ThesisStatus =
   | "submitted"
   | "admin_review"
   | "evaluators_assigned"
+  | "en_evaluacion"  // evaluación parcial (al menos 1 evaluador evaluó, pero no todos)
   | "academic_evaluation"
   | "concept_issued"
   | "corrections_requested"
@@ -14,6 +15,7 @@ export type ThesisStatus =
   | "revision_cuidados"
   | "revision_submitted"
   | "second_evaluation"
+  | "evaluacion_terminada"  // todos los evaluadores enviaron su evaluación
   | "sustentacion"  // aprobado para sustentación
   | "evaluator_thanks";  // mensaje de agradecimiento al evaluador
 
@@ -93,6 +95,7 @@ export const statusLabels: Record<ThesisStatus, string> = {
   submitted: "Proyecto de grado enviado",
   admin_review: "Revisión Administrativa",
   evaluators_assigned: "Evaluadores Asignados",
+  en_evaluacion: "En Evaluación",
   academic_evaluation: "En Evaluación Académica",
   concept_issued: "Concepto Emitido",
   corrections_requested: "Correcciones Solicitadas",
@@ -101,6 +104,7 @@ export const statusLabels: Record<ThesisStatus, string> = {
   defense_evaluated: "Sustentación Evaluada",
   act_signed: "Acta Firmada",
   finalized: "Proceso Finalizado",
+  evaluacion_terminada: "Evaluación Terminada",
   revision_minima: "Revisión Mínima",
   revision_cuidados: "Revisión Cuidados",
   revision_submitted: "Revisión Enviada",
@@ -113,6 +117,7 @@ export const statusColors: Record<ThesisStatus, string> = {
   submitted: "info",
   admin_review: "warning",
   evaluators_assigned: "accent",
+  en_evaluacion: "warning",
   academic_evaluation: "warning",
   concept_issued: "accent",
   corrections_requested: "destructive",
@@ -121,8 +126,11 @@ export const statusColors: Record<ThesisStatus, string> = {
   defense_evaluated: "success",
   act_signed: "success",
   finalized: "success",
+  evaluacion_terminada: "success",
   revision_minima: "warning",
   revision_cuidados: "destructive",
+  revision_submitted: "info",
+  second_evaluation: "warning",
   sustentacion: "info",
   evaluator_thanks: "success",
 };

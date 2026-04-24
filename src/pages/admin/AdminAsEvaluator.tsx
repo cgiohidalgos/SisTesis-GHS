@@ -47,7 +47,7 @@ export default function AdminAsEvaluator() {
             {theses.map((thesis) => (
               <button
                 key={thesis.id}
-                onClick={() => navigate(`/admin/theses/${thesis.id}`)}
+                onClick={() => navigate(`/admin/rubric/${thesis.id}`)}
                 className="w-full text-left bg-card rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
               >
                 <div className="p-5">

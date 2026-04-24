@@ -90,7 +90,9 @@ const App = () => (
               <Route path="/admin/reports" element={<AdminReports />} />
               <Route path="/admin/notification-rules" element={<AdminNotificationRules />} />
               <Route path="/admin/as-evaluator" element={<AdminAsEvaluator />} />
+              <Route path="/admin/rubric/:id" element={<EvaluatorRubric />} />
               <Route path="/admin/my-students" element={<AdminDirectedTheses />} />
+              <Route path="/admin/directed-thesis/:id" element={<DirectorThesisDetail />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

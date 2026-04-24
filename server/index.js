@@ -802,8 +802,11 @@ app.get('/admin/stats', authMiddleware, requireRole('admin'), (req, res) => {
 
   const totalTheses = db.prepare(`SELECT COUNT(*) as count FROM theses t
                                      WHERE status != 'deleted' ${progFilter}`).get(...params).count;
+  const assigned = db.prepare(`SELECT COUNT(DISTINCT t.id) as count FROM theses t
+                                     JOIN thesis_evaluators te ON te.thesis_id = t.id
+                                     WHERE t.status != 'deleted' ${progFilter}`).get(...params).count;
   const inEvaluation = db.prepare(`SELECT COUNT(*) as count FROM theses t
-                                     WHERE status IN ('submitted','revision_minima','revision_cuidados') ${progFilter}`).get(...params).count;
+                                     WHERE status IN ('submitted','en_evaluacion','revision_minima','revision_cuidados') ${progFilter}`).get(...params).count;
   // consider both possible final statuses (legacy / current)
   const finalized = db.prepare(`SELECT COUNT(*) as count FROM theses t
                                      WHERE status IN ('sustentacion','finalized') ${progFilter}`).get(...params).count;
@@ -874,9 +877,9 @@ app.get('/admin/stats', authMiddleware, requireRole('admin'), (req, res) => {
 
   res.json({
     totalTheses,
+    assigned,
     inEvaluation,
     finalized,
-    evaluators,
     overdue,
     due7,
     due15,
@@ -884,6 +887,35 @@ app.get('/admin/stats', authMiddleware, requireRole('admin'), (req, res) => {
     byProgram,
     evaluatorStats
   });
+});
+
+// detail of theses assigned to a specific evaluator (for dashboard modal)
+app.get('/admin/evaluator/:id/theses', authMiddleware, requireRole('admin'), (req, res) => {
+  const evaluatorId = req.params.id;
+  const rows = db.prepare(`
+    SELECT
+      t.id as thesis_id,
+      t.title,
+      t.status,
+      te.due_date,
+      u_stu.full_name as student_name,
+      (SELECT COUNT(*) FROM evaluations e
+         JOIN thesis_evaluators te2 ON te2.id = e.thesis_evaluator_id
+         WHERE te2.thesis_id = t.id AND te2.evaluator_id = ?
+      ) as eval_count,
+      (SELECT e.concept FROM evaluations e
+         JOIN thesis_evaluators te2 ON te2.id = e.thesis_evaluator_id
+         WHERE te2.thesis_id = t.id AND te2.evaluator_id = ?
+         ORDER BY e.created_at DESC LIMIT 1
+      ) as latest_concept
+    FROM thesis_evaluators te
+    JOIN theses t ON t.id = te.thesis_id
+    LEFT JOIN thesis_students ts ON ts.thesis_id = t.id
+    LEFT JOIN users u_stu ON u_stu.id = ts.student_id
+    WHERE te.evaluator_id = ? AND t.status != 'deleted'
+    ORDER BY te.due_date ASC
+  `).all(evaluatorId, evaluatorId, evaluatorId);
+  res.json(rows);
 });
 
 // list evaluations with optional due filter for admin pages
@@ -1001,6 +1033,11 @@ app.post('/theses/:id/assign-evaluator', authMiddleware, requireRole('admin'), (
   if (evalUser && directorNames.includes((evalUser.full_name || '').toUpperCase())) {
     return res.status(400).json({ error: `${evalUser.full_name} ya es director(a) de esta tesis y no puede ser evaluador(a) de la misma` });
   }
+  // Block duplicate evaluator assignment
+  const alreadyAssigned = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, evaluator_id);
+  if (alreadyAssigned) {
+    return res.status(400).json({ error: `${evalUser ? evalUser.full_name : evaluator_id} ya está asignado(a) como evaluador(a) de esta tesis` });
+  }
   const id = uuidv4();
   const dueDateInt = due_date ? Math.floor(Date.parse(due_date) / 1000) || null : null;
   db.prepare('INSERT INTO thesis_evaluators (id, thesis_id, evaluator_id, due_date, is_blind) VALUES (?, ?, ?, ?, ?)')
@@ -1035,6 +1072,11 @@ app.post('/theses/:id/assign-evaluators', authMiddleware, requireRole('admin'), 
     const evalUser = db.prepare('SELECT full_name FROM users WHERE id = ?').get(evId);
     if (evalUser && directorNames.includes((evalUser.full_name || '').toUpperCase())) {
       return res.status(400).json({ error: `${evalUser.full_name} ya es director(a) de esta tesis y no puede ser evaluador(a) de la misma` });
+    }
+    // Block duplicate evaluator assignment
+    const alreadyAssigned = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, evId);
+    if (alreadyAssigned) {
+      return res.status(400).json({ error: `${evalUser ? evalUser.full_name : evId} ya está asignado(a) como evaluador(a) de esta tesis` });
     }
   }
   const dueDateInt = due_date ? Math.floor(Date.parse(due_date) / 1000) || null : null;
@@ -2533,7 +2575,7 @@ app.get('/admin/program-review-items/:programId', authMiddleware, (req, res) => 
     'SELECT user_id FROM program_admins WHERE program_id = ? AND user_id = ?'
   ).get(programId, req.user.id);
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
-  if (!userIsAdmin && !roles.includes('superadmin')) {
+  if (!userIsAdmin && !roles.includes('superadmin') && !roles.includes('admin')) {
     return res.status(403).json({ error: 'forbidden' });
   }
   let items = db.prepare(
@@ -3112,7 +3154,12 @@ app.get('/theses/as-evaluator', authMiddleware, (req, res) => {
     const evalInfo = db.prepare(
       `SELECT due_date, is_blind FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?`
     ).get(t.id, req.user.id);
-    return { ...t, students, programs, due_date: evalInfo?.due_date, is_blind: !!evalInfo?.is_blind };
+    const hasEval = db.prepare(
+      `SELECT 1 FROM evaluations e
+       JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL`
+    ).get(t.id, req.user.id);
+    return { ...t, students, programs, due_date: evalInfo?.due_date, is_blind: !!evalInfo?.is_blind, my_evaluated: !!hasEval };
   });
 
   res.json(enriched);
@@ -3621,6 +3668,13 @@ function recalcThesisStatus(thesis_id) {
     return;
   }
 
+  // Get the number of assigned evaluators
+  const assignedEvaluators = db.prepare(
+    `SELECT COUNT(*) as count FROM thesis_evaluators WHERE thesis_id = ?`
+  ).get(thesis_id);
+  const numAssigned = assignedEvaluators ? assignedEvaluators.count : 0;
+  if (numAssigned === 0) return;
+
   // consider only the most recent document evaluation submitted by each evaluator
   const evals = db.prepare(
     `SELECT e.concept FROM evaluations e
@@ -3633,23 +3687,42 @@ function recalcThesisStatus(thesis_id) {
          AND e2.evaluation_type = 'document'
        )`
   ).all(thesis_id).map(r => r.concept);
+  
   if (evals.length === 0) return;
+  
+  const th = db.prepare('SELECT status FROM theses WHERE id = ?').get(thesis_id);
+  if (!th) return;
+  
   let newStatus = null;
-  if (evals.some(c => c === 'major_changes')) {
-    newStatus = 'revision_cuidados';
-  } else if (evals.some(c => c === 'minor_changes')) {
-    newStatus = 'revision_minima';
-  } else if (evals.every(c => c === 'accepted') && evals.length >= 2) {
-    newStatus = 'sustentacion';
-  }
-  if (newStatus) {
-    const th = db.prepare('SELECT status FROM theses WHERE id = ?').get(thesis_id);
-    if (th && th.status !== newStatus) {
+  
+  // If at least one evaluator has submitted but not all, set status to "en_evaluacion" (partial evaluation)
+  if (evals.length > 0 && evals.length < numAssigned) {
+    newStatus = 'en_evaluacion';
+    // Update status with evaluation progress info
+    if (th.status !== newStatus) {
       db.prepare('UPDATE theses SET status = ? WHERE id = ?').run(newStatus, thesis_id);
       db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(uuidv4(), thesis_id, 'status_changed', `Estado cambiado a ${newStatus}`, 1, nowSec());
-      notifyTimeline(db, thesis_id, 'status_changed', `Estado cambiado a ${newStatus}`, null).catch(console.error);
+        .run(uuidv4(), thesis_id, 'status_changed', `En evaluación (${evals.length}/${numAssigned} evaluadores)`, 1, nowSec());
+      notifyTimeline(db, thesis_id, 'status_changed', `En evaluación (${evals.length}/${numAssigned} evaluadores)`, null).catch(console.error);
     }
+    return;
+  }
+  
+  // Only calculate final status if ALL assigned evaluators have submitted their evaluation
+  if (evals.length < numAssigned) return;
+
+  // All submitted and all accepted → evaluation complete
+  if (evals.every(c => c === 'accepted')) {
+    newStatus = 'evaluacion_terminada';
+  }
+  // If any evaluator requested changes, stay in en_evaluacion so student can correct and resubmit
+  // (newStatus remains null → no status change)
+  
+  if (newStatus && th.status !== newStatus) {
+    db.prepare('UPDATE theses SET status = ? WHERE id = ?').run(newStatus, thesis_id);
+    db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), thesis_id, 'status_changed', `Estado cambiado a ${newStatus}`, 1, nowSec());
+    notifyTimeline(db, thesis_id, 'status_changed', `Estado cambiado a ${newStatus}`, null).catch(console.error);
   }
 }
 

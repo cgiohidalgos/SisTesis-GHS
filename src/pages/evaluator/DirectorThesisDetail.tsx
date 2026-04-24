@@ -53,7 +53,7 @@ function normalizePersonKey(person: any): string {
 export default function DirectorThesisDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const [thesis, setThesis] = useState<any>(null);
   const [weights, setWeights] = useState<{ doc: number; presentation: number }>({ doc: 70, presentation: 30 });
   const [actaStatus, setActaStatus] = useState<any>(null);
@@ -117,10 +117,10 @@ export default function DirectorThesisDetail() {
   };
 
   return (
-    <AppLayout role="evaluator">
+    <AppLayout role={role === 'admin' ? 'admin' : 'evaluator'}>
       <div className="max-w-4xl mx-auto px-4 sm:px-0">
         <div className="mb-4">
-          <Button variant="outline" size="sm" onClick={() => navigate('/evaluator/my-students')}>
+          <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
             ← Mis Estudiantes
           </Button>
         </div>

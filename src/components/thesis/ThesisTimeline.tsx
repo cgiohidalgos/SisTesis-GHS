@@ -43,6 +43,9 @@ interface ThesisTimelineProps {
   isBlindReview?: boolean;
   /** si el componente se muestra en vista de administrador */
   isAdmin?: boolean;
+  /** rúbricas del programa para mostrar nombres correctos en el detalle de criterios */
+  programDocRubric?: any[];
+  programPresRubric?: any[];
 }
 
 const actorIcons = {
@@ -79,7 +82,7 @@ function formatTimelineDate(value: unknown) {
   return date.toLocaleString();
 }
 
-export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecommendations, isBlindReview, isAdmin }: ThesisTimelineProps) {
+export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecommendations, isBlindReview, isAdmin, programDocRubric, programPresRubric }: ThesisTimelineProps) {
   return (
     <div className="relative">
       {events.map((event, index) => {
@@ -245,7 +248,7 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                   )}
                   {/* Per-criterion scores and observations */}
                   {event.evaluationScores && event.evaluationScores.length > 0 && (
-                    <EvalScoresDetail scores={event.evaluationScores} evaluationType={event.evaluationType} />
+                    <EvalScoresDetail scores={event.evaluationScores} evaluationType={event.evaluationType} programDocRubric={programDocRubric} programPresRubric={programPresRubric} />
                   )}
                 </div>
               )}
@@ -324,9 +327,20 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
 }
 
 /** Collapsible per-criterion scores and observations inside a timeline event */
-function EvalScoresDetail({ scores, evaluationType }: { scores: any[]; evaluationType?: string }) {
+function EvalScoresDetail({ scores, evaluationType, programDocRubric, programPresRubric }: { scores: any[]; evaluationType?: string; programDocRubric?: any[]; programPresRubric?: any[] }) {
   const [open, setOpen] = useState(false);
-  const rubric = evaluationType === 'presentation' ? presentationRubric : defaultRubric;
+  const baseRubric = evaluationType === 'presentation' ? (programPresRubric ?? presentationRubric) : (programDocRubric ?? defaultRubric);
+  const rubric = baseRubric;
+
+  // Build lookup maps from the active rubric
+  const activeSectionMap: Record<string, string> = {};
+  const activeCriterionMap: Record<string, { name: string; maxScore: number }> = {};
+  for (const s of rubric) {
+    activeSectionMap[s.id] = s.name;
+    for (const c of s.criteria) {
+      activeCriterionMap[c.id] = { name: c.name, maxScore: c.maxScore };
+    }
+  }
 
   // Group scores by section
   const grouped: Record<string, any[]> = {};
@@ -353,17 +367,17 @@ function EvalScoresDetail({ scores, evaluationType }: { scores: any[]; evaluatio
             return (
               <div key={section.id}>
                 <h5 className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-1.5">
-                  {sectionMap[section.id] || section.id}
+                  {activeSectionMap[section.id] || section.name || section.id}
                 </h5>
                 <div className="space-y-1.5">
-                  {section.criteria.map((crit) => {
+                  {section.criteria.map((crit: any) => {
                     const sc = sectionScores.find((s: any) => s.criterion_id === crit.id);
                     if (!sc) return null;
-                    const info = criterionMap[crit.id];
+                    const info = activeCriterionMap[crit.id];
                     return (
                       <div key={crit.id} className="pl-2 border-l-2 border-muted">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm text-foreground">{info?.name || crit.id}</span>
+                          <span className="text-sm text-foreground">{info?.name || crit.name || crit.id}</span>
                         </div>
                         {sc.observations && (
                           <div className="flex items-start gap-1 text-sm text-muted-foreground mt-0.5">

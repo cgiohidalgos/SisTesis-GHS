@@ -98,6 +98,21 @@ db.prepare(`CREATE TABLE IF NOT EXISTS thesis_evaluators (
   FOREIGN KEY(thesis_id) REFERENCES theses(id),
   FOREIGN KEY(evaluator_id) REFERENCES users(id)
 )`).run();
+// Ensure no duplicate evaluator assignments (same evaluator on same thesis)
+try {
+  db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS uq_thesis_evaluator ON thesis_evaluators(thesis_id, evaluator_id)').run();
+} catch (e) {
+  // If duplicates exist, clean them up first (keep oldest), then create index
+  try {
+    db.prepare(`DELETE FROM thesis_evaluators WHERE id NOT IN (
+      SELECT MIN(id) FROM thesis_evaluators GROUP BY thesis_id, evaluator_id
+    )`).run();
+    db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS uq_thesis_evaluator ON thesis_evaluators(thesis_id, evaluator_id)').run();
+    console.log('migration: removed duplicate evaluator assignments and added unique index');
+  } catch (e2) {
+    console.error('migration: could not create unique index on thesis_evaluators:', e2.message);
+  }
+}
 // if the column didn't exist in older deployments, add it
 try {
   db.prepare('ALTER TABLE thesis_evaluators ADD COLUMN due_date INTEGER').run();

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Shield } from "lucide-react";
 import { toast } from "sonner";
+import RecoverPasswordModal from "@/components/RecoverPasswordModal";
 
 export default function StaffLogin() {
   const navigate = useNavigate();
@@ -14,6 +15,7 @@ export default function StaffLogin() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [recoverOpen, setRecoverOpen] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,7 +100,18 @@ export default function StaffLogin() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Ingresando..." : "Ingresar"}
           </Button>
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setRecoverOpen(true)}
+              className="text-sm text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+            >
+              ¿Olvidaste tu contraseña?
+            </button>
+          </div>
         </form>
+
+        <RecoverPasswordModal open={recoverOpen} onOpenChange={setRecoverOpen} />
 
         <div className="mt-4 text-center">
           <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">

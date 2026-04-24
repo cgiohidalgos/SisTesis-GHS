@@ -36,25 +36,29 @@ interface RubricEvaluationProps {
   showConcept?: boolean;
   /** whether to allow uploading files */
   showFiles?: boolean;
+  /** program rubric to use instead of defaultRubric when no initialSections provided */
+  rubric?: RubricSection[];
 }
 
-export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, initialConcept, initialSections, initialGeneralObs, initialFiles, initialFinalScore = null, submitDisabled, readOnly = false, showConcept = true, showFiles = true }: RubricEvaluationProps) {
+export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, initialConcept, initialSections, initialGeneralObs, initialFiles, initialFinalScore = null, submitDisabled, readOnly = false, showConcept = true, showFiles = true, rubric }: RubricEvaluationProps) {
   const [uploading, setUploading] = useState(false);
   const [sections, setSections] = useState<RubricSection[]>(
     initialSections ??
-      defaultRubric.map((s) => ({
+      (rubric ?? defaultRubric).map((s) => ({
         ...s,
         criteria: s.criteria.map((c) => ({ ...c, score: undefined, observations: "" })),
       }))
   );
 
-  // keep the local state in sync when parent provides new initialSections
+  // keep the local state in sync when parent provides new initialSections or rubric
   useEffect(() => {
     if (initialSections) {
       console.debug('RubricEvaluation syncing sections from props', initialSections);
       setSections(initialSections);
+    } else if (rubric) {
+      setSections(rubric.map((s) => ({ ...s, criteria: s.criteria.map((c) => ({ ...c, score: undefined, observations: "" })) })));
     }
-  }, [initialSections]);
+  }, [initialSections, rubric]);
   const [concept, setConcept] = useState<EvaluatorConcept | null>(initialConcept || null);
 
   // if parent provides a different initialConcept (e.g. after fetch completes)
@@ -197,7 +201,7 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
                 <div key={criterion.id} className="px-5 py-4">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
                     <span className="text-sm font-medium text-foreground">{criterion.name}</span>
-                    <div className="flex gap-1 flex-shrink-0">
+                    <div className="flex items-center gap-1 flex-shrink-0 flex-wrap">
                       {[1, 2, 3, 4, 5].map((score) => (
                         <button
                           key={score}
@@ -214,6 +218,24 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
                           {score}
                         </button>
                       ))}
+                      <input
+                        type="number"
+                        min={1}
+                        max={5}
+                        step={0.1}
+                        disabled={readOnly}
+                        value={criterion.score !== undefined ? criterion.score : ""}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          if (!isNaN(val) && val >= 1 && val <= 5) {
+                            updateScore(section.id, criterion.id, Math.round(val * 10) / 10);
+                          } else if (e.target.value === "") {
+                            updateScore(section.id, criterion.id, undefined as any);
+                          }
+                        }}
+                        placeholder="—"
+                        className="w-16 h-9 rounded-md border border-input bg-background px-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-default disabled:opacity-60"
+                      />
                     </div>
                   </div>
                   {/* Per-criterion observations */}

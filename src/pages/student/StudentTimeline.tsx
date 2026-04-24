@@ -42,6 +42,8 @@ export default function StudentTimeline() {
   const [thesis, setThesis] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
+  const [programDocRubric, setProgramDocRubric] = useState<any[] | null>(null);
+  const [programPresRubric, setProgramPresRubric] = useState<any[] | null>(null);
   const [revisionComment, setRevisionComment] = useState('');
   const [revisionFiles, setRevisionFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -64,7 +66,23 @@ export default function StudentTimeline() {
             date: e.date ?? undefined,
           }));
         }
-        setThesis(data[0] || null);
+        const thesisData = data[0] || null;
+        setThesis(thesisData);
+        const programId = thesisData?.programs?.[0]?.id;
+        if (programId) {
+          try {
+            const rubricResp = await fetch(`${API_BASE}/admin/program-rubrics/${programId}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (rubricResp.ok) {
+              const rubrics = await rubricResp.json();
+              const docR = rubrics.find((r: any) => r.evaluation_type === 'document');
+              const presR = rubrics.find((r: any) => r.evaluation_type === 'presentation');
+              if (docR) setProgramDocRubric(docR.sections_json);
+              if (presR) setProgramPresRubric(presR.sections_json);
+            }
+          } catch (e) { /* usar rúbrica por defecto */ }
+        }
       } catch (err: any) {
         toast.error(err.message || "Error consultando proyectos de grado");
       } finally {
@@ -331,20 +349,83 @@ export default function StudentTimeline() {
               events={thesis.timeline || []}
               isBlindReview={thesis.evaluators && thesis.evaluators.some((e:any)=>e.is_blind)}
               isAdmin={false}
+              programDocRubric={programDocRubric ?? undefined}
+              programPresRubric={programPresRubric ?? undefined}
             />
 
             {/* revision submission form — only show when ALL assigned evaluators have submitted their document evaluation */}
             {(() => {
-              const canRevise = thesis.status === 'revision_minima' || thesis.status === 'revision_cuidados';
+              const canRevise = thesis.status === 'revision_minima' || thesis.status === 'revision_cuidados' || thesis.status === 'en_evaluacion';
               if (!canRevise) return null;
               const assignedIds: string[] = (thesis.evaluators || []).map((e: any) => e.id).filter(Boolean);
-              const docEvalIds = new Set(
-                (thesis.evaluations || [])
-                  .filter((e: any) => e.evaluation_type !== 'presentation')
-                  .map((e: any) => e.evaluator_id)
-              );
+              
+              // Get only the most recent document evaluation from each evaluator (like backend does)
+              const docEvals = (thesis.evaluations || []).filter((e: any) => e.evaluation_type !== 'presentation');
+              const mostRecentByEvaluator = new Map();
+              docEvals.forEach((ev: any) => {
+                const existingEval = mostRecentByEvaluator.get(ev.evaluator_id);
+                if (!existingEval || (ev.submitted_at || 0) > (existingEval.submitted_at || 0)) {
+                  mostRecentByEvaluator.set(ev.evaluator_id, ev);
+                }
+              });
+              const docEvalIds = new Set(Array.from(mostRecentByEvaluator.keys()));
+              
               const allDocEvaluated = assignedIds.length > 0 && assignedIds.every(id => docEvalIds.has(id));
-              if (!allDocEvaluated) return null;
+              
+              // Show informative message if not all evaluators have submitted yet
+              if (!allDocEvaluated) {
+                const evaluatedCount = docEvalIds.size;
+                const totalCount = assignedIds.length;
+                const revisionType = thesis.status === 'revision_minima' 
+                  ? 'cambios mínimos' 
+                  : thesis.status === 'revision_cuidados' 
+                    ? 'cambios con cuidados' 
+                    : 'evaluación en progreso';
+                return (
+                  <div className="mt-8 p-4 sm:p-6 border-2 border-amber-500/50 rounded-lg bg-amber-50 dark:bg-amber-950/20 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <svg className="w-6 h-6 text-amber-600 dark:text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div className="flex-1 space-y-2">
+                        <h3 className="text-base font-bold text-amber-900 dark:text-amber-100">
+                          {thesis.status === 'en_evaluacion' 
+                            ? `Evaluación en progreso (${evaluatedCount}/${totalCount})`
+                            : `Evaluación en progreso - ${revisionType}`}
+                        </h3>
+                        <p className="text-sm text-amber-800 dark:text-amber-200">
+                          Has recibido <strong>{evaluatedCount} de {totalCount}</strong> evaluaciones. 
+                          {totalCount - evaluatedCount === 1 
+                            ? ' Falta 1 evaluador por enviar su evaluación.' 
+                            : ` Faltan ${totalCount - evaluatedCount} evaluadores por enviar sus evaluaciones.`}
+                        </p>
+                        <div className="bg-white dark:bg-slate-900 rounded-md p-3 space-y-2 border border-amber-200 dark:border-amber-800">
+                          <p className="text-sm font-semibold text-foreground">
+                            📋 ¿Qué puedes hacer mientras esperas?
+                          </p>
+                          <ul className="text-sm text-muted-foreground space-y-1.5 ml-1">
+                            <li className="flex items-start gap-2">
+                              <span className="text-amber-600 dark:text-amber-500 font-bold">•</span>
+                              <span>Revisa los comentarios del evaluador que ya envió su evaluación (ver arriba en el timeline).</span>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <span className="text-amber-600 dark:text-amber-500 font-bold">•</span>
+                              <span><strong>Ve adelantando las correcciones</strong> indicadas para ahorrar tiempo.</span>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <span className="text-amber-600 dark:text-amber-500 font-bold">•</span>
+                              <span>Prepara un documento (Excel/CSV recomendado) donde justifiques cada cambio realizado.</span>
+                            </li>
+                          </ul>
+                        </div>
+                        <p className="text-xs text-amber-700 dark:text-amber-300 italic">
+                          Cuando todos los evaluadores hayan enviado sus evaluaciones, aparecerá aquí el formulario para subir tu trabajo corregido.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div className="mt-8 p-4 sm:p-6 border rounded-lg bg-white dark:bg-slate-950 space-y-4">
                   <h3 className="text-lg font-bold">Enviar Revisión / Respuesta</h3>

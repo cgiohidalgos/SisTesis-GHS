@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   GraduationCap,
@@ -57,9 +57,47 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { signOut, profile, isSuper } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   // treat superadmin the same as admin for menu items
   const effectiveRole = role === 'superadmin' ? 'admin' : role;
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [navCounts, setNavCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (effectiveRole !== 'admin' && effectiveRole !== 'evaluator') return;
+    const token = localStorage.getItem('token');
+    const headers = { Authorization: token ? `Bearer ${token}` : '' };
+    const apiBase = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:4000' : '/api';
+    const userId = (() => { try { return JSON.parse(atob(token?.split('.')[1] || ''))?.id; } catch { return null; } })();
+
+    if (effectiveRole === 'admin') {
+      Promise.all([
+        fetch(`${apiBase}/theses/as-evaluator`, { headers }).then(r => r.ok ? r.json() : []),
+        fetch(`${apiBase}/theses/directed`, { headers }).then(r => r.ok ? r.json() : []),
+      ]).then(([asEval, directed]) => {
+        const pending = Array.isArray(asEval) ? asEval.filter((t: any) => !t.my_evaluated).length : 0;
+        setNavCounts({
+          '/admin/as-evaluator': pending,
+          '/admin/my-students': Array.isArray(directed) ? directed.length : 0,
+        });
+      }).catch(() => {});
+    } else if (effectiveRole === 'evaluator') {
+      Promise.all([
+        fetch(`${apiBase}/theses`, { headers }).then(r => r.ok ? r.json() : []),
+        fetch(`${apiBase}/theses/directed`, { headers }).then(r => r.ok ? r.json() : []),
+      ]).then(([theses, directed]) => {
+        const currentRound = (t: any) => Number(t.revision_round || 0);
+        const pending = Array.isArray(theses) ? theses.filter((t: any) => {
+          const myEvals = (t.evaluations || []).filter((e: any) => String(e.evaluator_id) === String(userId));
+          const myCurrentRoundDoc = myEvals.some((e: any) => Number(e.revision_round || 0) === currentRound(t) && e.evaluation_type !== 'presentation');
+          return !myCurrentRoundDoc;
+        }).length : 0;
+        setNavCounts({
+          '/evaluator': pending,
+          '/evaluator/my-students': Array.isArray(directed) ? directed.length : 0,
+        });
+      }).catch(() => {});
+    }
+  }, [effectiveRole]);
   let items = navItems[effectiveRole as keyof typeof navItems];
   // add users and smtp-config options for superadmin (review-items and weights are already in base admin menu)
   if (effectiveRole === 'admin') {
@@ -152,6 +190,11 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
                 >
                   <item.icon className="w-4 h-4" />
                   {item.label}
+                  {navCounts[item.href] > 0 && (
+                    <span className="ml-auto text-xs font-bold bg-accent text-accent-foreground rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center">
+                      {navCounts[item.href]}
+                    </span>
+                  )}
                 </Link>
               );
             })}

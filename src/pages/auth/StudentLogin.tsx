@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { GraduationCap, FileText } from "lucide-react";
 import { toast } from "sonner";
+import RecoverPasswordModal from "@/components/RecoverPasswordModal";
 
 export default function StudentLogin() {
   const navigate = useNavigate();
@@ -14,6 +15,7 @@ export default function StudentLogin() {
   const [loading, setLoading] = useState(false);
   const [studentCode, setStudentCode] = useState("");
   const [password, setPassword] = useState("");
+  const [recoverOpen, setRecoverOpen] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,9 +39,17 @@ export default function StudentLogin() {
       if (!resp.ok) throw new Error(`status ${resp.status}`);
       const data = await resp.json();
       if (data.token) localStorage.setItem('token', data.token);
-      await refreshSession();
+      const resolvedRole = await refreshSession();
       toast.success("Bienvenido(a)");
-      navigate("/student");
+      if (resolvedRole === "student") {
+        navigate("/student");
+      } else if (resolvedRole === "admin") {
+        navigate("/admin");
+      } else if (resolvedRole === "evaluator") {
+        navigate("/evaluator");
+      } else {
+        navigate("/");
+      }
     } catch (error: any) {
       console.error('student login error', error);
       if (error.name === 'AbortError') {
@@ -90,6 +100,15 @@ export default function StudentLogin() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Ingresando..." : "Ingresar"}
           </Button>
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setRecoverOpen(true)}
+              className="text-sm text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+            >
+              ¿Olvidaste tu contraseña?
+            </button>
+          </div>
           <p className="text-center text-sm text-muted-foreground">
             ¿No tienes cuenta?{" "}
             <Link to="/register/student" className="text-accent hover:underline font-medium">
@@ -97,6 +116,8 @@ export default function StudentLogin() {
             </Link>
           </p>
         </form>
+
+        <RecoverPasswordModal open={recoverOpen} onOpenChange={setRecoverOpen} />
 
         <div className="mt-4 text-center space-y-2">
           <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">

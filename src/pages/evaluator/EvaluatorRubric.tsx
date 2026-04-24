@@ -34,12 +34,14 @@ async function downloadFile(url: string, fileName: string) {
 
 export default function EvaluatorRubric() {
   const { id } = useParams();
-  const { user, profile } = useAuth();
+  const { user, profile, role } = useAuth();
   const [thesis, setThesis] = useState<any>(null);
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
   const [actaStatus, setActaStatus] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
   const [downloadingRubric, setDownloadingRubric] = useState<string>("");
+  const [programDocRubric, setProgramDocRubric] = useState<any[] | null>(null);
+  const [programPresRubric, setProgramPresRubric] = useState<any[] | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -58,6 +60,22 @@ export default function EvaluatorRubric() {
         });
         if (actaResp.ok) {
           setActaStatus(await actaResp.json());
+        }
+
+        const programId = data?.programs?.[0]?.id;
+        if (programId) {
+          try {
+            const rubricResp = await fetch(`${API_BASE}/admin/program-rubrics/${programId}`, {
+              headers: { Authorization: token ? `Bearer ${token}` : '' },
+            });
+            if (rubricResp.ok) {
+              const rubrics = await rubricResp.json();
+              const docR = rubrics.find((r: any) => r.evaluation_type === 'document');
+              const presR = rubrics.find((r: any) => r.evaluation_type === 'presentation');
+              if (docR) setProgramDocRubric(docR.sections_json);
+              if (presR) setProgramPresRubric(presR.sections_json);
+            }
+          } catch (e) { /* usar rúbrica por defecto */ }
         }
 
       } catch (e: any) {
@@ -80,8 +98,10 @@ export default function EvaluatorRubric() {
     })();
   }, [id]);
 
+  const appRole = (role as "evaluator" | "admin") ?? "evaluator";
+
   if (!thesis) return (
-    <AppLayout role="evaluator">
+    <AppLayout role={appRole}>
       <div className="p-6 text-center">Cargando información del proyecto de grado...</div>
     </AppLayout>
   );
@@ -236,7 +256,7 @@ export default function EvaluatorRubric() {
     : docScore;
 
   return (
-    <AppLayout role="evaluator">
+    <AppLayout role={appRole}>
       <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-8">
         <div className="space-y-4">
           <h2 className="text-3xl font-bold text-primary tracking-tight leading-none">
@@ -444,6 +464,7 @@ export default function EvaluatorRubric() {
                 )}
                 <RubricEvaluation
                   thesis={thesis}
+                  rubric={programDocRubric ?? defaultRubric}
                   onSubmit={(data) => submitEvaluation(data, 'document')}
                   onUploadFiles={docEval ? (files) => uploadFilesToEval(docEval.id, files) : undefined}
                   readOnly={!!docEval}
@@ -452,7 +473,7 @@ export default function EvaluatorRubric() {
                   showFiles={true}
                   initialConcept={docEval?.concept || null}
                   initialFinalScore={docEval?.final_score}
-                  initialSections={docEval ? defaultRubric.map((s: any) => ({
+                  initialSections={docEval ? (programDocRubric ?? defaultRubric).map((s: any) => ({
                     ...s,
                     criteria: s.criteria.map((c: any) => {
                       const sc = docEval.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
@@ -515,6 +536,7 @@ export default function EvaluatorRubric() {
                   </div>
                   <RubricEvaluation
                     thesis={thesis}
+                    rubric={programPresRubric ?? presentationRubric}
                     onSubmit={(data) => submitEvaluation(data, 'presentation')}
                     onUploadFiles={presEval ? (files) => uploadFilesToEval(presEval.id, files) : undefined}
                     readOnly={!!presEval}
@@ -523,7 +545,7 @@ export default function EvaluatorRubric() {
                     showFiles={true}
                     initialConcept={presEval?.concept || null}
                     initialFinalScore={presEval?.final_score}
-                    initialSections={presentationRubric.map((s: any) => ({
+                    initialSections={(programPresRubric ?? presentationRubric).map((s: any) => ({
                       ...s,
                       criteria: s.criteria.map((c: any) => {
                         const sc = presEval?.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
@@ -644,7 +666,7 @@ export default function EvaluatorRubric() {
         {thesis.timeline && thesis.timeline.length > 0 && (
           <div className="pt-6 border-t border-border">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-6">Historial de Evaluación</h3>
-            <ThesisTimeline events={thesis.timeline} isBlindReview={thesis.evaluators?.some((e: any) => e.is_blind)} isAdmin={false} />
+            <ThesisTimeline events={thesis.timeline} isBlindReview={thesis.evaluators?.some((e: any) => e.is_blind)} isAdmin={false} programDocRubric={programDocRubric ?? undefined} programPresRubric={programPresRubric ?? undefined} />
           </div>
         )}
 
@@ -667,7 +689,7 @@ export default function EvaluatorRubric() {
             <DigitalSignSection
               thesisId={id}
               userName={user.full_name || ""}
-              myRole="evaluator"
+              myRole={appRole}
               myUserId={user.id}
             />
           );

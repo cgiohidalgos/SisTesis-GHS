@@ -1045,14 +1045,14 @@ export default function AdminThesisDetail() {
                       );
                     } else {
                       dueStatus = (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-100 text-muted-foreground border border-border">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-100 text-red-700 border border-red-200">
                           Pendiente
                         </span>
                       );
                     }
                   } else {
                     dueStatus = (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-100 text-muted-foreground border border-border">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-red-100 text-red-700 border border-red-200">
                         Pendiente
                       </span>
                     );
@@ -1072,11 +1072,22 @@ export default function AdminThesisDetail() {
                     className="border-b px-2"
                   >
                     <AccordionTrigger className="hover:no-underline py-4 flex justify-between items-center">
-                      <span>{ev.name}{ev.is_blind ? ' (par ciego)' : ''}{ev.institutional_email ? ` — ${ev.institutional_email}` : ''}</span>
+                      <span className="flex items-center gap-2 flex-wrap">
+                        <span>{ev.name}{ev.is_blind ? ' (par ciego)' : ''}{ev.institutional_email ? ` — ${ev.institutional_email}` : ''}</span>
+                        {docEval?.concept === 'accepted' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Aceptado para Sustentación</span>
+                        )}
+                        {docEval?.concept === 'minor_changes' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 border border-yellow-200">Cambios Menores</span>
+                        )}
+                        {docEval?.concept === 'major_changes' && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-purple-100 text-purple-700 border border-purple-200">Cambios Mayores</span>
+                        )}
+                      </span>
                       <div className="flex items-center gap-2">
                         {canChangeEvaluator && (
                           <button
-                            className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200"
+                            className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-300"
                             onClick={async (e) => {
                               e.stopPropagation();
                               if (!confirm('¿Cambiar este evaluador? Se eliminará la asignación actual.')) return;
@@ -1835,8 +1846,8 @@ export default function AdminThesisDetail() {
           </div>
         )}
 
-        {/* CARTA MERITORIA — visible solo si nota >= 4.8 */}
-        {meritoriaStatus?.qualifies && (
+        {/* CARTA MERITORIA — visible solo si nota >= 4.8 y tesis aprobada para sustentación o finalizada */}
+        {meritoriaStatus?.qualifies && (thesis?.status === 'sustentacion' || thesis?.status === 'finalized') && (
           <div className="mb-6 border p-4 rounded bg-yellow-50">
             <h3 className="font-semibold mb-1">🏅 Carta de Recomendación Meritoria</h3>
             <p className="text-xs text-muted-foreground mb-3">

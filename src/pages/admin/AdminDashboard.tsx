@@ -1,21 +1,9 @@
 import AppLayout from "@/components/layout/AppLayout";
 import ThesisCard from "@/components/thesis/ThesisCard";
-import { FileText, Users, CheckCircle2, Clock, AlertTriangle, CalendarDays } from "lucide-react";
+import { FileText, UserCheck, Clock, AlertTriangle, CalendarDays, CheckCircle2, XCircle, ChevronRight, X } from "lucide-react";
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-} from "recharts";
 
 import { getApiBase } from "@/lib/utils";
 const API_BASE = getApiBase();
@@ -40,6 +28,8 @@ export default function AdminDashboard() {
   const [byProgram, setByProgram] = useState<any[]>([]);
   const [evalStats, setEvalStats] = useState<any[]>([]);
   const [theses, setTheses] = useState<any[]>([]);
+  const [evalModal, setEvalModal] = useState<{ evaluator: any; theses: any[] } | null>(null);
+  const [evalModalLoading, setEvalModalLoading] = useState(false);
 
   const navigate = useNavigate();
   const fetchData = async () => {
@@ -56,23 +46,22 @@ export default function AdminDashboard() {
       if (sresp.ok) {
         const sjson = await sresp.json();
         const baseStats = [
-          { label: 'Total proyectos de grado', value: sjson.totalTheses, icon: FileText, color: 'text-info' },
-          { label: 'En Evaluación', value: sjson.inEvaluation, icon: Clock, color: 'text-warning' },
-          { label: 'Finalizadas', value: sjson.finalized, icon: CheckCircle2, color: 'text-success' },
-          { label: 'Evaluadores', value: sjson.evaluators, icon: Users, color: 'text-accent' },
+          { label: 'Total proyectos de grado', value: sjson.totalTheses, icon: FileText, color: 'text-info', bg: 'bg-info/10 border-info/30', tooltip: 'Número total de proyectos de grado registrados en el sistema, sin importar su estado.' },
+          { label: 'Con evaluadores asignados', value: sjson.assigned, icon: UserCheck, color: 'text-accent-foreground', bg: 'bg-accent/10 border-accent/30', tooltip: 'Proyectos que ya tienen al menos un evaluador asignado.' },
+          { label: 'En Evaluación', value: sjson.inEvaluation, icon: Clock, color: 'text-warning', bg: 'bg-warning/10 border-warning/30', tooltip: 'Proyectos actualmente en proceso de evaluación: enviados, en evaluación parcial, o en revisión pendiente.' },
         ];
         const dueStats = [];
         if (sjson.overdue !== undefined) {
-          dueStats.push({ label: 'Evaluaciones vencidas', value: sjson.overdue, icon: Clock, color: 'text-destructive', link: '/admin/evaluations?due=overdue' });
+          dueStats.push({ label: 'Evaluaciones vencidas', value: sjson.overdue, icon: Clock, color: 'text-destructive', bg: 'bg-destructive/10 border-destructive/30', link: '/admin/evaluations?due=overdue', tooltip: 'Evaluaciones cuya fecha límite ya pasó y aún no han sido enviadas.' });
         }
         if (sjson.due7 !== undefined) {
-          dueStats.push({ label: 'Vence <7d', value: sjson.due7, icon: Clock, color: 'text-warning', link: '/admin/evaluations?due=7' });
+          dueStats.push({ label: 'Vence <7 días', value: sjson.due7, icon: Clock, color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200', link: '/admin/evaluations?due=7', tooltip: 'Evaluaciones que vencen en menos de 7 días.' });
         }
         if (sjson.due15 !== undefined) {
-          dueStats.push({ label: 'Vence <15d', value: sjson.due15, icon: Clock, color: 'text-warning', link: '/admin/evaluations?due=15' });
+          dueStats.push({ label: 'Vence <15 días', value: sjson.due15, icon: Clock, color: 'text-yellow-600', bg: 'bg-yellow-50 border-yellow-200', link: '/admin/evaluations?due=15', tooltip: 'Evaluaciones que vencen en menos de 15 días.' });
         }
         if (sjson.due30 !== undefined) {
-          dueStats.push({ label: 'Vence <30d', value: sjson.due30, icon: Clock, color: 'text-warning', link: '/admin/evaluations?due=30' });
+          dueStats.push({ label: 'Vence <30 días', value: sjson.due30, icon: Clock, color: 'text-yellow-500', bg: 'bg-yellow-50/60 border-yellow-100', link: '/admin/evaluations?due=30', tooltip: 'Evaluaciones que vencen en menos de 30 días.' });
         }
         setStats(baseStats.concat(dueStats));
         if (sjson.byProgram) setByProgram(sjson.byProgram);
@@ -90,6 +79,25 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  const openEvalModal = async (evaluator: any) => {
+    setEvalModal({ evaluator, theses: [] });
+    setEvalModalLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/admin/evaluator/${evaluator.id}/theses`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setEvalModal({ evaluator, theses: data });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setEvalModalLoading(false);
+    }
+  };
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
 
@@ -184,43 +192,37 @@ export default function AdminDashboard() {
           {stats.map((stat) => (
             <div
               key={stat.label}
-              className={`bg-card rounded-lg border shadow-card p-3 sm:p-5 ${stat.link ? 'cursor-pointer hover:bg-accent/10' : ''}`}
-              onClick={() => {
-                if (stat.link) navigate(stat.link);
-              }}
+              title={stat.tooltip || stat.label}
+              className={`relative bg-card rounded-xl border shadow-card p-3 sm:p-5 transition-all duration-150 ${stat.link ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5' : ''} ${stat.bg || ''}`}
+              onClick={() => { if (stat.link) navigate(stat.link); }}
             >
-              <div className="flex items-center justify-between mb-2">
-                <stat.icon className={`w-4 h-4 sm:w-5 sm:h-5 ${stat.color}`} />
+              <div className="flex items-center justify-between mb-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${stat.bg || 'bg-muted'}`}>
+                  <stat.icon className={`w-4 h-4 ${stat.color}`} />
+                </div>
+                {stat.link && (
+                  <svg className={`w-3.5 h-3.5 ${stat.color} opacity-60`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                )}
               </div>
-              <p className="text-xl sm:text-2xl font-heading font-bold text-foreground">
-                {stat.value}
+              <p className={`text-2xl sm:text-3xl font-heading font-bold ${stat.color}`}>
+                {stat.value ?? 0}
               </p>
-              <p className="text-xs text-muted-foreground leading-tight">{stat.label}</p>
+              <p className="text-xs text-muted-foreground leading-tight mt-1 font-medium">{stat.label}</p>
+              {stat.tooltip && (
+                <div className="absolute inset-0 opacity-0 hover:opacity-100 transition-opacity duration-150 z-10 pointer-events-none">
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-popover text-popover-foreground text-xs rounded-lg shadow-lg border p-2.5 text-center leading-relaxed">
+                    {stat.tooltip}
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-popover" />
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
 
-        {/* Overview chart */}
-        <div className="mb-8 h-48 sm:h-64 bg-card rounded-lg p-4 shadow-card">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={stats}
-                dataKey="value"
-                nameKey="label"
-                outerRadius={80}
-                fill="#8884d8"
-                label
-              >
-                {stats.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={['#8884d8','#ffc658','#82ca9d','#a4de6c'][index % 4]} />
-                ))}
-              </Pie>
-              <Tooltip />
-              <Legend verticalAlign="bottom" />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
+
 
         {/* Breakdown by program */}
         {byProgram.length > 0 && (
@@ -228,75 +230,89 @@ export default function AdminDashboard() {
             <h3 className="font-heading text-lg font-semibold text-foreground mb-4">
               Estadísticas por Programa {isSuper ? "(todos los programas)" : "(mis programas)"}
             </h3>
-            <div className="overflow-x-auto mb-8">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted">
-                    <th className="p-2 text-left min-w-[120px]">Programa</th>
-                    <th className="p-2 min-w-[80px]">En evaluación</th>
-                    <th className="p-2 min-w-[80px]">Finalizadas</th>
-                    <th className="p-2 min-w-[80px]">Otras</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byProgram.map((p) => {
-                    const counts = p.counts || {};
-                    const inEval = (counts.submitted || 0) + (counts.revision_minima || 0) + (counts.revision_cuidados || 0);
-                    const fin = (counts.sustentacion || 0) + (counts.finalized || 0);
-                    const other = Object.entries(counts)
-                      .filter(([k]) => !['submitted','revision_minima','revision_cuidados','sustentacion','finalized'].includes(k))
-                      .reduce((sum, [,v]) => sum + (v as number), 0);
-                    return (
-                      <tr key={p.program_id} className="border-t">
-                        <td className="p-2">{p.program_name || 'Sin programa'}</td>
-                        <td className="p-2 text-center">{inEval}</td>
-                        <td className="p-2 text-center">{fin}</td>
-                        <td className="p-2 text-center">{other}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <div className="mb-8 h-48 sm:h-64 bg-card rounded-lg p-4 shadow-card">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={byProgram.map(p => {
-                  const counts = p.counts || {};
-                  const inEval = (counts.submitted || 0) + (counts.revision_minima || 0) + (counts.revision_cuidados || 0);
-                  const fin = counts.sustentacion || 0;
-                  const other = Object.entries(counts)
-                    .filter(([k]) => !['submitted','revision_minima','revision_cuidados','sustentacion'].includes(k))
-                    .reduce((sum, [,v]) => sum + (v as number), 0);
-                  return { name: p.program_name, inEval, finalized: fin, other };
-                })}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" interval={0} height={48} tickFormatter={(v: string) => v.length > 12 ? v.slice(0, 12) + '…' : v} />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="inEval" stackId="a" fill="#8884d8" />
-                  <Bar dataKey="finalized" stackId="a" fill="#82ca9d" />
-                  <Bar dataKey="other" stackId="a" fill="#ffc658" />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="mb-8 space-y-3">
+              {byProgram.map((p) => {
+                const counts = p.counts || {};
+                const assigned   = counts.evaluators_assigned || 0;
+                const inEval     = (counts.submitted || 0) + (counts.en_evaluacion || 0);
+                const revMin     = counts.revision_minima || 0;
+                const revCuid    = counts.revision_cuidados || 0;
+                const revSent    = counts.revision_submitted || 0;
+                const sust       = counts.sustentacion || 0;
+                const total      = Object.values(counts).reduce((s: number, v: any) => s + (v as number), 0);
+                const segments = [
+                  { label: 'Con evaluadores asignados', value: assigned,  color: 'bg-muted-foreground/30' },
+                  { label: 'En evaluación',              value: inEval,    color: 'bg-warning' },
+                  { label: 'Revisión mínima',            value: revMin,    color: 'bg-yellow-400' },
+                  { label: 'Revisión con cuidados',      value: revCuid,   color: 'bg-purple-500' },
+                  { label: 'Revisión enviada',           value: revSent,   color: 'bg-blue-400' },
+                  { label: 'Aprobado — Sustentación',    value: sust,      color: 'bg-success' },
+                ].filter(s => s.value > 0);
+                return (
+                  <div key={p.program_id} className="rounded-xl border bg-card p-4 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="font-semibold text-sm text-foreground">{p.program_name || 'Sin programa'}</span>
+                      <span className="text-xs text-muted-foreground font-medium">{total} proyecto{total !== 1 ? 's' : ''}</span>
+                    </div>
+                    {/* Barra de progreso segmentada */}
+                    <div className="flex h-3 w-full rounded-full overflow-hidden gap-px mb-3">
+                      {total === 0 ? (
+                        <div className="flex-1 bg-muted rounded-full" />
+                      ) : segments.map((s) => (
+                        <div
+                          key={s.label}
+                          className={`${s.color} transition-all`}
+                          style={{ width: `${(s.value / total) * 100}%` }}
+                          title={`${s.label}: ${s.value}`}
+                        />
+                      ))}
+                    </div>
+                    {/* Leyenda compacta */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      {[
+                        { label: 'Asignados',         value: assigned, dot: 'bg-muted-foreground/50' },
+                        { label: 'En evaluación',      value: inEval,   dot: 'bg-warning' },
+                        { label: 'Rev. mínima',        value: revMin,   dot: 'bg-yellow-400' },
+                        { label: 'Rev. con cuidados',  value: revCuid,  dot: 'bg-purple-500' },
+                        { label: 'Rev. enviada',       value: revSent,  dot: 'bg-blue-400' },
+                        { label: 'Sustentación',       value: sust,     dot: 'bg-success' },
+                      ].map(item => (
+                        <span key={item.label} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${item.dot}`} />
+                          {item.label}:&nbsp;<span className={`font-semibold ${item.value > 0 ? 'text-foreground' : 'text-muted-foreground/40'}`}>{item.value}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             {evalStats.length > 0 && (
               <>
                 <h3 className="font-heading text-lg font-semibold text-foreground mb-4">
                   Estadísticas por Evaluador
                 </h3>
-                <div className="overflow-x-auto mb-8">
+                <div className="overflow-x-auto mb-8 rounded-xl border shadow-card">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="bg-muted">
-                        <th className="p-2 text-left">Evaluador</th>
-                        <th className="p-2">Proyectos asignados</th>
+                      <tr className="bg-muted/70">
+                        <th className="p-3 text-left font-semibold text-muted-foreground">Evaluador</th>
+                        <th className="p-3 text-center font-semibold">Proyectos asignados</th>
+                        <th className="p-3 w-8" />
                       </tr>
                     </thead>
                     <tbody>
-                      {evalStats.map((e) => (
-                        <tr key={e.id} className="border-t">
-                          <td className="p-2">{e.name}</td>
-                          <td className="p-2 text-center">{e.theses}</td>
+                      {evalStats.map((e, i) => (
+                        <tr
+                          key={e.id}
+                          className={`border-t transition-colors cursor-pointer hover:bg-accent/10 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}
+                          onClick={() => openEvalModal(e)}
+                        >
+                          <td className="p-3 font-medium">{e.name}</td>
+                          <td className="p-3 text-center">
+                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-info/15 text-info font-bold text-xs">{e.theses}</span>
+                          </td>
+                          <td className="p-3 text-muted-foreground/50"><ChevronRight className="w-4 h-4" /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -326,6 +342,99 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* Evaluator detail modal */}
+      {evalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setEvalModal(null)}>
+          <div className="bg-card rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h2 className="font-heading text-base font-semibold">{evalModal.evaluator.name}</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">{evalModal.evaluator.theses} proyecto(s) asignado(s)</p>
+              </div>
+              <button onClick={() => setEvalModal(null)} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-4">
+              {evalModalLoading ? (
+                <p className="text-sm text-muted-foreground text-center py-8">Cargando...</p>
+              ) : evalModal.theses.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">Sin proyectos asignados.</p>
+              ) : (
+                <div className="space-y-3">
+                  {(() => {
+                    // Agrupar filas por thesis_id (puede haber varias filas si hay varios estudiantes)
+                    const grouped = new Map<string, { thesis: any; students: string[] }>();
+                    for (const t of evalModal.theses) {
+                      if (!grouped.has(t.thesis_id)) {
+                        grouped.set(t.thesis_id, { thesis: t, students: [] });
+                      }
+                      if (t.student_name) grouped.get(t.thesis_id)!.students.push(t.student_name);
+                    }
+                    const conceptLabels: Record<string, string> = {
+                      accepted: 'Aceptado',
+                      minor_changes: 'Cambios mínimos',
+                      major_changes: 'Revisión con cuidados',
+                    };
+                    const conceptColors: Record<string, string> = {
+                      accepted: 'bg-green-100 text-green-700',
+                      minor_changes: 'bg-yellow-100 text-yellow-700',
+                      major_changes: 'bg-purple-100 text-purple-700',
+                    };
+                    return [...grouped.values()].map(({ thesis: t, students }) => {
+                      const dueMs = t.due_date ? (t.due_date > 1e12 ? t.due_date : t.due_date * 1000) : null;
+                      const dueDate = dueMs ? new Date(dueMs) : null;
+                      const isOverdue = dueMs && dueMs * 1000 < Date.now();
+                      const evaluated = t.eval_count && t.eval_count > 0;
+                      return (
+                        <div key={t.thesis_id} className="rounded-lg border p-3 bg-card hover:bg-muted/20 transition-colors">
+                          <div className="flex items-start justify-between gap-2">
+                            <Link
+                              to={`/admin/theses/${t.thesis_id}`}
+                              className="font-medium text-sm hover:underline text-foreground line-clamp-2 flex-1"
+                              onClick={() => setEvalModal(null)}
+                            >
+                              {t.title}
+                            </Link>
+                            {evaluated ? (
+                              <span className={`shrink-0 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${conceptColors[t.latest_concept] || 'bg-green-100 text-green-700'}`}>
+                                <CheckCircle2 className="w-3 h-3" />
+                                {conceptLabels[t.latest_concept] || 'Evaluado'}
+                              </span>
+                            ) : (
+                              <span className="shrink-0 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">
+                                <XCircle className="w-3 h-3" />
+                                Pendiente
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                            {students.length > 0 && (
+                              <span>
+                                {students.length === 1 ? 'Estudiante' : 'Estudiantes'}:{' '}
+                                <span className="font-medium text-foreground">{students.join(', ')}</span>
+                              </span>
+                            )}
+                            {dueDate ? (
+                              <span className={isOverdue && !evaluated ? 'text-destructive font-medium' : ''}>
+                                Vence: {dueDate.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                {isOverdue && !evaluated && ' ⚠️'}
+                              </span>
+                            ) : (
+                              <span>Sin fecha límite</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 }
