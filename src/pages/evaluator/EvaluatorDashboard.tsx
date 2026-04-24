@@ -1,18 +1,40 @@
 import AppLayout from "@/components/layout/AppLayout";
 import StatusBadge from "@/components/thesis/StatusBadge";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { getApiBase } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
-import { FileText, Users, Calendar, Clock, Eye, EyeOff, CheckCircle2 } from "lucide-react";
+import { FileText, Users, Calendar, Clock, Eye, EyeOff, CheckCircle2, Search, X } from "lucide-react";
+import { statusLabels } from "@/lib/mock-data";
 
 const API_BASE = getApiBase();
 
 export default function EvaluatorDashboard() {
   const [theses, setTheses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [programFilter, setProgramFilter] = useState("");
   const { user } = useAuth();
   const navigate = useNavigate();
+
+  const allPrograms = useMemo(() =>
+    [...new Set(theses.flatMap(t => (t.programs || []).map((p: any) => p.name)))].sort()
+  , [theses]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return theses.filter(t => {
+      const matchSearch = !q ||
+        t.title?.toLowerCase().includes(q) ||
+        (t.students || []).some((s: any) => (s.name || "").toLowerCase().includes(q));
+      const matchStatus = !statusFilter || t.status === statusFilter;
+      const matchProgram = !programFilter || (t.programs || []).some((p: any) => p.name === programFilter);
+      return matchSearch && matchStatus && matchProgram;
+    });
+  }, [theses, search, statusFilter, programFilter]);
+
+  const hasFilters = !!(search || statusFilter || programFilter);
 
   const fetchTheses = async (currentUser: any) => {
     try {
@@ -86,16 +108,62 @@ export default function EvaluatorDashboard() {
           </p>
         </div>
 
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row flex-wrap gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Buscar por título o estudiante…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent/40"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            className="w-full sm:w-auto px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent/40"
+          >
+            <option value="">Todos los estados</option>
+            {Object.entries(statusLabels).map(([key, label]) => (
+              <option key={key} value={key}>{label as string}</option>
+            ))}
+          </select>
+          {allPrograms.length > 0 && (
+            <select
+              value={programFilter}
+              onChange={e => setProgramFilter(e.target.value)}
+              className="w-full sm:w-auto px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent/40"
+            >
+              <option value="">Todos los programas</option>
+              {allPrograms.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          {hasFilters && (
+            <button
+              onClick={() => { setSearch(""); setStatusFilter(""); setProgramFilter(""); }}
+              className="inline-flex items-center gap-1 px-3 py-2 text-sm rounded-md border border-border bg-background hover:bg-muted transition-colors text-muted-foreground"
+            >
+              <X className="w-3.5 h-3.5" /> Limpiar
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">
+          {hasFilters ? `Mostrando ${filtered.length} de ${theses.length} proyecto(s)` : `${theses.length} proyecto(s) en total`}
+        </p>
+
         {loading ? (
           <div className="text-center py-16 text-muted-foreground">Cargando…</div>
-        ) : theses.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground">
             <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">No tienes proyectos asignados por el momento.</p>
+            <p className="text-sm">{theses.length === 0 ? "No tienes proyectos asignados por el momento." : "No se encontraron proyectos con esos filtros."}</p>
+            {hasFilters && <button onClick={() => { setSearch(""); setStatusFilter(""); setProgramFilter(""); }} className="text-sm text-accent hover:underline mt-1">Limpiar filtros</button>}
           </div>
         ) : (
           <div className="space-y-4">
-            {theses.map((thesis) => (
+            {filtered.map((thesis) => (
               <button
                 key={thesis.id}
                 onClick={() => navigate(`/evaluator/rubric/${thesis.id}`)}
@@ -144,7 +212,7 @@ export default function EvaluatorDashboard() {
                         Fecha límite:{" "}
                         {new Date(
                           thesis.my_due_date > 1e12 ? thesis.my_due_date : thesis.my_due_date * 1000
-                        ).toLocaleDateString("es-CO")}
+                        ).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}
                       </span>
                     )}
                     <span className="flex items-center gap-1.5">
@@ -154,7 +222,7 @@ export default function EvaluatorDashboard() {
                             thesis.created_at > 1e12
                               ? thesis.created_at
                               : thesis.created_at * 1000
-                          ).toLocaleDateString("es-CO")
+                          ).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })
                         : ""}
                     </span>
                   </div>

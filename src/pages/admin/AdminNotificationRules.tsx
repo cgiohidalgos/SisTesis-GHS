@@ -75,6 +75,7 @@ function EventRow({
   saving: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState(false);
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef    = useRef<HTMLTextAreaElement>(null);
 
@@ -199,17 +200,33 @@ function EventRow({
 
           {/* Cuerpo HTML */}
           <div>
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1">
-              Cuerpo del correo (HTML)
-            </label>
-            <textarea
-              ref={bodyRef}
-              value={template.body_html}
-              onChange={(e) => onChangeTemplate("body_html", e.target.value)}
-              rows={10}
-              className="w-full px-3 py-2 text-sm border rounded-md bg-background font-mono resize-y"
-              placeholder="<p>Cuerpo del correo en HTML...</p>"
-            />
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Cuerpo del correo (HTML)
+              </label>
+              <button
+                type="button"
+                onClick={() => setPreview((p) => !p)}
+                className="text-xs px-2.5 py-1 rounded border border-muted bg-background hover:bg-muted transition-colors text-muted-foreground"
+              >
+                {preview ? "✏️ Editar" : "👁 Vista previa"}
+              </button>
+            </div>
+            {preview ? (
+              <div
+                className="w-full min-h-[200px] border rounded-md bg-white p-4 text-sm overflow-auto"
+                dangerouslySetInnerHTML={{ __html: template.body_html }}
+              />
+            ) : (
+              <textarea
+                ref={bodyRef}
+                value={template.body_html}
+                onChange={(e) => onChangeTemplate("body_html", e.target.value)}
+                rows={10}
+                className="w-full px-3 py-2 text-sm border rounded-md bg-background font-mono resize-y"
+                placeholder="<p>Cuerpo del correo en HTML...</p>"
+              />
+            )}
           </div>
 
           <Button size="sm" onClick={onSaveTemplate} disabled={saving}>

@@ -7,7 +7,7 @@ El build del frontend se hizo sin `VITE_API_BASE`, por lo que las peticiones van
 
 ### Solución
 
-1. **Rebuild con la variable correcta:**
+1. **Rebuild con la variable correcta (SIEMPRE usar este comando, nunca `npm run build` solo):**
 ```bash
 VITE_API_BASE=https://sistesis.site/api npm run build
 ```

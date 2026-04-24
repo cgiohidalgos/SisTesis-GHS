@@ -90,7 +90,7 @@ export default function AdminAsEvaluator() {
                         Fecha límite:{" "}
                         {new Date(
                           thesis.due_date > 1e12 ? thesis.due_date : thesis.due_date * 1000
-                        ).toLocaleDateString("es-CO")}
+                        ).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}
                       </span>
                     )}
                     <span className="flex items-center gap-1.5">
@@ -100,7 +100,7 @@ export default function AdminAsEvaluator() {
                             thesis.created_at > 1e12
                               ? thesis.created_at
                               : thesis.created_at * 1000
-                          ).toLocaleDateString("es-CO")
+                          ).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })
                         : ""}
                     </span>
                   </div>

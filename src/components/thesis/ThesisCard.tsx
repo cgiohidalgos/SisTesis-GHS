@@ -9,9 +9,10 @@ interface ThesisCardProps {
   evaluated?: boolean;
   evalCompleted?: boolean;
   hasActa?: boolean;
+  showAssignedBy?: boolean;
 }
 
-export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, hasActa }: ThesisCardProps) {
+export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, hasActa, showAssignedBy }: ThesisCardProps) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -31,6 +32,11 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
       className="block bg-card rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
     >
       <div className="p-5">
+        {showAssignedBy && thesis.assigned_by_name && (
+          <p className="text-[11px] text-muted-foreground mb-1.5">
+            Asignado por: <span className="font-medium text-foreground">{thesis.assigned_by_name}</span>
+          </p>
+        )}
         <div className="flex items-start justify-between gap-3 mb-3">
           <h3 className="font-heading font-semibold text-foreground group-hover:text-accent transition-colors line-clamp-2">
             {thesis.title}
@@ -75,7 +81,7 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
             {thesis.created_at
               ? new Date(
                   thesis.created_at > 1e12 ? thesis.created_at : thesis.created_at * 1000
-                ).toLocaleDateString('es-CO')
+                ).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })
               : thesis.submittedAt}
           </span>
           {thesis.evaluators.length > 0 && (
@@ -92,7 +98,7 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
                 .filter(Boolean)
                 .map(d => {
                   const ms = d! > 1e12 ? d! : d! * 1000;
-                  return new Date(ms).toLocaleDateString('es-CO');
+                  return new Date(ms).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' });
                 })
                 .filter((v, i, a) => a.indexOf(v) === i)
                 .join(", ")}

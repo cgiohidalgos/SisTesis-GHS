@@ -212,6 +212,8 @@ db.prepare(`CREATE TABLE IF NOT EXISTS thesis_timeline (
   created_at INTEGER DEFAULT (strftime('%s','now')),
   FOREIGN KEY(thesis_id) REFERENCES theses(id)
 )`).run();
+try { db.prepare('ALTER TABLE thesis_timeline ADD COLUMN actor_name TEXT').run(); } catch (_) {}
+
 
 // categorias/programas para tesis
  db.prepare(`CREATE TABLE IF NOT EXISTS programs (

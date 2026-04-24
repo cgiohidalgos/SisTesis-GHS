@@ -132,6 +132,39 @@ async function notifyEvaluatorRemoved(db, thesisId, evaluatorId, triggeredBy) {
   logNotification(db, evaluator.id, 'evaluator_removed', subject, body, thesisId, success ? null : 'failed');
 }
 
+async function notifyEvaluatorReplaced(db, thesisId, oldEvaluatorId, newEvaluatorId, triggeredBy) {
+  const oldEvaluator = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(oldEvaluatorId);
+  if (!oldEvaluator || !oldEvaluator.institutional_email) return;
+
+  const thesis = db.prepare('SELECT title FROM theses WHERE id = ?').get(thesisId);
+  if (!thesis) return;
+
+  const students = db.prepare(
+    `SELECT u.full_name FROM users u
+     JOIN thesis_students ts ON u.id = ts.student_id
+     WHERE ts.thesis_id = ?`
+  ).all(thesisId);
+  const studentList = students.map(s => `• ${s.full_name || 'Estudiante'}`).join('<br />');
+
+  const subject = `Has sido reemplazado como evaluador de la tesis: ${thesis.title}`;
+  const body = `
+    <div style="font-family:sans-serif;max-width:600px">
+      <h2 style="color:#1a1a2e">Cambio en asignación de evaluación</h2>
+      <p>Hola <strong>${oldEvaluator.full_name || 'Evaluador'}</strong>,</p>
+      <p>Has sido reemplazado como evaluador de la siguiente tesis. Ya no tienes acciones pendientes sobre ella:</p>
+      <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px">
+        <p style="margin:4px 0"><strong>Tesis:</strong> ${thesis.title}</p>
+<p style="margin:4px 0"><strong>Estudiantes:</strong><br />${studentList}</p>
+      </div>
+      <hr style="border:none;border-top:1px solid #eee;margin:20px 0" />
+      <p style="color:#888;font-size:12px">Si crees que esto es un error, contacta al administrador del sistema.</p>
+    </div>
+  `;
+
+  const success = await sendEmail(db, oldEvaluator.institutional_email, subject, body, triggeredBy);
+  logNotification(db, oldEvaluator.id, 'evaluator_replaced', subject, body, thesisId, success ? null : 'failed');
+}
+
 async function notifyEvaluatorAssigned(db, thesisId, evaluatorId, triggeredBy, dueDateSec) {
   const evaluator = db.prepare('SELECT id, full_name, institutional_email FROM users WHERE id = ?').get(evaluatorId);
   if (!evaluator || !evaluator.institutional_email) return;
@@ -200,6 +233,23 @@ function logNotification(db, userId, eventType, subject, body, relatedThesisId, 
  * Reemplaza {{variable}} en una plantilla con los valores del contexto.
  * Las variables no encontradas se reemplazan con cadena vacía.
  */
+const EVALUATOR_ACCESS_EVENTS = new Set(['revision_submitted', 'defense_scheduled']);
+
+function buildEvaluatorAccessBlock(db, evaluatorId, institutionalEmail) {
+  const row = db.prepare('SELECT cedula, full_name FROM users WHERE id = ?').get(evaluatorId);
+  const firstName = (row?.full_name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '') || 'usuario';
+  const password = row?.cedula ? `${firstName}${row.cedula}` : null;
+  return `
+    <div style="margin-top:20px;border-top:1px solid #eee;padding-top:16px">
+      <h3 style="color:#1a1a2e;margin-bottom:8px">Datos de acceso al sistema</h3>
+      <ul style="padding-left:18px;margin:0">
+        <li><strong>URL:</strong> <a href="https://sistesis.site/">https://sistesis.site/</a></li>
+        <li><strong>Usuario:</strong> ${institutionalEmail}</li>
+        ${password ? `<li><strong>Contraseña:</strong> ${password}</li>` : '<li><em>Usa la contraseña proporcionada al crear tu cuenta.</em></li>'}
+      </ul>
+    </div>`;
+}
+
 function renderTemplate(template, ctx) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => (ctx[key] !== undefined && ctx[key] !== null) ? ctx[key] : '');
 }
@@ -227,17 +277,32 @@ function buildDirectorStudentTable(studentDetails) {
     </table>`;
 }
 
-function buildDirectorBody(recipientName, label, description, thesis, studentDetails, programa) {
+function buildDirectorBody(recipientName, label, description, thesis, studentDetails, programa, eventType, allEvaluatorNames) {
   const studentTable = buildDirectorStudentTable(studentDetails);
+
+  let intro = 'Le informamos sobre una novedad en el proyecto de grado que usted dirige:';
+  if (eventType === 'revision_submitted') {
+    intro = 'Uno de sus estudiantes ha enviado una revisión del proyecto de grado que usted dirige y está esperando su retroalimentación:';
+  } else if (eventType === 'evaluator_removed') {
+    intro = 'Le informamos que un evaluador ha sido retirado del proyecto de grado que usted dirige:';
+  } else if (eventType === 'evaluator_replaced') {
+    intro = 'Le informamos que un evaluador ha sido reemplazado en el proyecto de grado que usted dirige:';
+  }
+
+  const evaluatorBlock = allEvaluatorNames && allEvaluatorNames.length
+    ? `<p style="margin:4px 0"><strong>Evaluadores actuales:</strong> ${allEvaluatorNames.join(', ')}</p>`
+    : '';
+
   return `
     <div style="font-family:sans-serif;max-width:640px">
       <h2 style="color:#1a1a2e;margin-bottom:4px">${label}</h2>
-      <p>Hola <strong>${recipientName}</strong>,</p>
-      <p>Le informamos sobre una novedad en el proyecto de grado que usted dirige:</p>
+      <p>Hola <strong>${recipientName}</strong>, usted recibe este correo como <strong>director</strong> del siguiente proyecto de grado:</p>
+      <p>${intro}</p>
       <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px">
         <p style="margin:4px 0"><strong>Proyecto:</strong> ${thesis.title || '—'}</p>
         ${programa ? `<p style="margin:4px 0"><strong>Programa:</strong> ${programa}</p>` : ''}
         <p style="margin:4px 0"><strong>Novedad:</strong> ${description || '—'}</p>
+        ${evaluatorBlock}
       </div>
       <p style="margin-bottom:6px"><strong>Sus estudiantes:</strong></p>
       ${studentTable}
@@ -255,6 +320,8 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
     const studentRows   = db.prepare(`SELECT u.full_name, u.institutional_email FROM users u JOIN thesis_students ts ON u.id = ts.student_id WHERE ts.thesis_id = ?`).all(thesisId);
     const studentDetails = db.prepare(`SELECT u.full_name, u.institutional_email, u.cedula, u.student_code FROM users u JOIN thesis_students ts ON u.id = ts.student_id WHERE ts.thesis_id = ?`).all(thesisId);
     const evaluatorRows = db.prepare(`SELECT u.full_name, te.is_blind FROM users u JOIN thesis_evaluators te ON u.id = te.evaluator_id WHERE te.thesis_id = ?`).all(thesisId);
+    // Nombres reales de evaluadores para el director (sin ocultar por evaluación ciega)
+    const allEvaluatorNames = evaluatorRows.map(e => e.full_name).filter(Boolean);
     const programRows   = db.prepare(`SELECT p.name FROM programs p JOIN thesis_programs tp ON p.id = tp.program_id WHERE tp.thesis_id = ?`).all(thesisId);
     const programaStr   = programRows.map(p => p.name).join(', ');
 
@@ -328,14 +395,20 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
       const recipientName = user.full_name || 'Usuario';
       let renderedSubject, renderedBody;
 
-      if (directorIdSet.has(recipientId) && !tpl) {
-        // Email enriquecido para directores (sin plantilla personalizada configurada)
+      if (directorIdSet.has(recipientId)) {
+        // Email enriquecido para directores (siempre usa la vista especial con tabla de estudiantes)
         renderedSubject = `${label}: ${thesis.title || ''}`;
-        renderedBody = buildDirectorBody(recipientName, label, description, thesis, studentDetails, programaStr);
+        renderedBody = buildDirectorBody(recipientName, label, description, thesis, studentDetails, programaStr, eventType, allEvaluatorNames);
       } else {
         const ctx = { ...baseCtx, destinatario_nombre: recipientName };
         renderedSubject = renderTemplate(subjectTpl, ctx);
         renderedBody    = renderTemplate(bodyTpl, ctx);
+        // Para evaluadores en eventos donde necesitan acceder al sistema, agregar bloque de acceso
+        const evaluatorIdSet = new Set(evaluatorIds);
+        if (EVALUATOR_ACCESS_EVENTS.has(eventType) && evaluatorIdSet.has(recipientId)) {
+          const accessBlock = buildEvaluatorAccessBlock(db, recipientId, user.institutional_email);
+          renderedBody = renderedBody.replace('</div>', `${accessBlock}</div>`);
+        }
       }
 
       const success = await sendEmail(db, user.institutional_email, renderedSubject, renderedBody, smtpOwnerId);
@@ -472,6 +545,7 @@ module.exports = {
   notifyTimeline,
   notifyEvaluatorRemoved,
   notifyEvaluatorAssigned,
+  notifyEvaluatorReplaced,
   getSMTPConfig,
   createTransport,
   startReminderCron,

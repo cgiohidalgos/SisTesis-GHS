@@ -995,7 +995,7 @@ export default function AdminThesisDetail() {
                     <>
                       <span className="text-muted-foreground">
                         {e.due_date
-                          ? new Date(e.due_date > 1e12 ? e.due_date : e.due_date * 1000).toLocaleDateString('es-CO')
+                          ? new Date(e.due_date > 1e12 ? e.due_date : e.due_date * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })
                           : 'Sin fecha'}
                       </span>
                       <button

@@ -89,6 +89,7 @@ export interface Thesis {
   submittedAt: string;
   timeline: TimelineEvent[];
   documentUrl?: string;
+  assigned_by_name?: string;
 }
 
 export const statusLabels: Record<ThesisStatus, string> = {

@@ -614,7 +614,7 @@ export default function AdminEvaluators() {
                       )}
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>
-                          Asignada: {new Date(thesis.assigned_at * 1000).toLocaleDateString('es-CO')}
+                          Asignada: {new Date(thesis.assigned_at * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
                         </span>
                         {thesis.is_blind === 1 && (
                           <span className="text-xs px-2 py-1 rounded bg-yellow-500/20 text-yellow-700 dark:text-yellow-300">
@@ -624,7 +624,7 @@ export default function AdminEvaluators() {
                       </div>
                       {thesis.due_date && (
                         <p className="text-xs text-muted-foreground">
-                          <strong>Fecha límite:</strong> {new Date(thesis.due_date * 1000).toLocaleDateString('es-CO')}
+                          <strong>Fecha límite:</strong> {new Date(thesis.due_date * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
                         </p>
                       )}
                     </div>

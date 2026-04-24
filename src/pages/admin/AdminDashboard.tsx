@@ -1,9 +1,10 @@
 import AppLayout from "@/components/layout/AppLayout";
 import ThesisCard from "@/components/thesis/ThesisCard";
-import { FileText, UserCheck, Clock, AlertTriangle, CalendarDays, CheckCircle2, XCircle, ChevronRight, X } from "lucide-react";
+import { FileText, UserCheck, Clock, AlertTriangle, CalendarDays, CheckCircle2, XCircle, ChevronRight, X, Send, Bell } from "lucide-react";
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
 
 import { getApiBase } from "@/lib/utils";
 const API_BASE = getApiBase();
@@ -30,6 +31,13 @@ export default function AdminDashboard() {
   const [theses, setTheses] = useState<any[]>([]);
   const [evalModal, setEvalModal] = useState<{ evaluator: any; theses: any[] } | null>(null);
   const [evalModalLoading, setEvalModalLoading] = useState(false);
+
+  // Recordatorios
+  const [pendingEvals, setPendingEvals] = useState<any[]>([]);
+  const [reminderSelected, setReminderSelected] = useState<Set<string>>(new Set());
+  const [reminderConfirm, setReminderConfirm] = useState(false);
+  const [reminderSending, setReminderSending] = useState(false);
+  const [reminderFilter, setReminderFilter] = useState<'all' | 'overdue' | 'week'>('all');
 
   const navigate = useNavigate();
   const fetchData = async () => {
@@ -76,8 +84,22 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchPendingEvals = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/admin/evaluations`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setPendingEvals(data.filter((r: any) => !r.evaluated));
+      }
+    } catch (e) { console.error(e); }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchPendingEvals();
   }, []);
 
   const openEvalModal = async (evaluator: any) => {
@@ -110,6 +132,44 @@ export default function AdminDashboard() {
       return due < today;
     })
   ), [theses, today]);
+
+  // Recordatorios — filtro local
+  const nowSec = Math.floor(Date.now() / 1000);
+  const reminderVisible = useMemo(() => {
+    if (reminderFilter === 'overdue') return pendingEvals.filter(r => r.due_date && r.due_date < nowSec);
+    if (reminderFilter === 'week') return pendingEvals.filter(r => r.due_date && r.due_date >= nowSec && r.due_date < nowSec + 7 * 86400);
+    return pendingEvals;
+  }, [pendingEvals, reminderFilter, nowSec]);
+
+  const reminderAllSelected = reminderVisible.length > 0 && reminderVisible.every(r => reminderSelected.has(r.assignment_id));
+  const toggleReminderAll = () => {
+    if (reminderAllSelected) {
+      setReminderSelected(s => { const n = new Set(s); reminderVisible.forEach(r => n.delete(r.assignment_id)); return n; });
+    } else {
+      setReminderSelected(s => { const n = new Set(s); reminderVisible.forEach(r => n.add(r.assignment_id)); return n; });
+    }
+  };
+
+  const sendReminders = async () => {
+    setReminderSending(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/admin/send-reminders`, {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignment_ids: [...reminderSelected] }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Error');
+      toast.success(`Recordatorios enviados: ${data.sent}${data.failed ? ` | Fallidos: ${data.failed}` : ''}`);
+      setReminderSelected(new Set());
+      setReminderConfirm(false);
+    } catch (e: any) {
+      toast.error(e.message || 'Error enviando recordatorios');
+    } finally {
+      setReminderSending(false);
+    }
+  };
 
   // Upcoming defenses in next 7 days
   const upcomingDefenses = useMemo(() => {
@@ -179,7 +239,7 @@ export default function AdminDashboard() {
                 >
                   <span className="line-clamp-1 flex-1">{thesis.title}</span>
                   <span className="ml-2 flex-shrink-0 font-medium">
-                    {date!.toLocaleDateString('es-CO', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    {date!.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'long' })}
                   </span>
                 </Link>
               ))}
@@ -223,6 +283,104 @@ export default function AdminDashboard() {
         </div>
 
 
+
+        {/* Recordatorios a evaluadores */}
+        {pendingEvals.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-heading text-lg font-semibold text-foreground flex items-center gap-2">
+                <Bell className="w-5 h-5 text-warning" />
+                Recordatorios a Evaluadores
+              </h3>
+              <Link to="/admin/evaluations" className="text-xs text-primary hover:underline flex items-center gap-1">
+                Ver página completa <ChevronRight className="w-3 h-3" />
+              </Link>
+            </div>
+
+            {/* Filtros rápidos */}
+            <div className="flex flex-wrap gap-2 mb-3">
+              {([['all','Todos'], ['overdue','Vencidos'], ['week','Esta semana']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => { setReminderFilter(key); setReminderSelected(new Set()); }}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    reminderFilter === key
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background border-border hover:bg-muted'
+                  }`}
+                >
+                  {label} ({key === 'all' ? pendingEvals.length : key === 'overdue' ? pendingEvals.filter(r => r.due_date && r.due_date < nowSec).length : pendingEvals.filter(r => r.due_date && r.due_date >= nowSec && r.due_date < nowSec + 7*86400).length})
+                </button>
+              ))}
+              {reminderSelected.size > 0 && (
+                <button
+                  onClick={() => setReminderConfirm(true)}
+                  className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  <Send className="w-3 h-3" />
+                  Enviar recordatorio ({reminderSelected.size})
+                </button>
+              )}
+            </div>
+
+            {/* Tabla compacta */}
+            <div className="rounded-xl border shadow-sm overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-muted/60 text-left">
+                    <th className="p-2.5 w-8">
+                      <input type="checkbox" checked={reminderAllSelected} onChange={toggleReminderAll} className="w-3.5 h-3.5 accent-primary" />
+                    </th>
+                    <th className="p-2.5 font-semibold text-xs">Evaluador</th>
+                    <th className="p-2.5 font-semibold text-xs">Proyecto</th>
+                    <th className="p-2.5 font-semibold text-xs">Vence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reminderVisible.slice(0, 10).map((r, i) => {
+                    const isOverdue = r.due_date && r.due_date < nowSec;
+                    const isSoon = r.due_date && r.due_date >= nowSec && r.due_date < nowSec + 7*86400;
+                    const isChecked = reminderSelected.has(r.assignment_id);
+                    return (
+                      <tr key={r.assignment_id} className={`border-t transition-colors ${isChecked ? 'bg-primary/5' : i % 2 === 0 ? '' : 'bg-muted/5'} hover:bg-muted/20`}>
+                        <td className="p-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => setReminderSelected(s => { const n = new Set(s); n.has(r.assignment_id) ? n.delete(r.assignment_id) : n.add(r.assignment_id); return n; })}
+                            className="w-3.5 h-3.5 accent-primary"
+                          />
+                        </td>
+                        <td className="p-2.5">
+                          <div className="font-medium text-xs">{r.evaluator_name}</div>
+                          <div className="text-[11px] text-muted-foreground">{r.program_name}</div>
+                        </td>
+                        <td className="p-2.5 max-w-[200px]">
+                          <Link to={`/admin/theses/${r.thesis_id}`} className="text-xs hover:underline line-clamp-1">{r.thesis_title}</Link>
+                        </td>
+                        <td className="p-2.5 whitespace-nowrap">
+                          {r.due_date ? (
+                            <span className={`inline-flex items-center gap-1 text-xs ${isOverdue ? 'text-destructive font-medium' : isSoon ? 'text-warning font-medium' : 'text-muted-foreground'}`}>
+                              {isOverdue && <AlertTriangle className="w-3 h-3" />}
+                              {isSoon && <Clock className="w-3 h-3" />}
+                              {new Date(r.due_date * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })}
+                            </span>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {reminderVisible.length > 10 && (
+                <div className="px-4 py-2.5 border-t bg-muted/30 text-xs text-muted-foreground flex items-center justify-between">
+                  <span>Mostrando 10 de {reminderVisible.length}</span>
+                  <Link to="/admin/evaluations" className="text-primary hover:underline">Ver todos →</Link>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Breakdown by program */}
         {byProgram.length > 0 && (
@@ -333,6 +491,7 @@ export default function AdminDashboard() {
               key={thesis.id}
               thesis={thesis}
               linkTo="/admin/theses"
+              showAssignedBy
             />
           ))}
           {theses.length > 5 && (
@@ -418,7 +577,7 @@ export default function AdminDashboard() {
                             )}
                             {dueDate ? (
                               <span className={isOverdue && !evaluated ? 'text-destructive font-medium' : ''}>
-                                Vence: {dueDate.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                Vence: {dueDate.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
                                 {isOverdue && !evaluated && ' ⚠️'}
                               </span>
                             ) : (
@@ -431,6 +590,38 @@ export default function AdminDashboard() {
                   })()}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmación recordatorios */}
+      {reminderConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !reminderSending && setReminderConfirm(false)}>
+          <div className="bg-card rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-heading text-lg font-semibold">Confirmar envío</h3>
+              <button onClick={() => !reminderSending && setReminderConfirm(false)} className="p-1.5 rounded-lg hover:bg-muted">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Se enviará un recordatorio a <strong>{reminderSelected.size}</strong> evaluador{reminderSelected.size !== 1 ? 'es' : ''}:
+            </p>
+            <div className="max-h-44 overflow-y-auto space-y-1.5 rounded-lg border p-3 bg-muted/30">
+              {pendingEvals.filter(r => reminderSelected.has(r.assignment_id)).map(r => (
+                <div key={r.assignment_id} className="text-xs">
+                  <span className="font-medium">{r.evaluator_name}</span>
+                  <div className="text-muted-foreground truncate">{r.thesis_title}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 justify-end pt-1">
+              <button onClick={() => setReminderConfirm(false)} disabled={reminderSending} className="px-4 py-2 rounded-lg border text-sm hover:bg-muted transition-colors">Cancelar</button>
+              <button onClick={sendReminders} disabled={reminderSending} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-60">
+                <Send className="w-4 h-4" />
+                {reminderSending ? 'Enviando...' : `Enviar ${reminderSelected.size}`}
+              </button>
             </div>
           </div>
         </div>

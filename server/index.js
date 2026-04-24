@@ -16,7 +16,7 @@ const Docxtemplater = require('docxtemplater');
 const PizZip = require('pizzip');
 const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
-const { notifyTimeline, startReminderCron, startBackupCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned, notifyEvaluatorRemoved, logNotification } = require('./notifications');
+const { notifyTimeline, startReminderCron, startBackupCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned, notifyEvaluatorRemoved, notifyEvaluatorReplaced, logNotification } = require('./notifications');
 const Anthropic = require('@anthropic-ai/sdk');
 const logger = require('./logger');
 
@@ -957,15 +957,67 @@ app.get('/admin/evaluations', authMiddleware, requireRole('admin'), (req, res) =
   const rows = db.prepare(`
     SELECT te.id as assignment_id, te.thesis_id, t.title as thesis_title,
            te.evaluator_id, u.full_name as evaluator_name,
-           te.due_date
+           u.institutional_email as evaluator_email,
+           te.due_date, te.is_blind,
+           COALESCE(p.name, 'Sin programa') as program_name,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM evaluations e WHERE e.thesis_evaluator_id = te.id AND e.submitted_at IS NOT NULL
+           ) THEN 1 ELSE 0 END as evaluated
     FROM thesis_evaluators te
     JOIN theses t ON t.id = te.thesis_id
     LEFT JOIN users u ON u.id = te.evaluator_id
+    LEFT JOIN thesis_programs tp ON tp.thesis_id = t.id
+    LEFT JOIN programs p ON p.id = tp.program_id
     WHERE t.status != 'deleted' ${dueClause} ${progFilter}
+    GROUP BY te.id
     ORDER BY te.due_date ASC
   `).all(...params);
   res.json(rows);
 });
+// Envío manual de recordatorios a evaluadores seleccionados
+app.post('/admin/send-reminders', authMiddleware, requireRole('admin'), async (req, res) => {
+  const { assignment_ids } = req.body;
+  if (!Array.isArray(assignment_ids) || assignment_ids.length === 0) {
+    return res.status(400).json({ error: 'assignment_ids requerido' });
+  }
+  const { sendEmail, logNotification } = require('./notifications');
+  let sent = 0, failed = 0;
+  for (const aid of assignment_ids) {
+    const row = db.prepare(`
+      SELECT te.id, te.evaluator_id, te.thesis_id, te.due_date,
+             t.title, u.institutional_email, u.full_name
+      FROM thesis_evaluators te
+      JOIN theses t ON t.id = te.thesis_id
+      JOIN users u ON u.id = te.evaluator_id
+      WHERE te.id = ? AND t.status NOT IN ('finalized','deleted')
+    `).get(aid);
+    if (!row || !row.institutional_email) { failed++; continue; }
+    const dueDateStr = row.due_date
+      ? new Date(row.due_date * 1000).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })
+      : 'Sin fecha límite';
+    const subject = `Recordatorio: evaluación pendiente de entrega — ${row.title}`;
+    const body = `
+      <div style="font-family:sans-serif;max-width:600px">
+        <h2 style="color:#1a1a2e">Recordatorio: evaluación pendiente</h2>
+        <p>Hola <strong>${row.full_name || 'Evaluador'}</strong>,</p>
+        <p>El administrador te recuerda que tienes pendiente una evaluación:</p>
+        <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px">
+          <p style="margin:4px 0;font-size:16px;font-weight:bold">${row.title}</p>
+          <p style="margin:4px 0">Fecha límite: <strong>${dueDateStr}</strong></p>
+        </div>
+        <p>Por favor ingresa al sistema y completa tu evaluación.</p>
+        <p><a href="https://sistesis.site/" style="color:#1a1a2e">Ingresar a SisTesis</a></p>
+        <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+        <p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p>
+      </div>
+    `;
+    const ok = await sendEmail(db, row.institutional_email, subject, body, req.user.id);
+    logNotification(db, row.evaluator_id, 'reminder', subject, body, row.thesis_id, ok ? null : 'failed');
+    if (ok) sent++; else failed++;
+  }
+  res.json({ sent, failed });
+});
+
 // Agregar evento al timeline de tesis (admin o evaluador)
 app.post('/theses/:id/timeline', authMiddleware, (req, res) => {
   const { event_type, description, completed } = req.body;
@@ -1052,8 +1104,9 @@ app.post('/theses/:id/assign-evaluator', authMiddleware, requireRole('admin'), (
     const row = db.prepare('SELECT full_name FROM users WHERE id = ?').get(evaluator_id);
     desc = `Evaluador asignado${row && row.full_name ? `: ${row.full_name}` : ''}`;
   }
-  db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(uuidv4(), thesis_id, 'evaluators_assigned', desc, 1, nowSec());
+  const actorRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
+  db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at, actor_name) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(uuidv4(), thesis_id, 'evaluators_assigned', desc, 1, nowSec(), actorRow?.full_name || null);
   notifyTimeline(db, thesis_id, 'evaluators_assigned', desc, req.user.id).catch(console.error);
   notifyEvaluatorAssigned(db, thesis_id, evaluator_id, req.user.id, dueDateInt).catch(console.error);
   res.json({ ok: true });
@@ -1097,8 +1150,9 @@ app.post('/theses/:id/assign-evaluators', authMiddleware, requireRole('admin'), 
       const names = rows.map(r => r.full_name).filter(Boolean);
       desc = `Evaluadores asignados (${evaluator_ids.length})${names.length ? `: ${names.join(', ')}` : ''}`;
     }
-    db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(uuidv4(), thesis_id, 'evaluators_assigned', desc, 1, nowSec());
+    const actorRow2 = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
+    db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at, actor_name) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), thesis_id, 'evaluators_assigned', desc, 1, nowSec(), actorRow2?.full_name || null);
   });
   try {
     tx();
@@ -1162,6 +1216,7 @@ app.post('/theses/:id/replace-evaluator', authMiddleware, requireRole('admin'), 
     const oldName = oldEvaluatorRow?.full_name || old_evaluator_id;
     const newName = newEvaluatorRow?.full_name || new_evaluator_id;
     notifyTimeline(db, thesis_id, 'evaluator_replaced', `Evaluador reemplazado: ${oldName} por ${newName}`, req.user.id).catch(console.error);
+    notifyEvaluatorReplaced(db, thesis_id, old_evaluator_id, new_evaluator_id, req.user.id).catch(console.error);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -3125,7 +3180,13 @@ app.get('/theses/directed', authMiddleware, (req, res) => {
        JOIN thesis_programs tp ON p.id = tp.program_id
        WHERE tp.thesis_id = ?`
     ).all(t.id);
-    return { ...t, students, programs };
+    const evaluators = db.prepare(
+      `SELECT u.full_name as name, u.institutional_email, te.due_date
+       FROM thesis_evaluators te
+       JOIN users u ON u.id = te.evaluator_id
+       WHERE te.thesis_id = ?`
+    ).all(t.id);
+    return { ...t, students, programs, evaluators };
   });
 
   res.json(enriched);
@@ -3389,7 +3450,10 @@ app.get('/theses', authMiddleware, (req, res) => {
       return da - db_;
     });
     const weighted = computeFinalWeightedForThesis(t.id);
-    return { ...t, students, evaluators, directors, programs, timeline: enrichedTimeline, files, evaluations, weighted };
+    const assignedByRow = db.prepare(
+      `SELECT actor_name FROM thesis_timeline WHERE thesis_id = ? AND event_type = 'evaluators_assigned' AND actor_name IS NOT NULL ORDER BY created_at DESC LIMIT 1`
+    ).get(t.id);
+    return { ...t, students, evaluators, directors, programs, timeline: enrichedTimeline, files, evaluations, weighted, assigned_by_name: assignedByRow?.actor_name || null };
   });
 
   // Calcular hasActa en batch (una sola query) para evitar N peticiones desde el frontend

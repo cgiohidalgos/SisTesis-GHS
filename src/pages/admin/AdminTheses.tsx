@@ -263,6 +263,7 @@ export default function AdminTheses() {
                 <ThesisCard
                   thesis={thesis}
                   linkTo={`/admin/theses/${thesis.id}`}
+                  showAssignedBy
                 />
                 <button
                   onClick={() => openDeleteThesisModal({ id: thesis.id, title: thesis.title })}
