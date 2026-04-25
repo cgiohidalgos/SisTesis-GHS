@@ -204,7 +204,7 @@ export default function EvaluatorMyStudents() {
                               {ev.due_date && (
                                 <span className="flex items-center gap-1">
                                   <Clock className="w-3 h-3" />
-                                  <span style={{ color: "#e85d04" }} className="font-semibold">Fecha límite:</span>{" "}
+                                  <span style={{ color: ev.has_evaluated ? "#16a34a" : "#e85d04" }} className="font-semibold">Fecha límite:</span>{" "}
                                   {new Date(
                                     ev.due_date > 1e12 ? ev.due_date : ev.due_date * 1000
                                   ).toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}

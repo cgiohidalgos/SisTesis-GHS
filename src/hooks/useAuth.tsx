@@ -1,4 +1,6 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { getApiBase } from "@/lib/utils";
 
 const API_BASE = getApiBase();
@@ -13,7 +15,7 @@ interface AuthContextType {
   isSuper: boolean;
   profile: { full_name: string; student_code?: string; cedula?: string; institutional_email?: string } | null;
   loading: boolean;
-  signOut: () => Promise<void>;
+  signOut: (options?: { redirect?: boolean }) => Promise<void>;
   refreshSession: () => Promise<AppRole | null>;
 }
 
@@ -77,6 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       const data = await resp.json();
+      if (data?.token) {
+        localStorage.setItem('token', data.token);
+      }
       const sess = data.session ?? null;
       setSession(sess);
       setUser(sess?.user ?? null);
@@ -94,26 +99,146 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return null;
   };
 
+  const navigate = useNavigate();
+  const originalFetchRef = useRef<typeof window.fetch | null>(null);
+
   useEffect(() => {
     refreshSession();
   }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async (options?: { redirect?: boolean }) => {
+    const nativeFetch = originalFetchRef.current ?? window.fetch.bind(window);
+
     try {
       const token = localStorage.getItem('token');
-      await fetch(`${API_BASE}/auth/logout`, {
+      await nativeFetch(`${API_BASE}/auth/logout`, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
     } catch (err) {
       console.error('signOut error', err);
     }
+
     localStorage.removeItem('token');
     setUser(null);
     setSession(null);
     setRole(null);
     setProfile(null);
+
+    if (options?.redirect !== false) {
+      const loginPath = role === 'admin' || role === 'evaluator' ? '/login/staff' : '/login/student';
+      navigate(loginPath, { replace: true });
+    }
+  }, [navigate, role]);
+
+  const decodeJwtPayload = (token: string): any | null => {
+    try {
+      const [, payload] = token.split('.');
+      if (!payload) return null;
+      const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+      return JSON.parse(decodeURIComponent(escape(decoded)));
+    } catch {
+      return null;
+    }
   };
+
+  const tokenExpiresSoon = (token: string, thresholdMs = 60 * 60 * 1000) => {
+    const payload = decodeJwtPayload(token);
+    if (!payload?.exp) return false;
+    return payload.exp * 1000 - Date.now() < thresholdMs;
+  };
+
+  const updateTokenFromResponse = async (response: Response) => {
+    if (!response.ok) return;
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) return;
+
+    try {
+      const data = await response.clone().json();
+      if (data?.token) {
+        localStorage.setItem('token', data.token);
+        if (data?.session) {
+          setSession(data.session);
+          setUser(data.session.user ?? null);
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+  };
+
+  useEffect(() => {
+    originalFetchRef.current = window.fetch.bind(window);
+    const originalFetch = originalFetchRef.current;
+
+    window.fetch = async (input: RequestInfo, init?: RequestInit) => {
+      const requestUrl = typeof input === 'string' ? input : input.url;
+      const token = localStorage.getItem('token');
+      const isAuthRefresh = requestUrl.includes('/auth/refresh');
+      const isAuthLogout = requestUrl.includes('/auth/logout');
+
+      if (token && !isAuthRefresh && !isAuthLogout && tokenExpiresSoon(token)) {
+        try {
+          const refreshResponse = await originalFetch(`${API_BASE}/auth/refresh`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (refreshResponse.ok) {
+            const refreshData = await refreshResponse.json();
+            if (refreshData?.token) {
+              localStorage.setItem('token', refreshData.token);
+              if (refreshData?.session) {
+                setSession(refreshData.session);
+                setUser(refreshData.session.user ?? null);
+              }
+            }
+          } else if (refreshResponse.status === 401) {
+            toast.error('Sesión expirada. Inicia sesión de nuevo.');
+            await signOut({ redirect: true });
+            return refreshResponse;
+          }
+        } catch (err) {
+          console.error('token refresh error', err);
+        }
+      }
+
+      const headers = new Headers(init?.headers);
+      const currentToken = localStorage.getItem('token');
+      if (currentToken) {
+        headers.set('Authorization', `Bearer ${currentToken}`);
+      }
+
+      const finalInit = { ...init, headers };
+      const response = await originalFetch(input, finalInit);
+
+      if (response.status === 401) {
+        let message = 'Sesión expirada. Inicia sesión de nuevo.';
+        try {
+          const data = await response.clone().json();
+          if (data?.error && typeof data.error === 'string') {
+            if (!/invalid token|token.*expir|jwt/i.test(data.error)) {
+              message = data.error;
+            }
+          }
+        } catch {
+          // ignore parse errors
+        }
+
+        toast.error(message);
+        await signOut({ redirect: true });
+      }
+
+      if (requestUrl.includes('/auth/session') || requestUrl.includes('/auth/refresh')) {
+        await updateTokenFromResponse(response);
+      }
+
+      return response;
+    };
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, [signOut]);
 
   return (
     <AuthContext.Provider value={{ user, session, roles, role, isSuper, profile, loading, signOut, refreshSession }}>

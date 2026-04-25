@@ -482,6 +482,9 @@ export default function EvaluatorRubric() {
                   })) : undefined}
                   initialGeneralObs={docEval?.general_observations || ""}
                   initialFiles={docEval?.files || []}
+                  draftKey={user && !docEval ? `eval_draft_${user.id}_${id}_document` : undefined}
+                  thesisId={!docEval ? (id as string) : undefined}
+                  evaluationType={!docEval ? "document" : undefined}
                 />
               </AccordionContent>
             </AccordionItem>
@@ -545,15 +548,18 @@ export default function EvaluatorRubric() {
                     showFiles={true}
                     initialConcept={presEval?.concept || null}
                     initialFinalScore={presEval?.final_score}
-                    initialSections={(programPresRubric ?? presentationRubric).map((s: any) => ({
+                    initialSections={presEval ? (programPresRubric ?? presentationRubric).map((s: any) => ({
                       ...s,
                       criteria: s.criteria.map((c: any) => {
                         const sc = presEval?.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
                         return { ...c, score: sc?.score ?? undefined, observations: sc?.observations || "" };
                       })
-                    }))}
+                    })) : undefined}
                     initialGeneralObs={presEval?.general_observations || ""}
                     initialFiles={presEval?.files || []}
+                    draftKey={user && !presEval ? `eval_draft_${user.id}_${id}_presentation` : undefined}
+                    thesisId={!presEval ? (id as string) : undefined}
+                    evaluationType={!presEval ? "presentation" : undefined}
                   />
                 </AccordionContent>
               </AccordionItem>

@@ -264,6 +264,7 @@ export default function AdminTheses() {
                   thesis={thesis}
                   linkTo={`/admin/theses/${thesis.id}`}
                   showAssignedBy
+                  showEvaluatorAccordion
                 />
                 <button
                   onClick={() => openDeleteThesisModal({ id: thesis.id, title: thesis.title })}

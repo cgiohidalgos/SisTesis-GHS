@@ -63,6 +63,7 @@ export interface ThesisEvaluator {
   id: string;
   name: string;
   due_date?: string;
+  institutional_email?: string;
 }
 
 export interface RubricCriterion {

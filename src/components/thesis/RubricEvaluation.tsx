@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { defaultRubric, type RubricSection, type EvaluatorConcept } from "@/lib/mock-data";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle2, AlertTriangle, XCircle, Upload, FileText, X } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Upload, FileText, X, Save, CloudOff, Loader2 } from "lucide-react";
 
 import { getApiBase } from "@/lib/utils";
 const API_BASE = getApiBase();
@@ -38,38 +38,163 @@ interface RubricEvaluationProps {
   showFiles?: boolean;
   /** program rubric to use instead of defaultRubric when no initialSections provided */
   rubric?: RubricSection[];
+  /** localStorage key for draft persistence; also used as server-side draft identifier; omit to disable drafts */
+  draftKey?: string;
+  /** thesis id used for server-side draft API calls */
+  thesisId?: string;
+  /** evaluation type (document | presentation) used for server-side draft API calls */
+  evaluationType?: string;
+  /** called after successful submit so parent can clear the draft */
+  onDraftClear?: () => void;
 }
 
-export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, initialConcept, initialSections, initialGeneralObs, initialFiles, initialFinalScore = null, submitDisabled, readOnly = false, showConcept = true, showFiles = true, rubric }: RubricEvaluationProps) {
+function loadLocalDraft(draftKey: string | undefined) {
+  if (!draftKey) return null;
+  try {
+    const raw = localStorage.getItem(draftKey);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+function clearLocalDraft(draftKey: string | undefined) {
+  if (draftKey) localStorage.removeItem(draftKey);
+}
+
+function saveLocalDraft(draftKey: string | undefined, data: object) {
+  if (draftKey) {
+    try { localStorage.setItem(draftKey, JSON.stringify(data)); } catch {}
+  }
+}
+
+async function fetchServerDraft(thesisId: string, type: string): Promise<object | null> {
+  const token = localStorage.getItem('token');
+  try {
+    const res = await fetch(`${API_BASE}/evaluations/draft?thesisId=${thesisId}&type=${type}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const { draft } = await res.json();
+    return draft;
+  } catch {
+    return null;
+  }
+}
+
+async function saveServerDraft(thesisId: string, type: string, data: object) {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`${API_BASE}/evaluations/draft`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thesisId, type, data }),
+  });
+  if (!res.ok) throw new Error('draft save failed');
+}
+
+async function deleteServerDraft(thesisId: string, type: string) {
+  const token = localStorage.getItem('token');
+  try {
+    await fetch(`${API_BASE}/evaluations/draft?thesisId=${thesisId}&type=${type}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {}
+}
+
+export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, initialConcept, initialSections, initialGeneralObs, initialFiles, initialFinalScore = null, submitDisabled, readOnly = false, showConcept = true, showFiles = true, rubric, draftKey, thesisId, evaluationType, onDraftClear }: RubricEvaluationProps) {
   const [uploading, setUploading] = useState(false);
-  const [sections, setSections] = useState<RubricSection[]>(
-    initialSections ??
-      (rubric ?? defaultRubric).map((s) => ({
-        ...s,
-        criteria: s.criteria.map((c) => ({ ...c, score: undefined, observations: "" })),
-      }))
-  );
+  const draftLoadedRef = useRef(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const serverDraftEnabled = !readOnly && !!thesisId && !!evaluationType;
+
+  const [sections, setSections] = useState<RubricSection[]>(() => {
+    if (!readOnly && !initialSections) {
+      // try localStorage as synchronous fallback; server draft is loaded in useEffect
+      const draft = loadLocalDraft(draftKey);
+      if (draft?.sections) {
+        draftLoadedRef.current = true;
+        return draft.sections;
+      }
+    }
+    return initialSections ?? (rubric ?? defaultRubric).map((s) => ({
+      ...s,
+      criteria: s.criteria.map((c) => ({ ...c, score: undefined, observations: "" })),
+    }));
+  });
 
   // keep the local state in sync when parent provides new initialSections or rubric
   useEffect(() => {
     if (initialSections) {
-      console.debug('RubricEvaluation syncing sections from props', initialSections);
       setSections(initialSections);
-    } else if (rubric) {
+    } else if (rubric && !draftLoadedRef.current) {
       setSections(rubric.map((s) => ({ ...s, criteria: s.criteria.map((c) => ({ ...c, score: undefined, observations: "" })) })));
     }
   }, [initialSections, rubric]);
-  const [concept, setConcept] = useState<EvaluatorConcept | null>(initialConcept || null);
 
-  // if parent provides a different initialConcept (e.g. after fetch completes)
-  // keep our local state in sync so the correct button is highlighted
-  useEffect(() => {
-    if (initialConcept !== undefined) {
-      console.debug('RubricEvaluation syncing concept from props', initialConcept);
-      setConcept(initialConcept);
+  const [concept, setConcept] = useState<EvaluatorConcept | null>(() => {
+    if (!readOnly && !initialConcept) {
+      const draft = loadLocalDraft(draftKey);
+      if (draft?.concept) return draft.concept;
     }
+    return initialConcept || null;
+  });
+
+  useEffect(() => {
+    if (initialConcept !== undefined) setConcept(initialConcept);
   }, [initialConcept]);
-  const [generalObs, setGeneralObs] = useState(initialGeneralObs || "");
+
+  const [generalObs, setGeneralObs] = useState(() => {
+    if (!readOnly && !initialGeneralObs) {
+      const draft = loadLocalDraft(draftKey);
+      if (draft?.generalObs) return draft.generalObs;
+    }
+    return initialGeneralObs || "";
+  });
+
+  useEffect(() => {
+    if (initialGeneralObs !== undefined) setGeneralObs(initialGeneralObs);
+  }, [initialGeneralObs]);
+
+  // On mount: load server draft (takes precedence over localStorage)
+  useEffect(() => {
+    if (!serverDraftEnabled) return;
+    fetchServerDraft(thesisId!, evaluationType!).then((serverDraft: any) => {
+      if (!serverDraft) return;
+      if (serverDraft.sections) setSections(serverDraft.sections);
+      if (serverDraft.concept) setConcept(serverDraft.concept);
+      if (serverDraft.generalObs !== undefined) setGeneralObs(serverDraft.generalObs);
+      draftLoadedRef.current = true;
+      setDraftRestored(true);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // show "borrador restaurado" indicator once on mount if localStorage draft was loaded first
+  useEffect(() => {
+    if (draftLoadedRef.current && !serverDraftEnabled) setDraftRestored(true);
+  }, []);
+
+  // auto-save draft: server (primary) + localStorage (fallback), debounced 1.5s
+  useEffect(() => {
+    if (readOnly) return;
+    if (!draftKey && !serverDraftEnabled) return;
+    const draftData = { sections, concept, generalObs };
+    setDraftStatus('saving');
+    const timer = setTimeout(async () => {
+      try {
+        if (serverDraftEnabled) {
+          await saveServerDraft(thesisId!, evaluationType!, draftData);
+        }
+        saveLocalDraft(draftKey, draftData);
+        setDraftStatus('saved');
+      } catch {
+        setDraftStatus('error');
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [sections, concept, generalObs, draftKey, readOnly, serverDraftEnabled, thesisId, evaluationType]);
+
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [existingFiles, setExistingFiles] = useState<EvalFile[]>(initialFiles || []);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -167,6 +292,51 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
 
   return (
     <div className="space-y-8">
+      {/* Draft banner */}
+      {!readOnly && (draftKey || serverDraftEnabled) && (
+        <div className={cn(
+          "flex items-start gap-3 px-4 py-3 rounded-xl border text-sm transition-colors",
+          draftRestored
+            ? "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-200"
+            : "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
+        )}>
+          <Save className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            {draftRestored ? (
+              <p className="font-medium">Borrador recuperado</p>
+            ) : (
+              <p className="font-medium">Esta evaluación se guarda como borrador</p>
+            )}
+            <p className="text-xs mt-0.5 opacity-80">
+              {draftRestored
+                ? "Sus respuestas anteriores han sido restauradas. Puede continuar desde donde lo dejó."
+                : "Puede cerrar esta página y volver en otro momento — sus respuestas no se perderán."}
+            </p>
+          </div>
+          {/* Save status indicator */}
+          <div className="flex items-center gap-1.5 text-xs flex-shrink-0 mt-0.5">
+            {draftStatus === 'saving' && (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin opacity-60" />
+                <span className="opacity-60">Guardando…</span>
+              </>
+            )}
+            {draftStatus === 'saved' && (
+              <>
+                <CheckCircle2 className="w-3 h-3 text-green-600 dark:text-green-400" />
+                <span className="text-green-700 dark:text-green-400">Guardado</span>
+              </>
+            )}
+            {draftStatus === 'error' && (
+              <>
+                <CloudOff className="w-3 h-3 text-red-500" />
+                <span className="text-red-600 dark:text-red-400">Sin conexión</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {sections.map((section) => {
         const sectionAvg = getSectionScore(section);
         return (
@@ -446,6 +616,12 @@ export default function RubricEvaluation({ thesis, onSubmit, onUploadFiles, init
                   sections,
                   files: uploadedFiles.map(f => f.file),
                 });
+                // clear draft on successful submit
+                clearLocalDraft(draftKey);
+                if (serverDraftEnabled) deleteServerDraft(thesisId!, evaluationType!);
+                if (onDraftClear) onDraftClear();
+                draftLoadedRef.current = false;
+                setDraftRestored(false);
               }
             }}
           >
