@@ -13,6 +13,7 @@ import {
   Bell,
   ClipboardCheck,
   BarChart2,
+  Wifi,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -104,6 +105,7 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
     items = [
       ...items,
       { label: 'Notificaciones', href: '/admin/notifications', icon: Bell },
+      { label: 'Conexiones', href: '/admin/connections', icon: Wifi },
       { label: 'Reportes', href: '/admin/reports', icon: BarChart2 },
     ];
   }

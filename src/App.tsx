@@ -26,6 +26,7 @@ import AdminWeights from "./pages/admin/AdminWeights";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminSMTPConfig from "./pages/admin/AdminSMTPConfig";
 import AdminNotifications from "./pages/admin/AdminNotifications";
+import AdminConnections from "./pages/admin/AdminConnections";
 import AdminReports from "./pages/admin/AdminReports";
 import AdminNotificationRules from "./pages/admin/AdminNotificationRules";
 import AdminAsEvaluator from "./pages/admin/AdminAsEvaluator";
@@ -87,6 +88,7 @@ const App = () => (
               <Route path="/admin/users" element={<AdminUsers />} />
               <Route path="/admin/smtp-config" element={<AdminSMTPConfig />} />
               <Route path="/admin/notifications" element={<AdminNotifications />} />
+              <Route path="/admin/connections" element={<AdminConnections />} />
               <Route path="/admin/reports" element={<AdminReports />} />
               <Route path="/admin/notification-rules" element={<AdminNotificationRules />} />
               <Route path="/admin/as-evaluator" element={<AdminAsEvaluator />} />

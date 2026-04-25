@@ -60,6 +60,14 @@ try {
   // ignore if already exists
 }
 
+// track last login timestamp for each user
+try {
+  db.prepare('ALTER TABLE users ADD COLUMN last_login INTEGER').run();
+  console.log('migration: added last_login column to users');
+} catch (e) {
+  // ignore if already exists
+}
+
 db.prepare(`CREATE TABLE IF NOT EXISTS user_roles (
   id TEXT PRIMARY KEY,
   user_id TEXT,

@@ -51,8 +51,16 @@ const limiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // limit each IP to 200 login attempts per windowMs
+  max: 20,
   message: 'Too many login attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 15,
+  message: 'Too many registration attempts, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -100,6 +108,19 @@ const db = require('./db');
 
 // Migration: add cvlac column to users if not present
 try { db.prepare('ALTER TABLE users ADD COLUMN cvlac TEXT').run(); } catch (_) {}
+
+// Migration: create evaluation_drafts table for server-side draft persistence
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS evaluation_drafts (
+    id TEXT PRIMARY KEY,
+    evaluator_id TEXT NOT NULL,
+    thesis_id TEXT NOT NULL,
+    evaluation_type TEXT NOT NULL,
+    draft_data TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(evaluator_id, thesis_id, evaluation_type)
+  )
+`).run();
 
 // Helper: Unix timestamp en segundos (consistente con SQLite strftime('%s','now'))
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -2148,11 +2169,19 @@ function requireRole(role) {
   };
 }
 
-app.post('/auth/register', async (req, res) => {
+const ALLOWED_REGISTER_DOMAINS = ['correo.usbcali.edu.co', 'usbcali.edu.co'];
+
+app.post('/auth/register', registerLimiter, async (req, res) => {
   // students register using their institutional email; password is auto-generated if not provided
   let { institutional_email, full_name, student_code, cedula } = req.body;
   let { password } = req.body;
   if (!institutional_email) return res.status(400).json({ error: 'institutional_email required' });
+
+  // domain whitelist — only institutional addresses allowed
+  const emailDomain = typeof institutional_email === 'string' ? institutional_email.split('@')[1]?.toLowerCase() : '';
+  if (!ALLOWED_REGISTER_DOMAINS.includes(emailDomain)) {
+    return res.status(400).json({ error: 'Solo se permiten correos institucionales (@correo.usbcali.edu.co)' });
+  }
   // Convertir nombre a mayúsculas
   if (full_name) full_name = full_name.toUpperCase();
   // auto-generate password if not provided (sent by email)
@@ -2234,7 +2263,9 @@ app.post('/auth/login', authLimiter, [
     
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: 'Credenciales inválidas' });
-    
+
+    db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), user.id);
+
     delete user.password_hash;
     // hide generic email field, rely on institutional_email instead
     delete user.email;
@@ -2249,6 +2280,23 @@ app.post('/auth/login', authLimiter, [
 app.post('/auth/logout', (req, res) => {
   // With JWT we rely on client to discard token; implement blacklist if needed
   res.json({ ok: true });
+});
+
+app.get('/auth/refresh', (req, res) => {
+  const auth = req.headers.authorization || '';
+  const token = auth.replace(/^Bearer\s+/, '');
+  if (!token) return res.status(401).json({ error: 'missing token' });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = db.prepare('SELECT id, full_name, student_code, cedula, institutional_email FROM users WHERE id = ?').get(decoded.id);
+    if (!user) return res.status(401).json({ error: 'invalid token' });
+
+    const refreshedToken = signToken(user);
+    return res.json({ token: refreshedToken, session: { user } });
+  } catch (err) {
+    return res.status(401).json({ error: 'invalid token' });
+  }
 });
 
 // Rate limiter estricto para recuperación de contraseña (5 intentos / 15 min por IP)
@@ -2339,7 +2387,8 @@ app.get('/auth/session', (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = db.prepare('SELECT id, full_name, student_code, cedula, institutional_email FROM users WHERE id = ?').get(decoded.id);
     if (!user) return res.json({ session: null });
-    return res.json({ session: { user } });
+    const refreshedToken = signToken(user);
+    return res.json({ session: { user }, token: refreshedToken });
   } catch (err) {
     return res.json({ session: null });
   }
@@ -3181,7 +3230,11 @@ app.get('/theses/directed', authMiddleware, (req, res) => {
        WHERE tp.thesis_id = ?`
     ).all(t.id);
     const evaluators = db.prepare(
-      `SELECT u.full_name as name, u.institutional_email, te.due_date
+      `SELECT u.full_name as name, u.institutional_email, te.due_date,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM evaluations e
+                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
+              ) THEN 1 ELSE 0 END as has_evaluated
        FROM thesis_evaluators te
        JOIN users u ON u.id = te.evaluator_id
        WHERE te.thesis_id = ?`
@@ -3275,7 +3328,11 @@ app.get('/theses', authMiddleware, (req, res) => {
        WHERE ts.thesis_id = ?`
     ).all(t.id);
     const evaluators = db.prepare(
-      `SELECT DISTINCT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind
+      `SELECT DISTINCT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM evaluations e
+                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
+              ) THEN 1 ELSE 0 END as has_evaluated
        FROM users u
        JOIN thesis_evaluators te ON u.id = te.evaluator_id
        WHERE te.thesis_id = ?`
@@ -3789,6 +3846,40 @@ function recalcThesisStatus(thesis_id) {
     notifyTimeline(db, thesis_id, 'status_changed', `Estado cambiado a ${newStatus}`, null).catch(console.error);
   }
 }
+
+// Evaluation Drafts (server-side persistence)
+app.get('/evaluations/draft', authMiddleware, requireRole('evaluator'), (req, res) => {
+  const { thesisId, type } = req.query;
+  if (!thesisId || !type) return res.status(400).json({ error: 'thesisId and type required' });
+  const draft = db.prepare(
+    'SELECT draft_data, updated_at FROM evaluation_drafts WHERE evaluator_id = ? AND thesis_id = ? AND evaluation_type = ?'
+  ).get(req.user.id, thesisId, type);
+  if (!draft) return res.json({ draft: null });
+  res.json({ draft: JSON.parse(draft.draft_data), updated_at: draft.updated_at });
+});
+
+app.put('/evaluations/draft', authMiddleware, requireRole('evaluator'), (req, res) => {
+  const { thesisId, type, data } = req.body;
+  if (!thesisId || !type || !data) return res.status(400).json({ error: 'thesisId, type and data required' });
+  const id = uuidv4();
+  const now = nowSec();
+  db.prepare(`
+    INSERT INTO evaluation_drafts (id, evaluator_id, thesis_id, evaluation_type, draft_data, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(evaluator_id, thesis_id, evaluation_type)
+    DO UPDATE SET draft_data = excluded.draft_data, updated_at = excluded.updated_at
+  `).run(id, req.user.id, thesisId, type, JSON.stringify(data), now);
+  res.json({ ok: true });
+});
+
+app.delete('/evaluations/draft', authMiddleware, requireRole('evaluator'), (req, res) => {
+  const { thesisId, type } = req.query;
+  if (!thesisId || !type) return res.status(400).json({ error: 'thesisId and type required' });
+  db.prepare(
+    'DELETE FROM evaluation_drafts WHERE evaluator_id = ? AND thesis_id = ? AND evaluation_type = ?'
+  ).run(req.user.id, thesisId, type);
+  res.json({ ok: true });
+});
 
 // Evaluations
 app.post('/evaluations', authMiddleware, requireRole('evaluator'), (req, res) => {
@@ -7831,6 +7922,61 @@ app.post('/admin/smtp-config', authMiddleware, requireRole('admin'), (req, res) 
     res.json({ ok: true, id });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /admin/connections - última conexión de evaluadores y estudiantes
+app.get('/admin/connections', authMiddleware, requireRole('admin'), (req, res) => {
+  try {
+    const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+    const isSuperadmin = roles.includes('superadmin');
+
+    let evaluators, students;
+
+    if (isSuperadmin) {
+      evaluators = db.prepare(`
+        SELECT u.id, u.full_name, u.institutional_email, u.last_login,
+               p.specialty
+        FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id AND ur.role = 'evaluator'
+        LEFT JOIN profiles p ON p.id = u.id
+        ORDER BY u.last_login DESC NULLS LAST
+      `).all();
+
+      students = db.prepare(`
+        SELECT u.id, u.full_name, u.institutional_email, u.student_code, u.last_login
+        FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id AND ur.role = 'student'
+        ORDER BY u.last_login DESC NULLS LAST
+      `).all();
+    } else {
+      // admin only sees students linked to their directed/evaluated theses
+      evaluators = db.prepare(`
+        SELECT u.id, u.full_name, u.institutional_email, u.last_login,
+               p.specialty
+        FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id AND ur.role = 'evaluator'
+        LEFT JOIN profiles p ON p.id = u.id
+        ORDER BY u.last_login DESC NULLS LAST
+      `).all();
+
+      students = db.prepare(`
+        SELECT DISTINCT u.id, u.full_name, u.institutional_email, u.student_code, u.last_login
+        FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id AND ur.role = 'student'
+        JOIN thesis_students ts ON ts.student_id = u.id
+        JOIN theses t ON t.id = ts.thesis_id
+        LEFT JOIN thesis_directors td ON td.thesis_id = t.id AND td.user_id = ?
+        LEFT JOIN thesis_evaluators te ON te.thesis_id = t.id AND te.evaluator_id = ?
+        WHERE td.user_id IS NOT NULL OR te.evaluator_id IS NOT NULL
+        ORDER BY u.last_login DESC NULLS LAST
+      `).all(req.user.id, req.user.id);
+    }
+
+    res.json({ evaluators, students });
+  } catch (err) {
+    console.error('Error en /admin/connections:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
