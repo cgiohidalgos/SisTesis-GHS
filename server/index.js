@@ -3450,9 +3450,13 @@ app.get('/theses', authMiddleware, (req, res) => {
     // only show evaluations from the current round in the timeline
     const currentRoundEvals = evaluations.filter(ev => (ev.revision_round ?? 0) === (t.revision_round ?? 0));
     if (evaluations && Array.isArray(evaluations)) {
-      const evalEvents = currentRoundEvals.map((ev, index) => {
+      // build stable evaluator number map based on assigned evaluators order
+      const evaluatorNumberMap = new Map();
+      evaluators.forEach((ev, i) => evaluatorNumberMap.set(ev.id, i + 1));
+      const evalEvents = evaluations.map((ev) => {
         const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
-        const displayName = hideBlindInList ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
+        const evalNum = evaluatorNumberMap.get(ev.evaluator_id) || 1;
+        const displayName = hideBlindInList ? `Evaluador ${evalNum}` : (ev.evaluator_name || 'Evaluador');
         const actorName = hideBlindInList ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
         const event = {
           id: uuidv4(),
@@ -3680,10 +3684,13 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   // add detailed evaluation_submitted events — only current round
   const currentRoundEvals2 = evaluations.filter(ev => (ev.revision_round ?? 0) === (thesis.revision_round ?? 0));
   if (evaluations && Array.isArray(evaluations)) {
-    const evalEvents = currentRoundEvals2.map((ev, index) => {
+    const evaluatorNumberMap2 = new Map();
+    evaluators.forEach((ev, i) => evaluatorNumberMap2.set(ev.id, i + 1));
+    const evalEvents = evaluations.map((ev) => {
       const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
       const hideNames = shouldHideBlind && isBlindReview;
-      const displayName = hideNames ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
+      const evalNum2 = evaluatorNumberMap2.get(ev.evaluator_id) || 1;
+      const displayName = hideNames ? `Evaluador ${evalNum2}` : (ev.evaluator_name || 'Evaluador');
       const actorName = hideNames ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
       const event = {
         id: uuidv4(),

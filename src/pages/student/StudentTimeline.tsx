@@ -522,18 +522,28 @@ export default function StudentTimeline() {
             {(() => {
               const evals: any[] = thesis.evaluations || [];
               const isBlind = thesis.evaluators?.some((e:any) => e.is_blind);
-              const docEvals = evals.filter((e:any) => e.evaluation_type !== 'presentation' && e.final_score != null);
-              const presEvals = evals.filter((e:any) => e.evaluation_type === 'presentation' && e.final_score != null);
+              // Only keep the most recent evaluation per evaluator per type
+              const latestByEvaluatorAndType = new Map<string, any>();
+              evals.forEach((ev: any) => {
+                const key = `${ev.evaluator_id}__${ev.evaluation_type}`;
+                const existing = latestByEvaluatorAndType.get(key);
+                if (!existing || (ev.revision_round ?? 0) > (existing.revision_round ?? 0)) {
+                  latestByEvaluatorAndType.set(key, ev);
+                }
+              });
+              const latestEvals = Array.from(latestByEvaluatorAndType.values());
+              const docEvals = latestEvals.filter((e:any) => e.evaluation_type !== 'presentation' && e.final_score != null);
+              const presEvals = latestEvals.filter((e:any) => e.evaluation_type === 'presentation' && e.final_score != null);
               const w = weights;
               const docAvg = docEvals.length ? docEvals.reduce((a:number,b:any) => a + Number(b.final_score), 0) / docEvals.length : null;
               const presAvg = presEvals.length ? presEvals.reduce((a:number,b:any) => a + Number(b.final_score), 0) / presEvals.length : null;
 
               // Per-evaluator totals
-              const evaluatorIds = [...new Set(evals.map((e:any) => e.evaluator_id))];
+              const evaluatorIds = [...new Set(latestEvals.map((e:any) => e.evaluator_id))];
               const perEvaluator = evaluatorIds.map(eid => {
-                const evName = isBlind ? null : (evals.find((e:any) => e.evaluator_id === eid)?.evaluator_name || 'Evaluador');
-                const doc = evals.find((e:any) => e.evaluator_id === eid && e.evaluation_type !== 'presentation');
-                const pres = evals.find((e:any) => e.evaluator_id === eid && e.evaluation_type === 'presentation');
+                const evName = isBlind ? null : (latestEvals.find((e:any) => e.evaluator_id === eid)?.evaluator_name || 'Evaluador');
+                const doc = latestEvals.find((e:any) => e.evaluator_id === eid && e.evaluation_type !== 'presentation');
+                const pres = latestEvals.find((e:any) => e.evaluator_id === eid && e.evaluation_type === 'presentation');
                 const dScore = doc?.final_score != null ? Number(doc.final_score) : null;
                 const pScore = pres?.final_score != null ? Number(pres.final_score) : null;
                 let total: number | null = null;
