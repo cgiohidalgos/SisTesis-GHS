@@ -187,7 +187,12 @@ export default function EvaluatorDashboard() {
                       {thesis.evaluated && thesis.status !== 'evaluacion_terminada' && (
                         <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">Evaluado</span>
                       )}
-                      <StatusBadge status={thesis.status} />
+                      {(thesis.revision_round > 0) && !thesis.latest_concept
+                        ? <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
+                            Pendiente {thesis.revision_round === 1 ? '2ª' : `${thesis.revision_round + 1}ª`} evaluación
+                          </span>
+                        : !thesis.evaluated && <StatusBadge status={thesis.status} />
+                      }
                     </div>
                   </div>
 
@@ -206,7 +211,7 @@ export default function EvaluatorDashboard() {
                         📚 {thesis.programs.map((p: any) => p.name).join(", ")}
                       </span>
                     )}
-                    {thesis.my_due_date && (
+                    {thesis.my_due_date && !thesis.evaluated && (
                       <span className="flex items-center gap-1.5 text-amber-600">
                         <Clock className="w-3.5 h-3.5" />
                         Fecha límite:{" "}

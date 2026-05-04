@@ -1017,15 +1017,27 @@ export default function AdminThesisDetail() {
             {/* per-evaluator status accordions */}
             <Accordion type="single" collapsible className="mt-4 w-full border rounded-xl overflow-hidden bg-white dark:bg-slate-950">
               {thesis.evaluators.map((ev:any, index:number) => {
-                const docSent = thesis.evaluations?.some((x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation');
+                const docSent = thesis.evaluations?.some((x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation' && x.revision_round === (thesis.revision_round ?? 0));
                 const presSent = thesis.evaluations?.some((x:any) => x.evaluator_id===ev.id && x.evaluation_type==='presentation');
-                // pull the actual evaluation objects to show later
-                const docEval = thesis.evaluations?.find((x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation');
+                // pull the actual evaluation objects to show later — only current round
+                const docEval = thesis.evaluations
+                  ?.filter((x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation' && x.revision_round===(thesis.revision_round??0))
+                  .sort((a:any,b:any) => (b.revision_round??0)-(a.revision_round??0))[0];
                 const presEval = thesis.evaluations?.find((x:any) => x.evaluator_id===ev.id && x.evaluation_type==='presentation');
+                // check if evaluator had a previous round evaluation but not current
+                const hasPrevEval = (thesis.revision_round ?? 0) > 0 && !docEval && thesis.evaluations?.some(
+                  (x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation'
+                );
                 // compute due-date status badge when evaluation still pending
                 let dueStatus: JSX.Element | null = null;
                 const evalPending = !(docSent && (thesis.defense_date ? docSent && presSent : docSent));
-                if (evalPending) {
+                if (hasPrevEval) {
+                  dueStatus = (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-blue-100 text-blue-700 border border-blue-200">
+                      Esperando {thesis.revision_round === 1 ? '2ª' : `${(thesis.revision_round??0)+1}ª`} evaluación
+                    </span>
+                  );
+                } else if (evalPending) {
                   if (ev.due_date) {
                     const now = new Date();
                     const duems = ev.due_date > 1e12 ? ev.due_date : ev.due_date * 1000;
@@ -1058,7 +1070,7 @@ export default function AdminThesisDetail() {
                     );
                   }
                 }
-                const canChangeEvaluator = !docSent;
+                const canChangeEvaluator = !docSent && !hasPrevEval;
                 return (
                   <AccordionItem
                     key={

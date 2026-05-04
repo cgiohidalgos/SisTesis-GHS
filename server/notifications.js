@@ -40,6 +40,7 @@ function getSMTPConfig(db, userId) {
 }
 
 async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
+  if (!toEmail || toEmail.toLowerCase() === 'admin@admin.com') return false;
   const config = getSMTPConfig(db, smtpOwnerId);
   if (!config) { console.error('[notify] Sin config SMTP'); return false; }
   
@@ -455,6 +456,11 @@ function startReminderCron(db) {
         WHERE te.due_date IS NOT NULL
           AND te.due_date >= ? AND te.due_date < ?
           AND t.status NOT IN ('finalized','deleted')
+          AND NOT EXISTS (
+            SELECT 1 FROM evaluations e
+            WHERE e.thesis_evaluator_id = te.id
+              AND e.submitted_at IS NOT NULL
+          )
       `).all(from, to);
 
       for (const row of pending) {

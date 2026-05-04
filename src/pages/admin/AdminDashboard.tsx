@@ -123,9 +123,10 @@ export default function AdminDashboard() {
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
 
-  // Theses with overdue evaluators
+  // Theses with overdue evaluators (only those who haven't evaluated yet)
   const overdueTheses = useMemo(() => theses.filter(t =>
     (t.evaluators || []).some((e: any) => {
+      if (e.concept) return false; // ya evaluó, no contar como vencido
       if (!e.due_date) return false;
       const due = new Date(e.due_date > 1e12 ? e.due_date : e.due_date * 1000);
       due.setHours(0,0,0,0);

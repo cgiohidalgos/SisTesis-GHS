@@ -239,9 +239,12 @@ export default function DirectorThesisDetail() {
             </div>
             <div className="p-6 space-y-3">
               {thesis.evaluators.map((ev: any, idx: number) => {
-                const docSent = thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation');
+                const currentRound = thesis.revision_round ?? 0;
+                const docSent = thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.revision_round === currentRound);
                 const presSent = thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type === 'presentation');
-                const docEval = thesis.evaluations?.find((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation');
+                const docEval = thesis.evaluations
+                  ?.filter((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.revision_round === currentRound)
+                  .sort((a: any, b: any) => (b.revision_round ?? 0) - (a.revision_round ?? 0))[0];
                 const presEval = thesis.evaluations?.find((x: any) => x.evaluator_id === ev.id && x.evaluation_type === 'presentation');
                 return (
                   <div key={ev.id || idx} className="border border-border rounded-lg p-4">
@@ -251,7 +254,7 @@ export default function DirectorThesisDetail() {
                       {ev.due_date && <span className="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">Límite: {ev.due_date}</span>}
                       {ev.is_blind && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">Par Ciego</span>}
                     </div>
-                    <div className="flex gap-4 text-sm">
+                    <div className="flex flex-wrap gap-4 text-sm">
                       <span className={docSent ? 'text-success' : 'text-muted-foreground'}>
                         Documento: {docSent ? `✓ ${docEval?.final_score?.toFixed(1) ?? ''}` : 'Pendiente'}
                       </span>
@@ -259,6 +262,27 @@ export default function DirectorThesisDetail() {
                         Sustentación: {presSent ? `✓ ${presEval?.final_score?.toFixed(1) ?? ''}` : 'Pendiente'}
                       </span>
                     </div>
+                    {docEval?.concept && (
+                      <div className="mt-2">
+                        <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${
+                          docEval.concept === 'approved' || docEval.concept === 'accepted'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : docEval.concept === 'minor_changes'
+                            ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+                            : docEval.concept === 'major_changes'
+                            ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                            : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                        }`}>
+                          {docEval.concept === 'approved' || docEval.concept === 'accepted'
+                            ? 'Aprobado'
+                            : docEval.concept === 'minor_changes'
+                            ? 'Cambios Menores'
+                            : docEval.concept === 'major_changes'
+                            ? 'Cambios Mayores'
+                            : docEval.concept.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                    )}
                     {ev.revisionFiles?.length > 0 && (
                       <div className="mt-2">
                         <span className="text-xs font-semibold text-muted-foreground">Archivos del Evaluador:</span>

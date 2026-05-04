@@ -22,6 +22,8 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
 
   let urgency: 'overdue' | 'soon' | null = null;
   for (const e of thesis.evaluators) {
+    // Si el evaluador ya envió su evaluación (tiene concepto), no contar como vencido
+    if ((e as any).concept) continue;
     if (!e.due_date) continue;
     const due = new Date((e.due_date as any) > 1e12 ? (e.due_date as any) : (e.due_date as any) * 1000);
     due.setHours(0, 0, 0, 0);
@@ -32,8 +34,21 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
 
   const hasEvaluators = showEvaluatorAccordion && thesis.evaluators && thesis.evaluators.length > 0;
 
+  const conceptColor = (concept: string | null | undefined) => {
+    if (!concept) return "255,255,255";
+    if (concept === "accepted") return "34,197,94";
+    if (concept === "minor_changes") return "249,115,22";
+    if (concept === "major_changes") return "239,68,68";
+    if (concept === "rejected") return "185,28,28";
+    return "255,255,255";
+  };
+  const evs = thesis.evaluators || [];
+  const c1 = conceptColor((evs[0] as any)?.concept);
+  const c2 = conceptColor((evs[1] as any)?.concept);
+  const cardBg = `linear-gradient(to right, rgba(${c1},0.08) 50%, rgba(${c2},0.08) 50%)`;
+
   return (
-    <div className="bg-card rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group">
+    <div className="rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group" style={{ background: cardBg }}>
       <Link to={linkTo} className="block p-5">
         {showAssignedBy && thesis.assigned_by_name && (
           <p className="text-[11px] text-muted-foreground mb-1.5">
@@ -62,7 +77,17 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
             ) : evaluated ? (
               <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">Evaluado</span>
             ) : null}
-            {!evalCompleted && <StatusBadge status={thesis.status} />}
+            {!evalCompleted && (() => {
+              const round = (thesis as any).revision_round ?? 0;
+              const pendingRound = round > 0 && (thesis.evaluators as any[]).some(
+                (ev: any) => !ev.has_evaluated
+              );
+              return pendingRound
+                ? <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                    Pendiente {round === 1 ? '2ª' : `${round + 1}ª`} evaluación
+                  </span>
+                : <StatusBadge status={thesis.status} />;
+            })()}
           </div>
         </div>
         <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">

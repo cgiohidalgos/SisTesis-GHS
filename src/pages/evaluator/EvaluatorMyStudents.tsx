@@ -132,10 +132,26 @@ export default function EvaluatorMyStudents() {
               const programNames = Array.isArray(thesis.programs)
                 ? thesis.programs.map((p: any) => p.name).join(", ")
                 : "";
+
+              const conceptColor = (concept: string | null) => {
+                if (!concept) return "255,255,255";
+                if (concept === "accepted") return "34,197,94";
+                if (concept === "minor_changes") return "249,115,22";
+                if (concept === "major_changes") return "239,68,68";
+                if (concept === "rejected") return "185,28,28";
+                return "255,255,255";
+              };
+
+              const evs = Array.isArray(thesis.evaluators) ? thesis.evaluators : [];
+              const c1 = conceptColor(evs[0]?.concept ?? null);
+              const c2 = conceptColor(evs[1]?.concept ?? null);
+              const cardBg = `linear-gradient(to right, rgba(${c1},0.08) 50%, rgba(${c2},0.08) 50%)`;
+
               return (
                 <button
                   key={thesis.id}
-                  className="w-full text-left bg-card rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
+                  className="w-full text-left rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
+                  style={{ background: cardBg }}
                   onClick={() => navigate(`/evaluator/directed-thesis/${thesis.id}`)}
                 >
                   <div className="p-5">
@@ -146,7 +162,12 @@ export default function EvaluatorMyStudents() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      <StatusBadge status={thesis.status} />
+                      {(thesis.revision_round > 0) && !thesis.latest_concept
+                        ? <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
+                            Pendiente {thesis.revision_round === 1 ? '2ª' : `${thesis.revision_round + 1}ª`} evaluación
+                          </span>
+                        : <StatusBadge status={thesis.status} />
+                      }
                       {studentNames && (
                         <span className="flex items-center gap-1.5">
                           <Users className="w-3.5 h-3.5" />

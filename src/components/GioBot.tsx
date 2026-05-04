@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { getApiBase } from "@/lib/utils";
 
@@ -63,15 +63,58 @@ function inline(text: string): string {
     .replace(/`([^`]+)`/g, `<code style="background:rgba(0,0,0,0.1);border-radius:3px;padding:0 3px;font-size:11px">$1</code>`);
 }
 
+function AttachCartaButton({ thesisId, pdfFileName }: { thesisId: string; pdfFileName: string }) {
+  const [status, setStatus] = React.useState<"idle" | "loading" | "done" | "error">("idle");
+
+  async function attach() {
+    setStatus("loading");
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`${getApiBase()}/theses/${thesisId}/attach-carta-aval`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: token ? `Bearer ${token}` : "" },
+        body: JSON.stringify({ pdfFileName }),
+      });
+      if (!r.ok) throw new Error();
+      setStatus("done");
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  if (status === "done") return (
+    <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium w-fit">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      Adjuntada al proyecto
+    </span>
+  );
+
+  return (
+    <button
+      onClick={attach}
+      disabled={status === "loading"}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-secondary-foreground text-xs font-medium hover:bg-secondary/80 transition-colors w-fit disabled:opacity-60"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      {status === "loading" ? "Adjuntando..." : status === "error" ? "Error, reintentar" : "Adjuntar al proyecto"}
+    </button>
+  );
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
+  downloadUrl?: string;
+  cartaThesisId?: string;
+  pdfFileName?: string;
 }
 
 function getContext(pathname: string): { thesisId?: string; contextType: "single" | "list" | "none" | "admin" } {
   const singlePatterns = [
     /^\/evaluator\/directed-thesis\/([^/]+)/,
     /^\/evaluator\/student\/([^/]+)/,
+    /^\/evaluator\/rubric\/([^/]+)/,
+    /^\/admin\/rubric\/([^/]+)/,
     /^\/admin\/theses\/([^/]+)/,
   ];
   for (const re of singlePatterns) {
@@ -114,7 +157,7 @@ export default function GioBot() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
-      const saved = sessionStorage.getItem("giobot_messages");
+      const saved = sessionStorage.getItem("giobot_messages_v2");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
@@ -153,32 +196,24 @@ export default function GioBot() {
   // Persist messages in sessionStorage across navigation
   useEffect(() => {
     try {
-      sessionStorage.setItem("giobot_messages", JSON.stringify(messages));
+      sessionStorage.setItem("giobot_messages_v2", JSON.stringify(messages));
     } catch {}
   }, [messages]);
 
-  // When opening chat: mark alerts read and inject them as first message if not shown yet
+  // When opening chat: mark alerts as read (alerts shown in welcome panel, not injected as messages)
   useEffect(() => {
     if (open) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
       inputRef.current?.focus();
-
       if (!alertsRead && alerts.length > 0) {
         setAlertsRead(true);
-        setMessages(prev => {
-          if (prev.length > 0) return prev;
-          const alertText = "Tengo algunas notificaciones para ti:\n" +
-            alerts.map((a, i) => `${i + 1}. ${a}`).join("\n");
-          return [{ role: "assistant", content: alertText }];
-        });
       }
     }
   }, [open, alerts, alertsRead]);
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || loading) return;
-    const newMessages: Message[] = [...messages, { role: "user", content: text }];
+  const sendText = async (text: string) => {
+    if (!text.trim() || loading) return;
+    const newMessages: Message[] = [...messages, { role: "user", content: text.trim() }];
     setMessages(newMessages);
     setInput("");
     setLoading(true);
@@ -191,7 +226,13 @@ export default function GioBot() {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Error");
-      setMessages(prev => [...prev, { role: "assistant", content: data.reply }]);
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: data.reply,
+        downloadUrl: data.downloadUrl ?? undefined,
+        cartaThesisId: data.cartaThesisId ?? undefined,
+        pdfFileName: data.pdfFileName ?? undefined,
+      }]);
     } catch (e: any) {
       setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e.message}` }]);
     } finally {
@@ -199,9 +240,11 @@ export default function GioBot() {
     }
   };
 
+  const send = () => sendText(input);
+
   const clearChat = () => {
     setMessages([]);
-    sessionStorage.removeItem("giobot_messages");
+    sessionStorage.removeItem("giobot_messages_v2");
     setAlertsRead(false);
   };
 
@@ -274,15 +317,61 @@ export default function GioBot() {
             </div>
           </div>
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-background" style={{ minHeight: "180px" }}>
-            {messages.length === 0 && (
-              <div className="text-center text-muted-foreground text-xs pt-6 px-4">
-                <p className="text-2xl mb-2">🤖</p>
-                <p className="font-medium mb-1">¡Hola! Soy GioBot</p>
-                <p>Puedo responder preguntas sobre <strong>{contextLabel}</strong>. ¿En qué te ayudo?</p>
+          {/* Welcome panel — shown only when chat is empty */}
+          {messages.length === 0 && (
+            <div className="flex-1 overflow-y-auto px-4 pt-5 pb-4 bg-background space-y-4 text-sm">
+              <div>
+                <p className="text-xl mb-1">🤖</p>
+                <p className="font-semibold text-foreground text-base">¡Hola! Soy GioBot</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Asistente inteligente de SisTesis</p>
               </div>
-            )}
+
+              <p className="text-xs text-foreground leading-relaxed">
+                Estoy aquí para ayudarte a consultar información sobre los proyectos de tesis. Puedes preguntarme en lenguaje natural, por ejemplo:
+              </p>
+
+              <div className="space-y-2 text-xs text-muted-foreground">
+                <div>
+                  <p className="font-semibold text-foreground mb-1">📄 Sobre un proyecto</p>
+                  <p className="pl-3 leading-relaxed">"¿En qué estado está esta tesis?" · "¿Quién la dirige y quiénes la evalúan?"</p>
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground mb-1">📊 Calificaciones</p>
+                  <p className="pl-3 leading-relaxed">"¿Cuáles son las notas de documento y sustentación?" · "¿Cuál es la nota final?"</p>
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground mb-1">💬 Comentarios de evaluadores</p>
+                  <p className="pl-3 leading-relaxed">"¿Qué comentarios hicieron los evaluadores en sus PDFs?" · "Resume las observaciones del evaluador X"</p>
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground mb-1">📅 Cronograma</p>
+                  <p className="pl-3 leading-relaxed">"¿Qué fechas importantes tiene este proyecto?" · "¿Cuándo es la defensa?"</p>
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground mb-1">📋 Carta de aval</p>
+                  <p className="pl-3 leading-relaxed">"Genera la carta de aval para esta tesis"</p>
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground mb-1">📈 Exportar datos</p>
+                  <p className="pl-3 leading-relaxed">"Genera una tabla Excel con nombre, código y título de los proyectos" · "Exporta las calificaciones"</p>
+                </div>
+              </div>
+
+              {alerts.length > 0 && (
+                <div className="rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-2 text-xs text-yellow-800 space-y-0.5">
+                  <p className="font-semibold mb-1">🔔 Tienes notificaciones pendientes</p>
+                  {alerts.map((a, i) => <p key={i}>• {a}</p>)}
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground border-t border-border pt-3">
+                Escribe tu pregunta abajo y te respondo de inmediato.
+              </p>
+            </div>
+          )}
+
+          {/* Messages */}
+          {messages.length > 0 && <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-background" style={{ minHeight: "100px" }}>
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
@@ -292,7 +381,40 @@ export default function GioBot() {
                       : "bg-muted text-foreground rounded-bl-sm"
                   }`}
                 >
-                  {m.role === "user" ? m.content : <span dangerouslySetInnerHTML={{ __html: mdToHtml(m.content) }} />}
+                  {m.role === "user" ? m.content : (
+                    <>
+                      <span dangerouslySetInnerHTML={{ __html: mdToHtml(m.content) }} />
+                      {m.downloadUrl && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <a
+                            href={`${getApiBase()}${m.downloadUrl}`}
+                            download
+                            onClick={async (e) => {
+                              e.preventDefault();
+                              const token = localStorage.getItem("token");
+                              const r = await fetch(`${getApiBase()}${m.downloadUrl}`, { headers: { Authorization: token ? `Bearer ${token}` : "" } });
+                              if (!r.ok) { alert("Error al descargar"); return; }
+                              const blob = await r.blob();
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              const isXlsx = m.downloadUrl!.endsWith('.xlsx');
+                              a.href = url;
+                              a.download = isXlsx ? "Tabla.xlsx" : "Carta_de_Aval.pdf";
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors w-fit"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            {m.downloadUrl!.endsWith('.xlsx') ? "Descargar Tabla (Excel)" : "Descargar Carta de Aval (PDF)"}
+                          </a>
+                          {m.cartaThesisId && m.pdfFileName && (
+                            <AttachCartaButton thesisId={m.cartaThesisId} pdfFileName={m.pdfFileName} />
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -308,7 +430,7 @@ export default function GioBot() {
               </div>
             )}
             <div ref={bottomRef} />
-          </div>
+          </div>}
 
           {/* Input */}
           <div className="flex gap-2 p-3 border-t border-border bg-card">

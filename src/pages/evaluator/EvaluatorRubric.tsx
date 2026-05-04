@@ -473,16 +473,20 @@ export default function EvaluatorRubric() {
                   showFiles={true}
                   initialConcept={docEval?.concept || null}
                   initialFinalScore={docEval?.final_score}
-                  initialSections={docEval ? (programDocRubric ?? defaultRubric).map((s: any) => ({
-                    ...s,
-                    criteria: s.criteria.map((c: any) => {
-                      const sc = docEval.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
-                      return { ...c, score: sc?.score ?? undefined, observations: sc?.observations || "" };
-                    })
-                  })) : undefined}
-                  initialGeneralObs={docEval?.general_observations || ""}
+                  initialSections={(() => {
+                    const src = docEval || previousDocEval || null;
+                    if (!src) return undefined;
+                    return (programDocRubric ?? defaultRubric).map((s: any) => ({
+                      ...s,
+                      criteria: s.criteria.map((c: any) => {
+                        const sc = src.scores?.find((x: any) => x.section_id === s.id && x.criterion_id === c.id);
+                        return { ...c, score: sc?.score ?? undefined, observations: sc?.observations || "" };
+                      })
+                    }));
+                  })()}
+                  initialGeneralObs={docEval?.general_observations || previousDocEval?.general_observations || ""}
                   initialFiles={docEval?.files || []}
-                  draftKey={user && !docEval ? `eval_draft_${user.id}_${id}_document` : undefined}
+                  draftKey={user && !docEval && !previousDocEval ? `eval_draft_${user.id}_${id}_document` : undefined}
                   thesisId={!docEval ? (id as string) : undefined}
                   evaluationType={!docEval ? "document" : undefined}
                 />

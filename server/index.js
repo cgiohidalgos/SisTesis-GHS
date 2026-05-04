@@ -847,8 +847,11 @@ app.get('/admin/stats', authMiddleware, requireRole('admin'), (req, res) => {
       SUM(CASE WHEN te.due_date >= ? AND te.due_date < ? THEN 1 ELSE 0 END) as due30
     FROM thesis_evaluators te
     JOIN theses t ON t.id = te.thesis_id
-    JOIN thesis_programs tp ON tp.thesis_id = t.id
     WHERE t.status != 'deleted' ${progFilter}
+      AND NOT EXISTS (
+        SELECT 1 FROM evaluations e
+        WHERE e.thesis_evaluator_id = te.id AND e.submitted_at IS NOT NULL
+      )
   `).get(now, now, week, week, fortnight, fortnight, month, ...params);
 
   const overdue = dueRaw.overdue || 0;
@@ -3233,9 +3236,14 @@ app.get('/theses/directed', authMiddleware, (req, res) => {
       `SELECT u.full_name as name, u.institutional_email, te.due_date,
               CASE WHEN EXISTS (
                 SELECT 1 FROM evaluations e
-                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
-              ) THEN 1 ELSE 0 END as has_evaluated
+                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
+                  AND e.revision_round = t.revision_round AND e.submitted_at IS NOT NULL
+              ) THEN 1 ELSE 0 END as has_evaluated,
+              (SELECT e.concept FROM evaluations e
+               WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
+               ORDER BY e.revision_round DESC, e.submitted_at DESC LIMIT 1) as concept
        FROM thesis_evaluators te
+       JOIN theses t ON t.id = te.thesis_id
        JOIN users u ON u.id = te.evaluator_id
        WHERE te.thesis_id = ?`
     ).all(t.id);
@@ -3268,12 +3276,24 @@ app.get('/theses/as-evaluator', authMiddleware, (req, res) => {
     const evalInfo = db.prepare(
       `SELECT due_date, is_blind FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?`
     ).get(t.id, req.user.id);
+    const currentRound = t.revision_round ?? 0;
     const hasEval = db.prepare(
       `SELECT 1 FROM evaluations e
        JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
-       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL`
-    ).get(t.id, req.user.id);
-    return { ...t, students, programs, due_date: evalInfo?.due_date, is_blind: !!evalInfo?.is_blind, my_evaluated: !!hasEval };
+       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.revision_round = ? AND e.submitted_at IS NOT NULL`
+    ).get(t.id, req.user.id, currentRound);
+    const evalCount = db.prepare(
+      `SELECT COUNT(*) as c FROM evaluations e
+       JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.revision_round = ? AND e.submitted_at IS NOT NULL`
+    ).get(t.id, req.user.id, currentRound)?.c ?? 0;
+    const latestConcept = db.prepare(
+      `SELECT e.concept FROM evaluations e
+       JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
+       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.revision_round = ? AND e.submitted_at IS NOT NULL
+       ORDER BY e.submitted_at DESC LIMIT 1`
+    ).get(t.id, req.user.id, currentRound)?.concept ?? null;
+    return { ...t, students, programs, due_date: evalInfo?.due_date, is_blind: !!evalInfo?.is_blind, my_evaluated: !!hasEval, eval_count: evalCount, latest_concept: latestConcept };
   });
 
   res.json(enriched);
@@ -3331,8 +3351,13 @@ app.get('/theses', authMiddleware, (req, res) => {
       `SELECT DISTINCT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind,
               CASE WHEN EXISTS (
                 SELECT 1 FROM evaluations e
-                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
-              ) THEN 1 ELSE 0 END as has_evaluated
+                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
+                  AND e.revision_round = (SELECT revision_round FROM theses WHERE id = te.thesis_id)
+                  AND e.submitted_at IS NOT NULL
+              ) THEN 1 ELSE 0 END as has_evaluated,
+              (SELECT e.concept FROM evaluations e
+               WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
+               ORDER BY e.revision_round DESC, e.submitted_at DESC LIMIT 1) as concept
        FROM users u
        JOIN thesis_evaluators te ON u.id = te.evaluator_id
        WHERE te.thesis_id = ?`
@@ -3552,7 +3577,16 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
      WHERE ts.thesis_id = ?`
   ).all(id);
   const evaluators = db.prepare(
-    `SELECT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind
+    `SELECT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind, te.id as te_id,
+            CASE WHEN EXISTS (
+              SELECT 1 FROM evaluations e
+              WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
+                AND e.revision_round = (SELECT revision_round FROM theses WHERE id = te.thesis_id)
+                AND e.submitted_at IS NOT NULL
+            ) THEN 1 ELSE 0 END as has_evaluated,
+            (SELECT e.concept FROM evaluations e
+             WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
+             ORDER BY e.revision_round DESC, e.submitted_at DESC LIMIT 1) as concept
      FROM users u
      JOIN thesis_evaluators te ON u.id = te.evaluator_id
      WHERE te.thesis_id = ?`
@@ -8283,6 +8317,41 @@ async function extractFileText(fileUrl, fileName) {
   } catch { return null; }
 }
 
+// ── Excel table generator ─────────────────────────────────────────────────────
+const XLSX = require('xlsx');
+
+function generateExcelTable(rows, columns, sheetName = 'Tabla') {
+  const header = columns.map(c => c.label);
+  const data = rows.map(row => columns.map(c => row[c.key] ?? ''));
+  const ws = XLSX.utils.aoa_to_sheet([header, ...data]);
+
+  // Auto column widths
+  const colWidths = columns.map((c, i) => ({
+    wch: Math.max(c.label.length, ...data.map(r => String(r[i] || '').length), 10)
+  }));
+  ws['!cols'] = colWidths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const fileName = `tabla_${Date.now()}.xlsx`;
+  const filePath = path.join(__dirname, 'uploads', fileName);
+  XLSX.writeFile(wb, filePath);
+  return fileName;
+}
+
+// ── Carta de Aval generator ──────────────────────────────────────────────────
+const CARTA_AVAL_TEMPLATE = path.join(__dirname, '..', 'Formatos', 'Carta de Aval Ejemplo.docx');
+const FILL_SCRIPT = path.join(__dirname, 'fill_carta_aval.py');
+
+async function generateCartaAval(data) {
+  const tmpDocx = path.join(__dirname, 'uploads', `carta_aval_${Date.now()}.docx`);
+  const tmpPdf  = tmpDocx.replace('.docx', '.pdf');
+  await execPromise(`python3 "${FILL_SCRIPT}" '${JSON.stringify(data).replace(/'/g, "\\'")}' "${CARTA_AVAL_TEMPLATE}" "${tmpDocx}"`);
+  await execPromise(`soffice --headless --convert-to pdf --outdir "${path.dirname(tmpDocx)}" "${tmpDocx}"`);
+  fs.unlink(tmpDocx, () => {});
+  return path.basename(tmpPdf);
+}
+
 app.post('/chat', authMiddleware, async (req, res) => {
   const userId = req.user.id;
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(userId).map(r => r.role);
@@ -8315,19 +8384,35 @@ app.post('/chat', authMiddleware, async (req, res) => {
           SELECT u.full_name, u.institutional_email, u.email, te.is_blind, te.due_date FROM thesis_evaluators te JOIN users u ON te.evaluator_id = u.id WHERE te.thesis_id = ?
         `).all(thesisId);
         const evaluations = db.prepare(`
-          SELECT e.evaluation_type, e.final_score, e.concept, u.full_name as evaluator_name
+          SELECT e.id, e.evaluation_type, e.final_score, e.concept, e.general_observations, u.full_name as evaluator_name
           FROM evaluations e
           JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
           JOIN users u ON te.evaluator_id = u.id
           WHERE te.thesis_id = ?
-        `).all(thesisId);
+        `).all(thesisId).map(ev => ({
+          ...ev,
+          criterion_comments: db.prepare(`
+            SELECT es.section_id, es.criterion_id, es.score, es.observations
+            FROM evaluation_scores es WHERE es.evaluation_id = ? AND es.observations != ''
+          `).all(ev.id),
+          files: db.prepare(`SELECT file_name, file_url FROM evaluation_files WHERE evaluation_id = ?`).all(ev.id),
+        }));
         const fileRows = db.prepare(`SELECT file_name, file_type, file_url FROM thesis_files WHERE thesis_id = ?`).all(thesisId);
 
         const docsText = [];
         for (const f of fileRows) {
           if (f.file_type === 'url' || !f.file_url || f.file_url.startsWith('http')) continue;
           const text = await extractFileText(f.file_url, f.file_name);
-          if (text) docsText.push(`--- Documento: ${f.file_name} ---\n${text}`);
+          if (text) docsText.push(`--- Documento estudiante: ${f.file_name} ---\n${text}`);
+        }
+
+        // Read evaluator-attached PDFs
+        for (const ev of evaluations) {
+          for (const ef of (ev.files || [])) {
+            if (!ef.file_url || ef.file_url.startsWith('http')) continue;
+            const text = await extractFileText(ef.file_url, ef.file_name);
+            if (text) docsText.push(`--- Documento evaluador (${ev.evaluator_name}): ${ef.file_name} ---\n${text}`);
+          }
         }
 
         const thesisObj = {
@@ -8336,9 +8421,9 @@ app.post('/chat', authMiddleware, async (req, res) => {
           students, directors, evaluators, evaluations,
           files: fileRows.map(f => ({ name: f.file_name, type: f.file_type })),
         };
-        contextData = `\n\nDATOS DE LA TESIS:\n${JSON.stringify(thesisObj, null, 2)}`;
+        contextData = `\n\nTHESIS_ID_ACTUAL: ${thesisId}\n\nDATOS DE LA TESIS:\n${JSON.stringify(thesisObj, null, 2)}`;
         if (docsText.length > 0) {
-          contextData += `\n\nCONTENIDO DE DOCUMENTOS ENVIADOS:\n${docsText.join('\n\n')}`;
+          contextData += `\n\nCONTENIDO DE DOCUMENTOS:\n${docsText.join('\n\n')}`;
         }
       }
     } else if (contextType === 'list') {
@@ -8435,6 +8520,9 @@ El usuario actual tiene rol(es): ${roles.join(', ')}.
 Responde siempre en español. Si te preguntan sobre datos de tesis, sé conciso. Si te preguntan cómo usar la plataforma, sé MUY DETALLADO con pasos numerados claros.
 Las calificaciones son sobre 5.0. Los estados posibles de tesis: submitted (enviado), under_review (en revisión), returned (devuelto), approved (aprobado), assigned (evaluador asignado), evaluated (evaluado), defended (defendido), finalized (finalizado).
 IMPORTANTE: NO uses sintaxis Markdown en tus respuestas. No uses **, ##, *, ---, ni backticks. Escribe en texto plano. Para listas usa guiones simples con espacio. Para énfasis escribe en MAYÚSCULAS si es necesario.
+CARTA DE AVAL: Si el usuario pide generar una carta de aval, usa la herramienta generate_carta_aval. Si hay un THESIS_ID_ACTUAL en el contexto, pásalo como thesis_id a la herramienta para que los datos se busquen automáticamente. Si el usuario menciona un proyecto por nombre, búscalo en la LISTA DE TESIS y pasa su thesis_id. Si el usuario da los datos manualmente, úsalos. Si no tienes suficientes datos, pídelos antes de llamar la herramienta.
+EXCEL/TABLA: Si el usuario pide generar una tabla, un Excel, un listado o similar, usa la herramienta generate_excel_table. Toma los datos del contexto (LISTA DE TESIS o DATOS DE LA TESIS), construye el array rows con los campos que el usuario solicita, y define columns con key y label apropiados. Columnas disponibles según los datos: nombre (full_name del estudiante), titulo (title de la tesis), cvlac (cvlac del estudiante), codigo (student_code), programa (nombre del programa), correo (institutional_email), director (nombre del director), estado (status), evaluadores. Traduce los nombres que el usuario dé a las claves correctas. Si el contexto no tiene datos suficientes, indícale al usuario que vaya a una vista con contexto de lista o de tesis.
+TABLA DE COMENTARIOS DE EVALUADORES: Si el usuario pide una tabla con los comentarios o recomendaciones de los evaluadores, usa generate_excel_table construyendo las filas a partir de evaluations[].criterion_comments y evaluations[].general_observations del contexto. Cada fila puede ser: evaluador, criterio, comentario. También puedes incluir el contenido de CONTENIDO DE DOCUMENTOS si el usuario pide que incluyas lo que está en los PDFs adjuntos.
 CRÍTICO SOBRE LOS DATOS: Cuando el contexto incluye LISTA DE TESIS o DATOS DE LA TESIS, ESA ES LA INFORMACIÓN REAL de la plataforma que debes usar directamente. NO digas que no tienes acceso a los datos ni que el usuario debe ir a otro lado — los datos ya están aquí. Si te piden una tabla, constrúyela con los datos del contexto usando formato de texto plano con columnas separadas por | (pipe). Si un campo está vacío o es null, escribe "N/A".
 
 === DOCUMENTACIÓN COMPLETA DE LA PLATAFORMA SISTESIS ===
@@ -8549,15 +8637,131 @@ R: No. Una vez que el evaluador envía la calificación definitiva, no puede mod
 === FIN DOCUMENTACIÓN ===
 ${contextData}`;
 
+  const tools = [
+    {
+      name: 'generate_carta_aval',
+      description: 'Genera la carta de aval en PDF para un proyecto de grado. Busca los datos automáticamente en la base de datos si se da thesis_id, o usa los datos proporcionados manualmente.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          thesis_id:  { type: 'string', description: 'ID del proyecto para buscar datos automáticamente' },
+          titulo:     { type: 'string', description: 'Nombre del trabajo de grado' },
+          programa:   { type: 'string', description: 'Nombre del programa académico' },
+          estudiante: { type: 'string', description: 'Nombre completo del estudiante' },
+          codigo:     { type: 'string', description: 'Código del estudiante' },
+          director:   { type: 'string', description: 'Nombre del director del proyecto' },
+        },
+      },
+    },
+    {
+      name: 'generate_excel_table',
+      description: 'Genera un archivo Excel (xlsx) descargable con los datos de las tesis. El usuario indica qué columnas quiere. Columnas disponibles: nombre (estudiante), titulo (proyecto), cvlac, codigo (estudiante), programa, correo (institucional), director, estado, evaluadores.',
+      input_schema: {
+        type: 'object',
+        required: ['columns', 'rows'],
+        properties: {
+          columns: {
+            type: 'array',
+            description: 'Columnas a incluir en el Excel, en orden',
+            items: {
+              type: 'object',
+              properties: {
+                key:   { type: 'string', description: 'Clave del campo en cada fila' },
+                label: { type: 'string', description: 'Encabezado de la columna en el Excel' },
+              },
+              required: ['key', 'label'],
+            },
+          },
+          rows: {
+            type: 'array',
+            description: 'Filas de datos, cada una es un objeto con las claves de las columnas',
+            items: { type: 'object' },
+          },
+          sheet_name: { type: 'string', description: 'Nombre de la hoja del Excel (opcional)' },
+        },
+      },
+    },
+  ];
+
   try {
     const anthropic = new Anthropic({ apiKey });
+    const apiMessages = messages.map(m => ({ role: m.role, content: m.content }));
+
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 4096,
       system: systemPrompt,
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      tools,
+      messages: apiMessages,
     });
-    const reply = response.content?.[0]?.text ?? '';
+
+    // Handle tool use
+    if (response.stop_reason === 'tool_use') {
+      const toolUse = response.content.find(b => b.type === 'tool_use');
+      let downloadUrl = null;
+      let toolResultText = '';
+      let cartaThesisId = null;
+
+      if (toolUse && toolUse.name === 'generate_carta_aval') {
+        let input = toolUse.input || {};
+        cartaThesisId = input.thesis_id || thesisId || null;
+
+        if (input.thesis_id) {
+          const t = db.prepare(`SELECT id, title FROM theses WHERE id = ?`).get(input.thesis_id);
+          if (t) {
+            const students = db.prepare(`SELECT u.full_name, u.student_code FROM thesis_students ts JOIN users u ON ts.student_id = u.id WHERE ts.thesis_id = ?`).all(input.thesis_id);
+            const directors = db.prepare(`SELECT u.full_name FROM thesis_directors td JOIN users u ON td.user_id = u.id WHERE td.thesis_id = ?`).all(input.thesis_id);
+            const programs = db.prepare(`SELECT p.name FROM thesis_programs tp JOIN programs p ON tp.program_id = p.id WHERE tp.thesis_id = ?`).all(input.thesis_id);
+            input.titulo     = input.titulo     || t.title;
+            input.programa   = input.programa   || programs[0]?.name || '';
+            input.estudiante = input.estudiante || students.map(s => s.full_name).join(' y ');
+            input.codigo     = input.codigo     || students.map(s => s.student_code).join(' y ');
+            input.director   = input.director   || directors.map(d => d.full_name).join(' y ');
+          }
+        }
+
+        try {
+          const pdfName = await generateCartaAval(input);
+          downloadUrl = `/uploads/${pdfName}`;
+          toolResultText = `Carta de aval generada. Archivo: ${pdfName}.`;
+        } catch (genErr) {
+          toolResultText = `Error generando la carta de aval: ${genErr.message}`;
+        }
+
+      } else if (toolUse && toolUse.name === 'generate_excel_table') {
+        const { columns = [], rows = [], sheet_name = 'Datos' } = toolUse.input || {};
+        try {
+          const xlsxName = generateExcelTable(rows, columns, sheet_name);
+          downloadUrl = `/uploads/${xlsxName}`;
+          toolResultText = `Excel generado correctamente. Archivo: ${xlsxName}. Filas: ${rows.length}, columnas: ${columns.map(c => c.label).join(', ')}.`;
+        } catch (genErr) {
+          toolResultText = `Error generando el Excel: ${genErr.message}`;
+        }
+      }
+
+      if (toolUse) {
+        const response2 = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1024,
+          system: systemPrompt,
+          tools,
+          messages: [
+            ...apiMessages,
+            { role: 'assistant', content: response.content },
+            { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUse.id, content: toolResultText }] },
+          ],
+        });
+        const reply = response2.content?.find(b => b.type === 'text')?.text ?? 'Archivo generado.';
+        const isCartaAval = toolUse.name === 'generate_carta_aval';
+        return res.json({
+          reply,
+          downloadUrl,
+          ...(isCartaAval && downloadUrl && { cartaThesisId: cartaThesisId ?? null, pdfFileName: downloadUrl.split('/').pop() }),
+        });
+      }
+    }
+
+    const reply = response.content?.find(b => b.type === 'text')?.text ?? '';
     res.json({ reply });
   } catch (err) {
     console.error('GioBot Anthropic error:', err);
@@ -8565,6 +8769,26 @@ ${contextData}`;
   }
 });
 
+
+// POST /theses/:id/attach-carta-aval  — adjunta una carta de aval generada por GioBot al proyecto
+app.post('/theses/:id/attach-carta-aval', authMiddleware, (req, res) => {
+  const thesisId = req.params.id;
+  const { pdfFileName, studentName } = req.body;
+  if (!pdfFileName) return res.status(400).json({ error: 'pdfFileName requerido' });
+
+  const pdfPath = path.join(__dirname, 'uploads', pdfFileName);
+  if (!fs.existsSync(pdfPath)) return res.status(404).json({ error: 'Archivo no encontrado' });
+
+  const existing = db.prepare(`SELECT id FROM thesis_files WHERE thesis_id = ? AND file_url = ?`).get(thesisId, pdfFileName);
+  if (existing) return res.json({ ok: true, message: 'Ya estaba adjunta' });
+
+  const fileId   = uuidv4();
+  const fileName = studentName ? `Carta de Aval - ${studentName}.pdf` : pdfFileName;
+  db.prepare(`INSERT INTO thesis_files (id, thesis_id, file_name, file_type, file_url, uploaded_by) VALUES (?, ?, ?, 'endorsement', ?, ?)`)
+    .run(fileId, thesisId, fileName, pdfFileName, req.user.id);
+
+  res.json({ ok: true });
+});
 
 // ── GioBot alerts endpoint ────────────────────────────────────────────────────
 app.get('/chat/alerts', authMiddleware, (req, res) => {

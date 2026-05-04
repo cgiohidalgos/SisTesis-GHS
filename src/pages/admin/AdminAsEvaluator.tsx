@@ -120,7 +120,7 @@ export default function AdminAsEvaluator() {
                     <h3 className="font-heading font-semibold text-foreground group-hover:text-accent transition-colors line-clamp-2">
                       {thesis.title}
                     </h3>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                       {thesis.is_blind ? (
                         <span className="inline-flex items-center gap-1 text-xs bg-muted px-2 py-0.5 rounded">
                           <EyeOff className="w-3 h-3" /> Par ciego
@@ -130,7 +130,12 @@ export default function AdminAsEvaluator() {
                           <Eye className="w-3 h-3" /> Abierto
                         </span>
                       )}
-                      <StatusBadge status={thesis.status} />
+                      {(thesis.revision_round > 0) && !thesis.my_evaluated
+                        ? <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
+                            Pendiente {thesis.revision_round === 1 ? '2ª' : `${thesis.revision_round + 1}ª`} evaluación
+                          </span>
+                        : <StatusBadge status={thesis.status} />
+                      }
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
@@ -145,7 +150,7 @@ export default function AdminAsEvaluator() {
                         📚 {thesis.programs.map((p: any) => p.name).join(", ")}
                       </span>
                     )}
-                    {thesis.due_date && (
+                    {thesis.due_date && !thesis.my_evaluated && (
                       <span className="flex items-center gap-1.5 text-amber-600">
                         <Clock className="w-3.5 h-3.5" />
                         Fecha límite:{" "}
