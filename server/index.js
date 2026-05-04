@@ -3447,8 +3447,10 @@ app.get('/theses', authMiddleware, (req, res) => {
     const isBlindReview = evaluators && evaluators.some(e => e.is_blind);
     const hideBlindInList = isBlindReview && isStudentRole && !isDirectorOfT;
     // after loading individual evaluations we can add detailed submission events
+    // only show evaluations from the current round in the timeline
+    const currentRoundEvals = evaluations.filter(ev => (ev.revision_round ?? 0) === (t.revision_round ?? 0));
     if (evaluations && Array.isArray(evaluations)) {
-      const evalEvents = evaluations.map((ev, index) => {
+      const evalEvents = currentRoundEvals.map((ev, index) => {
         const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
         const displayName = hideBlindInList ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
         const actorName = hideBlindInList ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
@@ -3485,24 +3487,25 @@ app.get('/theses', authMiddleware, (req, res) => {
         return ev;
       });
     }
-    // if every assigned evaluator has provided an evaluation, add a timeline summary event
-    if (evaluations && evaluations.length && evaluators && evaluations.length === evaluators.length) {
-      const recs = evaluations.map((ev, index) => {
+    // if every assigned evaluator has provided an evaluation (current round), add a timeline summary event
+    if (currentRoundEvals && currentRoundEvals.length && evaluators && currentRoundEvals.length === evaluators.length) {
+      const recs = currentRoundEvals.map((ev, index) => {
         let text = hideBlindInList ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
         if (ev.general_observations) text += `: ${ev.general_observations}`;
         if (ev.concept) text += ` (concepto: ${ev.concept})`;
         return text;
       }).join("\n\n");
       const filesList = [];
-      for (const ev of evaluations) {
+      for (const ev of currentRoundEvals) {
         if (ev.files && ev.files.length) {
           ev.files.forEach((f) => filesList.push({ name: f.file_name, url: f.file_url }));
         }
       }
+      const allAccepted = currentRoundEvals.every(ev => ev.concept === 'accepted');
       enrichedTimeline.push({
         id: uuidv4(),
-        status: 'evaluations_summary',
-        label: 'Evaluaciones recibidas',
+        status: (allAccepted && !t.defense_date) ? 'awaiting_defense' : 'evaluations_summary',
+        label: (allAccepted && !t.defense_date) ? 'Tesis aprobada — esperando programación de sustentación' : 'Evaluaciones recibidas',
         completed: 1,
         date: Math.max(...evaluations.map((e) => e.submitted_at || 0)),
         evaluatorRecommendations: recs,
@@ -3517,6 +3520,7 @@ app.get('/theses', authMiddleware, (req, res) => {
       if (status === 'concept_issued') return 1;
       if (status === 'evaluation_submitted') return 2;
       if (status === 'evaluations_summary') return 3;
+      if (status === 'awaiting_defense') return 4;
       return 1;
     };
     // normalize any leftover ms timestamps to seconds before sorting
@@ -3673,9 +3677,10 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   if (shouldHideBlind && isBlindReview) {
     evaluators.forEach(ev => { ev.name = null; ev.institutional_email = null; });
   }
-  // add detailed evaluation_submitted events using actual evaluations
+  // add detailed evaluation_submitted events — only current round
+  const currentRoundEvals2 = evaluations.filter(ev => (ev.revision_round ?? 0) === (thesis.revision_round ?? 0));
   if (evaluations && Array.isArray(evaluations)) {
-    const evalEvents = evaluations.map((ev, index) => {
+    const evalEvents = currentRoundEvals2.map((ev, index) => {
       const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
       const hideNames = shouldHideBlind && isBlindReview;
       const displayName = hideNames ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
@@ -3727,29 +3732,29 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
     ...f,
     file_url: `/uploads/${path.basename(f.file_url)}`,
   }));
-  // if every assigned evaluator has submitted at least one evaluation, append a summary event
-  if (evaluations && evaluations.length && evaluators && evaluators.length) {
-    // count unique evaluators in the evaluations array
-    const uniqueEvals = new Set(evaluations.map(ev => ev.evaluator_id));
+  // if every assigned evaluator has submitted an evaluation in current round, append a summary event
+  if (currentRoundEvals2 && currentRoundEvals2.length && evaluators && evaluators.length) {
+    const uniqueEvals = new Set(currentRoundEvals2.map(ev => ev.evaluator_id));
     if (uniqueEvals.size === evaluators.length) {
-      const recs = evaluations.map((ev, index) => {
+      const recs = currentRoundEvals2.map((ev, index) => {
         let text = (shouldHideBlind && isBlindReview) ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
         if (ev.general_observations) text += `: ${ev.general_observations}`;
         if (ev.concept) text += ` (concepto: ${ev.concept})`;
         return text;
       }).join("\n\n");
       const filesList = [];
-      for (const ev of evaluations) {
+      for (const ev of currentRoundEvals2) {
         if (ev.files && ev.files.length) {
           ev.files.forEach((f) => filesList.push({ name: f.file_name, url: f.file_url }));
         }
       }
+      const allAccepted2 = currentRoundEvals2.every(ev => ev.concept === 'accepted');
       timeline.push({
         id: uuidv4(),
-        status: 'evaluations_summary',
-        label: 'Evaluaciones recibidas',
+        status: (allAccepted2 && !thesis.defense_date) ? 'awaiting_defense' : 'evaluations_summary',
+        label: (allAccepted2 && !thesis.defense_date) ? 'Tesis aprobada — esperando programación de sustentación' : 'Evaluaciones recibidas',
         completed: 1,
-        date: Math.max(...evaluations.map((e) => e.submitted_at || 0)),
+        date: Math.max(...currentRoundEvals2.map((e) => e.submitted_at || 0)),
         evaluatorRecommendations: recs,
         evaluatorFiles: filesList,
       });
@@ -3757,7 +3762,22 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   }
   // sort after possibly inserting summary so defense_scheduled (with higher timestamp) comes last
   const normTs2 = (v) => (v && v > 1e12) ? Math.floor(v / 1000) : (v || 0);
-  timeline.sort((a,b) => normTs2(a.date) - normTs2(b.date));
+  const eventPriority2 = (status) => {
+    if (status === 'status_changed') return 0;
+    if (status === 'concept_issued') return 1;
+    if (status === 'evaluation_submitted') return 2;
+    if (status === 'evaluations_summary') return 3;
+    if (status === 'awaiting_defense') return 4;
+    return 1;
+  };
+  timeline.sort((a, b) => {
+    const da = normTs2(a.date), db_ = normTs2(b.date);
+    if (Math.abs(da - db_) < 5) {
+      const pa = eventPriority2(a.status), pb = eventPriority2(b.status);
+      if (pa !== pb) return pa - pb;
+    }
+    return da - db_;
+  });
 
   // Compute weighted scores for the student view
   const weighted = computeFinalWeightedForThesis(id);

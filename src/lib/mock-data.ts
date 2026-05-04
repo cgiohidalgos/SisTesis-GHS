@@ -17,7 +17,13 @@ export type ThesisStatus =
   | "second_evaluation"
   | "evaluacion_terminada"  // todos los evaluadores enviaron su evaluación
   | "sustentacion"  // aprobado para sustentación
-  | "evaluator_thanks";  // mensaje de agradecimiento al evaluador
+  | "evaluator_thanks"  // mensaje de agradecimiento al evaluador
+  | "evaluation_submitted"  // evaluación individual enviada por evaluador
+  | "evaluations_summary"   // resumen de todas las evaluaciones
+  | "awaiting_defense"      // todos aprobaron, esperando programación de sustentación
+  | "act_signature"         // firma de acta
+  | "status_changed"        // cambio de estado genérico
+  | "deleted";
 
 export type EvaluatorConcept = "accepted" | "minor_changes" | "major_changes";
 
@@ -43,6 +49,8 @@ export interface TimelineEvent {
   defense_date_display?: string;
   defense_location?: string;
   defense_info?: string;
+  evaluationScores?: { section_id: string; criterion_id: string; score: number; observations?: string }[];
+  evaluationType?: string;
 }
 
 export interface Student {

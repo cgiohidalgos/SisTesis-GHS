@@ -117,7 +117,9 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
             <div
               className={cn(
                 "absolute left-1.5 top-1 w-6 h-6 rounded-full flex items-center justify-center border-2",
-                event.completed
+                event.status === 'awaiting_defense'
+                  ? "bg-amber-400 border-amber-500 text-white"
+                  : event.completed
                   ? "bg-success border-success text-success-foreground"
                   : event.active
                   ? "bg-accent border-accent text-accent-foreground animate-pulse-glow"
@@ -137,7 +139,9 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
             <div
               className={cn(
                 "rounded-lg border p-4 transition-all",
-                event.active
+                event.status === 'awaiting_defense'
+                  ? "bg-amber-50 dark:bg-amber-950/20 border-amber-400/60 shadow-card"
+                  : event.active
                   ? "bg-card shadow-elevated border-accent/30"
                   : event.completed
                   ? "bg-card shadow-card border-border"
@@ -148,7 +152,9 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                 <h4
                   className={cn(
                     "font-heading font-semibold text-sm",
-                    event.active ? "text-accent-foreground" : event.completed ? "text-foreground" : "text-muted-foreground"
+                    event.status === 'awaiting_defense'
+                      ? "text-amber-900 dark:text-amber-100"
+                      : event.active ? "text-accent-foreground" : event.completed ? "text-foreground" : "text-muted-foreground"
                   )}
                 >
                   <span className="whitespace-pre-wrap">
@@ -175,6 +181,17 @@ export default function ThesisTimeline({ events, evaluatorFiles, evaluatorRecomm
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
                     <User className="w-3 h-3" />
                     <span>Evaluador (Par ciego)</span>
+                  </div>
+                )}
+
+                {event.status === 'awaiting_defense' && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-sm text-amber-800 dark:text-amber-200">
+                      Todos los evaluadores han aprobado tu documento. Estás esperando que el administrador programe la fecha y lugar de tu sustentación.
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-300 italic">
+                      Recibirás una notificación cuando la sustentación sea programada.
+                    </p>
                   </div>
                 )}
 
