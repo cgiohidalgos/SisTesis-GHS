@@ -31,6 +31,8 @@ import AdminReports from "./pages/admin/AdminReports";
 import AdminNotificationRules from "./pages/admin/AdminNotificationRules";
 import AdminAsEvaluator from "./pages/admin/AdminAsEvaluator";
 import AdminDirectedTheses from "./pages/admin/AdminDirectedTheses";
+import AdminAvailability from "./pages/admin/AdminAvailability";
+import EvaluatorAvailability from "./pages/evaluator/EvaluatorAvailability";
 import DirectorThesisDetail from "./pages/evaluator/DirectorThesisDetail";
 import StudentRegister from "./pages/auth/StudentRegister";
 import StudentLogin from "./pages/auth/StudentLogin";
@@ -72,6 +74,7 @@ const App = () => (
               <Route path="/evaluator/student/:id" element={<EvaluatorStudentView />} />
               <Route path="/evaluator/my-students" element={<EvaluatorMyStudents />} />
               <Route path="/evaluator/directed-thesis/:id" element={<DirectorThesisDetail />} />
+              <Route path="/evaluator/availability" element={<EvaluatorAvailability />} />
             </Route>
 
             {/* Rutas protegidas: admin */}
@@ -95,6 +98,8 @@ const App = () => (
               <Route path="/admin/rubric/:id" element={<EvaluatorRubric />} />
               <Route path="/admin/my-students" element={<AdminDirectedTheses />} />
               <Route path="/admin/directed-thesis/:id" element={<DirectorThesisDetail />} />
+              <Route path="/admin/availability" element={<AdminAvailability />} />
+              <Route path="/admin/my-availability" element={<EvaluatorAvailability forceRole="admin" />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

@@ -595,6 +595,35 @@ export default function AdminThesisDetail() {
     const [location, setLocation] = useState<string>(thesis.defense_location || '');
     const [info, setInfo] = useState<string>(thesis.defense_info || '');
     const [saving, setSaving] = useState(false);
+    const [avail, setAvail] = useState<{ slots: any[]; users: any[]; byUser: Record<string, any[]> } | null>(null);
+
+    useEffect(() => {
+      const token = localStorage.getItem('token');
+      const headers = { Authorization: token ? `Bearer ${token}` : '' };
+      Promise.all([
+        fetch(`${API_BASE}/admin/availability/thesis/${thesis.id}`, { headers }).then(r => r.json()),
+        fetch(`${API_BASE}/admin/theses-with-participants`, { headers }).then(r => r.json()),
+      ]).then(([overlap, allTheses]) => {
+        const t = Array.isArray(allTheses) ? allTheses.find((x: any) => x.id === thesis.id) : null;
+        const participants = t ? [
+          ...t.directors.map((d: any) => ({ ...d, tipo: 'Director' })),
+          ...t.evaluators.map((e: any) => ({ ...e, tipo: 'Evaluador' })),
+        ] : [];
+        // fetch individual availability for each participant
+        Promise.all(
+          participants.map((p: any) =>
+            fetch(`${API_BASE}/admin/availability/user/${p.id}`, { headers })
+              .then(r => r.json())
+              .then(rows => ({ id: p.id, rows }))
+          )
+        ).then(indiv => {
+          const byUser: Record<string, any[]> = {};
+          for (const { id, rows } of indiv) byUser[id] = Array.isArray(rows) ? rows : [];
+          setAvail({ slots: overlap.slots || [], users: overlap.users || [], byUser });
+        });
+      }).catch(() => {});
+    }, [thesis.id]);
+
     const handleSave = async () => {
       if (!date || !location) {
         toast.error('Ingrese fecha y lugar');
@@ -616,6 +645,29 @@ export default function AdminThesisDetail() {
         setSaving(false);
       }
     };
+
+    // Gather all participants from avail.users + any that may not have registered availability
+    const allParticipants: { id: string; full_name: string; tipo: string }[] = avail
+      ? avail.users.map((u: any) => ({
+          ...u,
+          tipo: thesis.evaluators?.find((e: any) => e.id === u.id) ? 'Evaluador' : 'Director',
+        }))
+      : [];
+
+    const groupByDate = (rows: any[]) => {
+      const map: Record<string, any[]> = {};
+      for (const r of rows) {
+        if (!map[r.fecha]) map[r.fecha] = [];
+        map[r.fecha].push(r);
+      }
+      return map;
+    };
+
+    const formatDate = (fecha: string) =>
+      new Date(fecha + 'T12:00:00').toLocaleDateString('es-CO', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      });
+
     return (
       <div className="space-y-3">
         <div>
@@ -649,6 +701,88 @@ export default function AdminThesisDetail() {
         <Button onClick={handleSave} disabled={saving || !date || !location}>
           Guardar programación
         </Button>
+
+        {/* Disponibilidades */}
+        {avail && (
+          <div className="mt-4 pt-4 border-t space-y-4">
+            {/* Participantes */}
+            {allParticipants.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Participantes considerados</p>
+                <div className="flex flex-wrap gap-2">
+                  {allParticipants.map(u => (
+                    <span key={u.id} className="text-xs px-2 py-1 rounded-full border bg-background">
+                      {u.full_name}<span className="ml-1 text-muted-foreground">· {u.tipo}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Horarios donde todos coinciden */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Horarios donde todos coinciden (bloques de 40 min mínimo)
+              </p>
+              {avail.slots.length === 0 ? (
+                <div className="text-sm text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 mb-3">
+                  No hay horarios donde todos los participantes estén disponibles al mismo tiempo.
+                </div>
+              ) : (
+                <div className="space-y-2 mb-3">
+                  {Object.entries(groupByDate(avail.slots)).sort(([a],[b]) => a.localeCompare(b)).map(([fecha, slots]) => (
+                    <div key={fecha}>
+                      <p className="text-sm font-medium capitalize">{formatDate(fecha)}</p>
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {slots.map((s: any, i: number) => (
+                          <span key={i} className="text-sm bg-green-100 text-green-800 border border-green-200 px-3 py-0.5 rounded-lg font-medium">
+                            {s.hora_inicio} – {s.hora_fin}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Disponibilidad individual de cada participante */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Disponibilidad individual
+              </p>
+              <div className="space-y-3">
+                {allParticipants.map(u => {
+                  const rows = avail.byUser[u.id] || [];
+                  const grouped = groupByDate(rows);
+                  return (
+                    <div key={u.id} className="border rounded-lg p-3 bg-background">
+                      <p className="text-sm font-medium">{u.full_name} <span className="text-muted-foreground font-normal">· {u.tipo}</span></p>
+                      {rows.length === 0 ? (
+                        <p className="text-xs text-muted-foreground mt-1">Sin disponibilidad registrada</p>
+                      ) : (
+                        <div className="mt-2 space-y-1">
+                          {Object.entries(grouped).sort(([a],[b]) => a.localeCompare(b)).map(([fecha, bs]) => (
+                            <div key={fecha} className="flex items-start gap-2 text-xs">
+                              <span className="text-muted-foreground w-32 shrink-0 capitalize">{formatDate(fecha)}</span>
+                              <div className="flex flex-wrap gap-1">
+                                {bs.map((b: any, i: number) => (
+                                  <span key={i} className="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-full">
+                                    {b.hora_inicio} – {b.hora_fin}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };

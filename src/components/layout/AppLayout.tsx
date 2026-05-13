@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   BarChart2,
   Wifi,
+  CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -33,6 +34,7 @@ const navItems = {
   evaluator: [
     { label: "Proyectos asignados", href: "/evaluator", icon: FileText },
     { label: "Mis estudiantes", href: "/evaluator/my-students", icon: Users },
+    { label: "Mi disponibilidad", href: "/evaluator/availability", icon: CalendarDays },
   ],
   admin: [
     { label: "Panel", href: "/admin", icon: LayoutDashboard },
@@ -40,6 +42,7 @@ const navItems = {
     { label: "Por Evaluar", href: "/admin/as-evaluator", icon: ClipboardCheck },
     { label: "Mis Estudiantes", href: "/admin/my-students", icon: GraduationCap },
     { label: "Evaluadores", href: "/admin/evaluators", icon: Users },
+    { label: "Mi disponibilidad", href: "/admin/my-availability", icon: CalendarDays },
     { label: "Programas", href: "/admin/programs", icon: BookOpen },
     { label: "Rúbricas", href: "/admin/rubrics", icon: BookOpen },
     { label: "Elementos de Revisión", href: "/admin/review-items", icon: BookOpen },

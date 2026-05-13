@@ -16,7 +16,7 @@ const Docxtemplater = require('docxtemplater');
 const PizZip = require('pizzip');
 const { imageSize } = require('image-size');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
-const { notifyTimeline, startReminderCron, startBackupCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned, notifyEvaluatorRemoved, notifyEvaluatorReplaced, logNotification } = require('./notifications');
+const { notifyTimeline, startReminderCron, startBackupCron, sendEmail, sendWelcomeEmail, notifyEvaluatorAssigned, notifyEvaluatorRemoved, notifyEvaluatorReplaced, logNotification, buildICS } = require('./notifications');
 const Anthropic = require('@anthropic-ai/sdk');
 const logger = require('./logger');
 
@@ -3991,7 +3991,15 @@ app.post('/theses/:id/schedule', authMiddleware, requireRole('admin'), (req, res
   if (info) desc += `\n• ${info}`;
   db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(uuidv4(), thesis_id, 'defense_scheduled', desc, 1, nowSec());
-  notifyTimeline(db, thesis_id, 'defense_scheduled', desc, req.user.id).catch(console.error);
+  // Generar .ics para adjuntar al correo (duración 40 min)
+  const thesis = db.prepare('SELECT title FROM theses WHERE id = ?').get(thesis_id);
+  const icsContent = buildICS(thesis?.title || 'Sustentación', location, info || '', ts, 40);
+  const icsAttachment = [{
+    filename: 'sustentacion.ics',
+    content: icsContent,
+    contentType: 'text/calendar; charset=utf-8; method=REQUEST',
+  }];
+  notifyTimeline(db, thesis_id, 'defense_scheduled', desc, req.user.id, icsAttachment).catch(console.error);
   res.json({ ok: true });
 });
 
@@ -8853,6 +8861,168 @@ app.get('/chat/alerts', authMiddleware, (req, res) => {
   }
 
   res.json({ alerts });
+});
+
+// ── Disponibilidad para sustentaciones ──────────────────────────────────────
+
+// GET /availability/me  → bloques del usuario autenticado
+app.get('/availability/me', authMiddleware, (req, res) => {
+  const rows = db.prepare(
+    'SELECT * FROM availability WHERE user_id = ? ORDER BY fecha, hora_inicio'
+  ).all(req.user.id);
+  res.json(rows);
+});
+
+// POST /availability  → crear bloque { fecha, hora_inicio, hora_fin }
+app.post('/availability', authMiddleware, (req, res) => {
+  const { fecha, hora_inicio, hora_fin } = req.body;
+  if (!fecha || !hora_inicio || !hora_fin) return res.status(400).json({ error: 'Faltan campos' });
+  if (hora_inicio >= hora_fin) return res.status(400).json({ error: 'hora_inicio debe ser anterior a hora_fin' });
+  const id = uuidv4();
+  db.prepare(
+    'INSERT INTO availability (id, user_id, fecha, hora_inicio, hora_fin) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, req.user.id, fecha, hora_inicio, hora_fin);
+  res.json({ id, user_id: req.user.id, fecha, hora_inicio, hora_fin });
+});
+
+// DELETE /availability/:id
+app.delete('/availability/:id', authMiddleware, (req, res) => {
+  const row = db.prepare('SELECT * FROM availability WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'No encontrado' });
+  if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Sin permiso' });
+  db.prepare('DELETE FROM availability WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// GET /admin/availability/thesis/:thesisId  → intersección de disponibilidades (admin)
+// Devuelve: por cada día, los slots de 40 min donde director + todos evaluadores coinciden
+app.get('/admin/availability/thesis/:thesisId', authMiddleware, requireRole('admin'), (req, res) => {
+  const { thesisId } = req.params;
+
+  // Reunir IDs de evaluadores asignados
+  const evaluatorRows = db.prepare(
+    'SELECT evaluator_id FROM thesis_evaluators WHERE thesis_id = ?'
+  ).all(thesisId);
+
+  // Reunir IDs de directores con cuenta en el sistema
+  const directorRows = db.prepare(
+    'SELECT user_id FROM thesis_directors WHERE thesis_id = ? AND user_id IS NOT NULL'
+  ).all(thesisId);
+
+  const userIds = [
+    ...new Set([
+      ...evaluatorRows.map(r => r.evaluator_id),
+      ...directorRows.map(r => r.user_id),
+    ])
+  ];
+
+  if (userIds.length === 0) return res.json({ slots: [], users: [] });
+
+  // Nombres de los involucrados
+  const placeholders = userIds.map(() => '?').join(',');
+  const users = db.prepare(
+    `SELECT id, full_name FROM users WHERE id IN (${placeholders})`
+  ).all(...userIds);
+
+  // Disponibilidades de cada uno agrupadas por fecha
+  const allAvail = db.prepare(
+    `SELECT * FROM availability WHERE user_id IN (${placeholders}) ORDER BY fecha, hora_inicio`
+  ).all(...userIds);
+
+  // Agrupar por fecha
+  const byDate = {};
+  for (const a of allAvail) {
+    if (!byDate[a.fecha]) byDate[a.fecha] = {};
+    if (!byDate[a.fecha][a.user_id]) byDate[a.fecha][a.user_id] = [];
+    byDate[a.fecha][a.user_id].push({ inicio: a.hora_inicio, fin: a.hora_fin });
+  }
+
+  // Para cada fecha donde TODOS tienen al menos un bloque, calcular intersección de 40 min
+  const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  const toStr = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const DURATION = 40;
+
+  const slots = [];
+
+  for (const fecha of Object.keys(byDate).sort()) {
+    const byUser = byDate[fecha];
+    // Todos deben tener disponibilidad ese día
+    if (!userIds.every(uid => byUser[uid])) continue;
+
+    // Calcular intersección: para cada minuto del día verificar si todos están disponibles
+    // Optimización: trabajar por rangos
+    const userRanges = userIds.map(uid =>
+      byUser[uid].map(b => [toMin(b.inicio), toMin(b.fin)])
+    );
+
+    // Barrer de 7am a 9pm en pasos de 5 min
+    const daySlots = [];
+    for (let start = 7 * 60; start <= 21 * 60 - DURATION; start += 5) {
+      const end = start + DURATION;
+      const allFree = userRanges.every(ranges =>
+        ranges.some(([s, e]) => s <= start && e >= end)
+      );
+      if (allFree) {
+        // Fusionar con slot anterior si es contiguo
+        const last = daySlots[daySlots.length - 1];
+        if (last && last.end >= start) {
+          last.end = Math.max(last.end, end);
+        } else {
+          daySlots.push({ start, end });
+        }
+      }
+    }
+
+    for (const s of daySlots) {
+      slots.push({ fecha, hora_inicio: toStr(s.start), hora_fin: toStr(s.end) });
+    }
+  }
+
+  res.json({ slots, users });
+});
+
+// GET /admin/availability/user/:userId  → disponibilidades de un usuario específico (admin)
+app.get('/admin/availability/user/:userId', authMiddleware, requireRole('admin'), (req, res) => {
+  const rows = db.prepare(
+    'SELECT * FROM availability WHERE user_id = ? ORDER BY fecha, hora_inicio'
+  ).all(req.params.userId);
+  res.json(rows);
+});
+
+// GET /admin/theses-with-participants  → listado de tesis con evaluadores y directores (admin)
+app.get('/admin/theses-with-participants', authMiddleware, requireRole('admin'), (req, res) => {
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperadmin = roles.includes('superadmin');
+  let theses;
+  if (isSuperadmin) {
+    theses = db.prepare(`SELECT id, title, status FROM theses ORDER BY created_at DESC`).all();
+  } else {
+    const programs = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ?').all(req.user.id).map(r => r.program_id);
+    if (programs.length === 0) return res.json([]);
+    const ph = programs.map(() => '?').join(',');
+    theses = db.prepare(
+      `SELECT DISTINCT t.id, t.title, t.status FROM theses t
+       JOIN thesis_programs tp ON tp.thesis_id = t.id
+       WHERE tp.program_id IN (${ph})
+       ORDER BY t.created_at DESC`
+    ).all(...programs);
+  }
+
+  const result = theses.map(t => {
+    const evaluators = db.prepare(
+      `SELECT u.id, u.full_name FROM thesis_evaluators te
+       JOIN users u ON u.id = te.evaluator_id
+       WHERE te.thesis_id = ?`
+    ).all(t.id);
+    const directors = db.prepare(
+      `SELECT u.id, u.full_name FROM thesis_directors td
+       JOIN users u ON u.id = td.user_id
+       WHERE td.thesis_id = ? AND td.user_id IS NOT NULL`
+    ).all(t.id);
+    return { ...t, evaluators, directors };
+  });
+
+  res.json(result);
 });
 
 app.listen(PORT, '0.0.0.0', () => {

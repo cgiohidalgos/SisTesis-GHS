@@ -40,17 +40,17 @@ function getSMTPConfig(db, userId) {
     || null;
 }
 
-async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
+async function sendEmail(db, toEmail, subject, body, smtpOwnerId, attachments) {
   if (!toEmail || toEmail.toLowerCase() === 'admin@admin.com') return false;
   const config = getSMTPConfig(db, smtpOwnerId);
   if (!config) { console.error('[notify] Sin config SMTP'); return false; }
-  
+
   // Verificar si las notificaciones están habilitadas
   if (config.notifications_enabled === 0 || config.notifications_enabled === false) {
     console.log('[notify] Notificaciones deshabilitadas, email no enviado');
     return false;
   }
-  
+
   try {
     const transporter = createTransport(config);
     // Generar versión de texto plano a partir del HTML
@@ -68,19 +68,52 @@ async function sendEmail(db, toEmail, subject, body, smtpOwnerId) {
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
-    const info = await transporter.sendMail({
+    const mailOptions = {
       from: `"${config.display_name || 'SisTesis - Universidad de San Buenaventura Cali'}" <${config.username}>`,
       to: toEmail,
       subject,
       html: body,
       text: textBody,
-    });
+    };
+    if (attachments && attachments.length > 0) mailOptions.attachments = attachments;
+
+    const info = await transporter.sendMail(mailOptions);
     console.log('[notify] Email enviado:', info.messageId);
     return true;
   } catch (err) {
     console.error('[notify] Error enviando email:', err.message);
     return false;
   }
+}
+
+function buildICS(title, location, info, startTs, durationMin) {
+  const pad = n => String(n).padStart(2, '0');
+  const toICSDate = ts => {
+    const d = new Date(ts);
+    return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`;
+  };
+  const endTs = startTs + durationMin * 60 * 1000;
+  const uid = `${Date.now()}-sistesis@sistesis.site`;
+  const now = toICSDate(Date.now());
+  const desc = info ? info.replace(/\n/g, '\\n') : '';
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//SisTesis//USB Cali//ES',
+    'CALSCALE:GREGORIAN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${now}`,
+    `DTSTART:${toICSDate(startTs)}`,
+    `DTEND:${toICSDate(endTs)}`,
+    `SUMMARY:Sustentación: ${title}`,
+    `LOCATION:${location}`,
+    `DESCRIPTION:${desc}`,
+    'STATUS:CONFIRMED',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
 }
 
 async function sendWelcomeEmail(db, toEmail, fullName, username, password, smtpOwnerId) {
@@ -313,7 +346,7 @@ function buildDirectorBody(recipientName, label, description, thesis, studentDet
     </div>`;
 }
 
-async function notifyTimeline(db, thesisId, eventType, description, triggeredBy) {
+async function notifyTimeline(db, thesisId, eventType, description, triggeredBy, attachments) {
   try {
     const thesis = db.prepare('SELECT * FROM theses WHERE id = ?').get(thesisId);
     if (!thesis) return;
@@ -413,7 +446,7 @@ async function notifyTimeline(db, thesisId, eventType, description, triggeredBy)
         }
       }
 
-      const success = await sendEmail(db, user.institutional_email, renderedSubject, renderedBody, smtpOwnerId);
+      const success = await sendEmail(db, user.institutional_email, renderedSubject, renderedBody, smtpOwnerId, attachments);
       logNotification(db, recipientId, eventType, renderedSubject, renderedBody, thesisId, success ? null : 'failed');
     }
   } catch (err) {
@@ -635,4 +668,5 @@ module.exports = {
   createTransport,
   startReminderCron,
   startBackupCron,
+  buildICS,
 };

@@ -756,4 +756,15 @@ if (templatesCount === 0) {
   console.log('migration: seeded default notification_templates');
 }
 
+// Tabla de disponibilidades para sustentaciones
+db.prepare(`CREATE TABLE IF NOT EXISTS availability (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  fecha TEXT NOT NULL,
+  hora_inicio TEXT NOT NULL,
+  hora_fin TEXT NOT NULL,
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+)`).run();
+
 module.exports = db;
