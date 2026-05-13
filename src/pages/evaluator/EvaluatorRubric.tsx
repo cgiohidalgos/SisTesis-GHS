@@ -502,17 +502,18 @@ export default function EvaluatorRubric() {
                       </div>
                       <div>
                         <p className="font-semibold text-base text-foreground">Rúbrica de Sustentación</p>
-                        {myEvaluator?.due_date && (
+                        {thesis.defense_date ? (
+                          <p className="text-sm text-muted-foreground mt-0.5">
+                            Fecha de sustentación: <span className="font-medium text-foreground">{new Date(thesis.defense_date * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                          </p>
+                        ) : myEvaluator?.due_date ? (
                           <p className="text-sm text-muted-foreground mt-0.5">
                             Fecha límite: <span className="font-medium text-foreground">{new Date(myEvaluator.due_date * 1000).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
                           </p>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {currentRound > 0 && (
-                        <span className="text-xs bg-muted text-muted-foreground px-2.5 py-1 rounded-full font-medium">Ronda {currentRound}</span>
-                      )}
                       {presEval ? (
                         <span className="inline-flex items-center gap-1.5 text-sm bg-success/10 text-success px-3 py-1.5 rounded-full font-medium">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
@@ -676,7 +677,20 @@ export default function EvaluatorRubric() {
         {thesis.timeline && thesis.timeline.length > 0 && (
           <div className="pt-6 border-t border-border">
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-6">Historial de Evaluación</h3>
-            <ThesisTimeline events={thesis.timeline} isBlindReview={thesis.evaluators?.some((e: any) => e.is_blind)} isAdmin={false} programDocRubric={programDocRubric ?? undefined} programPresRubric={programPresRubric ?? undefined} />
+            {(() => {
+              // Inject awaiting_defense event if all evaluators accepted but no defense scheduled yet
+              let events = thesis.timeline;
+              const hasDefenseEvent = events.some((e: any) => e.status === 'awaiting_defense' || e.status === 'defense_scheduled');
+              if (!hasDefenseEvent && !thesis.defense_date && thesis.status === 'evaluacion_terminada') {
+                const allAccepted = (thesis.evaluators || []).length > 0 && (thesis.evaluators || []).every((ev: any) => {
+                  return thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.concept === 'accepted');
+                });
+                if (allAccepted) {
+                  events = [...events, { status: 'awaiting_defense', label: 'Esperando programación de sustentación', date: Date.now() / 1000, completed: false }];
+                }
+              }
+              return <ThesisTimeline events={events} isBlindReview={thesis.evaluators?.some((e: any) => e.is_blind)} isAdmin={false} programDocRubric={programDocRubric ?? undefined} programPresRubric={programPresRubric ?? undefined} />;
+            })()}
           </div>
         )}
 

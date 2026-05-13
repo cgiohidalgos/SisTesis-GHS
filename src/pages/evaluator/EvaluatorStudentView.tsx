@@ -113,7 +113,7 @@ export default function EvaluatorStudentView() {
                       {student.institutional_email && (
                         <p><strong>Correo institucional:</strong> {student.institutional_email}</p>
                       )}
-                      {student.email && student.email !== student.institutional_email && (
+                      {student.email && student.email !== student.institutional_email && !student.email.endsWith('@estudiante.local') && (
                         <p><strong>Correo personal:</strong> {student.email}</p>
                       )}
                       {student.cvlac && (
@@ -187,11 +187,25 @@ export default function EvaluatorStudentView() {
               )}
             </div>
 
-            <ThesisTimeline
-              events={thesis.timeline || []}
-              isBlindReview={thesis.evaluators && thesis.evaluators.some((e: any) => e.is_blind)}
-              isAdmin={false}
-            />
+            {(() => {
+              let events = thesis.timeline || [];
+              const hasDefenseEvent = events.some((e: any) => e.status === 'awaiting_defense' || e.status === 'defense_scheduled');
+              if (!hasDefenseEvent && !thesis.defense_date && thesis.status === 'evaluacion_terminada') {
+                const allAccepted = (thesis.evaluators || []).length > 0 && (thesis.evaluators || []).every((ev: any) => {
+                  return thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.concept === 'accepted');
+                });
+                if (allAccepted) {
+                  events = [...events, { status: 'awaiting_defense', label: 'Esperando programación de sustentación', date: Date.now() / 1000, completed: false }];
+                }
+              }
+              return (
+                <ThesisTimeline
+                  events={events}
+                  isBlindReview={thesis.evaluators && thesis.evaluators.some((e: any) => e.is_blind)}
+                  isAdmin={false}
+                />
+              );
+            })()}
 
             {/* Score summaries */}
             {(() => {
@@ -345,14 +359,21 @@ export default function EvaluatorStudentView() {
               );
             })()}
 
-            {id && profile && (
-              <DigitalSignSection
-                thesisId={id}
-                userName={profile.full_name || user?.full_name || ""}
-                myRole="evaluator"
-                myUserId={profile.id ?? user?.id}
-              />
-            )}
+            {id && profile && thesis?.defense_date && (() => {
+              const allEvals: any[] = thesis.evaluations || [];
+              const assignedIds: string[] = (thesis.evaluators || []).map((e: any) => e.id).filter(Boolean);
+              const presEvalIds = new Set(allEvals.filter((e: any) => e.evaluation_type === 'presentation').map((e: any) => e.evaluator_id));
+              const allPresDone = assignedIds.length > 0 && assignedIds.every((eid: string) => presEvalIds.has(eid));
+              if (!allPresDone) return null;
+              return (
+                <DigitalSignSection
+                  thesisId={id}
+                  userName={profile.full_name || user?.full_name || ""}
+                  myRole="evaluator"
+                  myUserId={profile.id ?? user?.id}
+                />
+              );
+            })()}
           </>
         )}
       </div>

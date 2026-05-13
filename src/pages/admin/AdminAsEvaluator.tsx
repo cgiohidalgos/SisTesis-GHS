@@ -4,7 +4,7 @@ import AppLayout from "@/components/layout/AppLayout";
 import StatusBadge from "@/components/thesis/StatusBadge";
 import { getApiBase } from "@/lib/utils";
 import { FileText, Users, Calendar, Clock, Eye, EyeOff, Search, X } from "lucide-react";
-import { statusLabels } from "@/lib/mock-data";
+import { statusLabels, filterableStatuses } from "@/lib/mock-data";
 
 const API_BASE = getApiBase();
 
@@ -37,7 +37,7 @@ export default function AdminAsEvaluator() {
       const matchSearch = !q ||
         t.title?.toLowerCase().includes(q) ||
         (t.students || []).some((s: any) => (s.name || "").toLowerCase().includes(q));
-      const matchStatus = !statusFilter || t.status === statusFilter;
+      const matchStatus = !statusFilter || (statusFilter === 'defense_scheduled' ? !!(t as any).defense_date : t.status === statusFilter);
       const matchProgram = !programFilter || (t.programs || []).some((p: any) => p.name === programFilter);
       return matchSearch && matchStatus && matchProgram;
     });
@@ -72,8 +72,8 @@ export default function AdminAsEvaluator() {
             className="w-full sm:w-auto px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
             <option value="">Todos los estados</option>
-            {Object.entries(statusLabels).map(([key, label]) => (
-              <option key={key} value={key}>{label as string}</option>
+            {filterableStatuses.map((key) => (
+              <option key={key} value={key}>{statusLabels[key]}</option>
             ))}
           </select>
           {allPrograms.length > 0 && (
@@ -109,11 +109,27 @@ export default function AdminAsEvaluator() {
           </div>
         ) : (
           <div className="space-y-4">
-            {filtered.map((thesis) => (
+            {filtered.map((thesis) => {
+              const conceptColor = (concept: string | null | undefined) => {
+                if (!concept) return "255,255,255";
+                if (concept === "accepted") return "34,197,94";
+                if (concept === "minor_changes") return "249,115,22";
+                if (concept === "major_changes") return "239,68,68";
+                if (concept === "rejected") return "185,28,28";
+                return "255,255,255";
+              };
+              const evs = Array.isArray(thesis.evaluators) ? thesis.evaluators : [];
+              const c1 = conceptColor(evs[0]?.concept);
+              const c2 = conceptColor(evs[1]?.concept);
+              const cardBg = `linear-gradient(to right, rgba(${c1},0.08) 50%, rgba(${c2},0.08) 50%)`;
+              const revisionRound = thesis.revision_round ?? 0;
+              const effectiveStatus = (thesis.status === 'submitted' && revisionRound > 0) ? 'second_evaluation' : thesis.status;
+              return (
               <button
                 key={thesis.id}
                 onClick={() => navigate(`/admin/rubric/${thesis.id}`)}
-                className="w-full text-left bg-card rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
+                className="w-full text-left rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
+                style={{ background: cardBg }}
               >
                 <div className="p-5">
                   <div className="flex items-start justify-between gap-3 mb-3">
@@ -130,12 +146,19 @@ export default function AdminAsEvaluator() {
                           <Eye className="w-3 h-3" /> Abierto
                         </span>
                       )}
-                      {(thesis.revision_round > 0) && !thesis.my_evaluated
-                        ? <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
-                            Pendiente {thesis.revision_round === 1 ? '2ª' : `${thesis.revision_round + 1}ª`} evaluación
-                          </span>
-                        : <StatusBadge status={thesis.status} />
-                      }
+                      {thesis.status === 'evaluacion_terminada' && thesis.defense_date ? (
+                        <span className="text-xs bg-info/20 text-info border border-info/50 px-2 py-0.5 rounded-full font-medium">Sustentación Programada</span>
+                      ) : thesis.status === 'evaluacion_terminada' ? (
+                        <span className="text-xs bg-success/20 text-success border border-success/50 px-2 py-0.5 rounded-full font-medium">Evaluación terminada</span>
+                      ) : thesis.my_evaluated ? (
+                        <span className="text-xs bg-success/20 text-success border border-success/50 px-2 py-0.5 rounded-full font-medium">Evaluado</span>
+                      ) : revisionRound > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-xs bg-info/20 text-info border border-info/50 px-2 py-0.5 rounded-full font-medium">
+                          Pendiente {revisionRound === 1 ? '2ª' : `${revisionRound + 1}ª`} evaluación
+                        </span>
+                      ) : (
+                        <StatusBadge status={effectiveStatus as any} />
+                      )}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
@@ -151,7 +174,7 @@ export default function AdminAsEvaluator() {
                       </span>
                     )}
                     {thesis.due_date && !thesis.my_evaluated && (
-                      <span className="flex items-center gap-1.5 text-amber-600">
+                      <span className="flex items-center gap-1.5 text-warning">
                         <Clock className="w-3.5 h-3.5" />
                         Fecha límite:{" "}
                         {new Date(thesis.due_date > 1e12 ? thesis.due_date : thesis.due_date * 1000)
@@ -168,7 +191,8 @@ export default function AdminAsEvaluator() {
                   </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

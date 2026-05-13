@@ -34,6 +34,10 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
 
   const hasEvaluators = showEvaluatorAccordion && thesis.evaluators && thesis.evaluators.length > 0;
 
+  // Derive effective status: if revision_round > 0 and status is 'submitted', treat as second evaluation
+  const revisionRound = (thesis as any).revision_round ?? 0;
+  const effectiveStatus = (thesis.status === 'submitted' && revisionRound > 0) ? 'second_evaluation' : thesis.status;
+
   const conceptColor = (concept: string | null | undefined) => {
     if (!concept) return "255,255,255";
     if (concept === "accepted") return "34,197,94";
@@ -61,33 +65,26 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
           </h3>
           <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
             {urgency === 'overdue' && (
-              <span className="inline-flex items-center gap-1 text-xs bg-destructive/15 text-destructive px-2 py-0.5 rounded font-medium">
+              <span className="inline-flex items-center gap-1 text-xs bg-destructive/20 text-destructive border border-destructive/50 px-2 py-0.5 rounded-full font-medium">
                 <AlertTriangle className="w-3 h-3" />
                 Vencido
               </span>
             )}
             {urgency === 'soon' && (
-              <span className="inline-flex items-center gap-1 text-xs bg-warning/15 text-warning px-2 py-0.5 rounded font-medium">
+              <span className="inline-flex items-center gap-1 text-xs bg-warning/20 text-warning border border-warning/50 px-2 py-0.5 rounded-full font-medium">
                 <Clock className="w-3 h-3" />
                 Vence pronto
               </span>
             )}
             {evalCompleted ? (
-              <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">{hasActa ? 'Terminada con Acta' : 'Evaluación terminada'}</span>
+              <span className="text-xs bg-success/20 text-success border border-success/50 px-2 py-0.5 rounded-full font-medium">{hasActa ? 'Terminada con Acta' : 'Evaluación terminada'}</span>
+            ) : thesis.status === 'evaluacion_terminada' && (thesis as any).defense_date ? (
+              <span className="text-xs bg-info/20 text-info border border-info/50 px-2 py-0.5 rounded-full font-medium">Sustentación Programada</span>
             ) : evaluated ? (
-              <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">Evaluado</span>
+              <span className="text-xs bg-success/20 text-success border border-success/50 px-2 py-0.5 rounded-full font-medium">Evaluado</span>
             ) : null}
-            {!evalCompleted && (() => {
-              const round = (thesis as any).revision_round ?? 0;
-              const pendingRound = round > 0 && (thesis.evaluators as any[]).some(
-                (ev: any) => !ev.has_evaluated
-              );
-              return pendingRound
-                ? <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
-                    Pendiente {round === 1 ? '2ª' : `${round + 1}ª`} evaluación
-                  </span>
-                : <StatusBadge status={thesis.status} />;
-            })()}
+            {!evalCompleted && thesis.status !== 'evaluacion_terminada' && <StatusBadge status={effectiveStatus as any} />}
+            {!evalCompleted && thesis.status === 'evaluacion_terminada' && !(thesis as any).defense_date && <StatusBadge status={effectiveStatus as any} />}
           </div>
         </div>
         <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
@@ -172,7 +169,7 @@ export default function ThesisCard({ thesis, linkTo, evaluated, evalCompleted, h
                     {ev.due_date && (
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3" />
-                        <span style={{ color: (ev as any).has_evaluated ? "#16a34a" : "#e85d04" }} className="font-semibold">Fecha límite:</span>{" "}
+                        <span className={`font-semibold ${(ev as any).has_evaluated ? "text-success" : "text-warning"}`}>Fecha límite:</span>{" "}
                         {new Date((ev.due_date as any) > 1e12 ? (ev.due_date as any) : (ev.due_date as any) * 1000)
                           .toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })}
                       </span>

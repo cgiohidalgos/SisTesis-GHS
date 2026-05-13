@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { getApiBase } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { FileText, Users, Calendar, Clock, Eye, EyeOff, CheckCircle2, Search, X } from "lucide-react";
-import { statusLabels } from "@/lib/mock-data";
+import { statusLabels, filterableStatuses } from "@/lib/mock-data";
 
 const API_BASE = getApiBase();
 
@@ -28,7 +28,7 @@ export default function EvaluatorDashboard() {
       const matchSearch = !q ||
         t.title?.toLowerCase().includes(q) ||
         (t.students || []).some((s: any) => (s.name || "").toLowerCase().includes(q));
-      const matchStatus = !statusFilter || t.status === statusFilter;
+      const matchStatus = !statusFilter || (statusFilter === 'defense_scheduled' ? !!(t as any).defense_date : t.status === statusFilter);
       const matchProgram = !programFilter || (t.programs || []).some((p: any) => p.name === programFilter);
       return matchSearch && matchStatus && matchProgram;
     });
@@ -126,8 +126,8 @@ export default function EvaluatorDashboard() {
             className="w-full sm:w-auto px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
             <option value="">Todos los estados</option>
-            {Object.entries(statusLabels).map(([key, label]) => (
-              <option key={key} value={key}>{label as string}</option>
+            {filterableStatuses.map((key) => (
+              <option key={key} value={key}>{statusLabels[key]}</option>
             ))}
           </select>
           {allPrograms.length > 0 && (
@@ -163,11 +163,25 @@ export default function EvaluatorDashboard() {
           </div>
         ) : (
           <div className="space-y-4">
-            {filtered.map((thesis) => (
+            {filtered.map((thesis) => {
+              const conceptColor = (concept: string | null | undefined) => {
+                if (!concept) return "255,255,255";
+                if (concept === "accepted") return "34,197,94";
+                if (concept === "minor_changes") return "249,115,22";
+                if (concept === "major_changes") return "239,68,68";
+                if (concept === "rejected") return "185,28,28";
+                return "255,255,255";
+              };
+              const evs = Array.isArray(thesis.evaluators) ? thesis.evaluators : [];
+              const c1 = conceptColor(evs[0]?.concept);
+              const c2 = conceptColor(evs[1]?.concept);
+              const cardBg = `linear-gradient(to right, rgba(${c1},0.08) 50%, rgba(${c2},0.08) 50%)`;
+              return (
               <button
                 key={thesis.id}
                 onClick={() => navigate(`/evaluator/rubric/${thesis.id}`)}
-                className="w-full text-left bg-card rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
+                className="w-full text-left rounded-lg border shadow-card hover:shadow-elevated transition-all duration-300 group"
+                style={{ background: cardBg }}
               >
                 <div className="p-5">
                   <div className="flex items-start justify-between gap-3 mb-3">
@@ -184,15 +198,19 @@ export default function EvaluatorDashboard() {
                           <Eye className="w-3 h-3" /> Abierto
                         </span>
                       )}
-                      {thesis.evaluated && thesis.status !== 'evaluacion_terminada' && (
-                        <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded">Evaluado</span>
+                      {thesis.status === 'evaluacion_terminada' && thesis.defense_date ? (
+                        <span className="text-xs bg-info/20 text-info border border-info/50 px-2 py-0.5 rounded-full font-medium">Sustentación Programada</span>
+                      ) : thesis.status === 'evaluacion_terminada' ? (
+                        <span className="text-xs bg-success/20 text-success border border-success/50 px-2 py-0.5 rounded-full font-medium">Evaluación terminada</span>
+                      ) : thesis.evaluated ? (
+                        <span className="text-xs bg-success/20 text-success border border-success/50 px-2 py-0.5 rounded-full font-medium">Evaluado</span>
+                      ) : thesis.revision_round > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-xs bg-info/20 text-info border border-info/50 px-2 py-0.5 rounded-full font-medium">
+                          Pendiente {thesis.revision_round === 1 ? '2ª' : `${thesis.revision_round + 1}ª`} evaluación
+                        </span>
+                      ) : (
+                        <StatusBadge status={thesis.status} />
                       )}
-                      {(thesis.revision_round > 0) && !thesis.latest_concept
-                        ? <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
-                            Pendiente {thesis.revision_round === 1 ? '2ª' : `${thesis.revision_round + 1}ª`} evaluación
-                          </span>
-                        : !thesis.evaluated && <StatusBadge status={thesis.status} />
-                      }
                     </div>
                   </div>
 
@@ -212,7 +230,7 @@ export default function EvaluatorDashboard() {
                       </span>
                     )}
                     {thesis.my_due_date && !thesis.evaluated && (
-                      <span className="flex items-center gap-1.5 text-amber-600">
+                      <span className="flex items-center gap-1.5 text-warning">
                         <Clock className="w-3.5 h-3.5" />
                         Fecha límite:{" "}
                         {new Date(
@@ -233,7 +251,8 @@ export default function EvaluatorDashboard() {
                   </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

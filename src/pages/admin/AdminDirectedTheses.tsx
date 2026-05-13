@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { getApiBase } from "@/lib/utils";
 import { Users, Calendar, UserCheck, Mail, Clock, Eye, EyeOff, Search, X, ChevronDown } from "lucide-react";
 import StatusBadge from "@/components/thesis/StatusBadge";
-import { statusLabels } from "@/lib/mock-data";
+import { statusLabels, filterableStatuses } from "@/lib/mock-data";
 
 const API_BASE = getApiBase();
 
@@ -49,7 +49,7 @@ export default function AdminDirectedTheses() {
       const matchSearch = !q ||
         t.title?.toLowerCase().includes(q) ||
         (t.students || []).some((s: any) => (s.name || "").toLowerCase().includes(q));
-      const matchStatus = !statusFilter || t.status === statusFilter;
+      const matchStatus = !statusFilter || (statusFilter === 'defense_scheduled' ? !!(t as any).defense_date : t.status === statusFilter);
       const matchProgram = !programFilter || (t.programs || []).some((p: any) => p.name === programFilter);
       return matchSearch && matchStatus && matchProgram;
     });
@@ -84,8 +84,8 @@ export default function AdminDirectedTheses() {
             className="w-full sm:w-auto px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
             <option value="">Todos los estados</option>
-            {Object.entries(statusLabels).map(([key, label]) => (
-              <option key={key} value={key}>{label as string}</option>
+            {filterableStatuses.map((key) => (
+              <option key={key} value={key}>{statusLabels[key]}</option>
             ))}
           </select>
           {allPrograms.length > 0 && (
@@ -155,11 +155,14 @@ export default function AdminDirectedTheses() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      <StatusBadge status={thesis.status} />
-                      {(thesis.revision_round > 0) && evs.some((ev: any) => !ev.has_evaluated) && (
-                        <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded font-medium">
-                          Evaluadores pendientes de segunda revisión
+                      {(thesis.revision_round > 0) && evs.some((ev: any) => !ev.has_evaluated && ev.concept !== 'accepted') ? (
+                        <span className="inline-flex items-center gap-1 text-xs bg-info/20 text-info border border-info/50 px-2 py-0.5 rounded-full font-medium">
+                          Pendiente {thesis.revision_round === 1 ? '2ª' : `${thesis.revision_round + 1}ª`} evaluación
                         </span>
+                      ) : thesis.status === 'evaluacion_terminada' && thesis.defense_date ? (
+                        <span className="text-xs bg-info/20 text-info border border-info/50 px-2 py-0.5 rounded-full font-medium">Sustentación Programada</span>
+                      ) : (
+                        <StatusBadge status={(thesis.status === 'submitted' && thesis.revision_round > 0) ? 'second_evaluation' : thesis.status} />
                       )}
                       {studentNames && (
                         <span className="flex items-center gap-1.5">
@@ -215,7 +218,7 @@ export default function AdminDirectedTheses() {
                               {ev.due_date && (
                                 <span className="flex items-center gap-1">
                                   <Clock className="w-3 h-3" />
-                                  <span style={{ color: ev.has_evaluated ? "#16a34a" : "#e85d04" }} className="font-semibold">Fecha límite:</span>{" "}
+                                  <span className={`font-semibold ${ev.has_evaluated ? "text-success" : "text-warning"}`}>Fecha límite:</span>{" "}
                                   {new Date(ev.due_date > 1e12 ? ev.due_date : ev.due_date * 1000)
                                     .toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" })}
                                 </span>

@@ -591,8 +591,8 @@ if (rulesCount === 0) {
     { event_type: 'revision_submitted',   role: 'admin',     enabled: 1 },
     { event_type: 'revision_submitted',   role: 'evaluator', enabled: 0 },
     { event_type: 'revision_submitted',   role: 'director',  enabled: 1 },
-    // evaluation_submitted: solo admins
-    { event_type: 'evaluation_submitted', role: 'student',   enabled: 0 },
+    // evaluation_submitted: admins y estudiantes
+    { event_type: 'evaluation_submitted', role: 'student',   enabled: 1 },
     { event_type: 'evaluation_submitted', role: 'admin',     enabled: 1 },
     { event_type: 'evaluation_submitted', role: 'evaluator', enabled: 0 },
     { event_type: 'evaluation_submitted', role: 'director',  enabled: 0 },

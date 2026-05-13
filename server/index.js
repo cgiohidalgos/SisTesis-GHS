@@ -3236,15 +3236,15 @@ app.get('/theses/directed', authMiddleware, (req, res) => {
       `SELECT u.full_name as name, u.institutional_email, te.due_date,
               CASE WHEN EXISTS (
                 SELECT 1 FROM evaluations e
-                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
-                  AND e.revision_round = t.revision_round AND e.submitted_at IS NOT NULL
+                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL AND e.revision_round = t.revision_round
               ) THEN 1 ELSE 0 END as has_evaluated,
               (SELECT e.concept FROM evaluations e
                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
-               ORDER BY e.revision_round DESC, e.submitted_at DESC LIMIT 1) as concept
+               ORDER BY e.revision_round DESC, e.submitted_at DESC
+               LIMIT 1) as concept
        FROM thesis_evaluators te
-       JOIN theses t ON t.id = te.thesis_id
        JOIN users u ON u.id = te.evaluator_id
+       JOIN theses t ON t.id = te.thesis_id
        WHERE te.thesis_id = ?`
     ).all(t.id);
     return { ...t, students, programs, evaluators };
@@ -3276,24 +3276,27 @@ app.get('/theses/as-evaluator', authMiddleware, (req, res) => {
     const evalInfo = db.prepare(
       `SELECT due_date, is_blind FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?`
     ).get(t.id, req.user.id);
-    const currentRound = t.revision_round ?? 0;
+    const currentRound = t.revision_round || 0;
     const hasEval = db.prepare(
       `SELECT 1 FROM evaluations e
        JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
-       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.revision_round = ? AND e.submitted_at IS NOT NULL`
+       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL AND e.revision_round = ?`
     ).get(t.id, req.user.id, currentRound);
-    const evalCount = db.prepare(
-      `SELECT COUNT(*) as c FROM evaluations e
-       JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
-       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.revision_round = ? AND e.submitted_at IS NOT NULL`
-    ).get(t.id, req.user.id, currentRound)?.c ?? 0;
-    const latestConcept = db.prepare(
-      `SELECT e.concept FROM evaluations e
-       JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
-       WHERE te.thesis_id = ? AND te.evaluator_id = ? AND e.evaluation_type = 'document' AND e.revision_round = ? AND e.submitted_at IS NOT NULL
-       ORDER BY e.submitted_at DESC LIMIT 1`
-    ).get(t.id, req.user.id, currentRound)?.concept ?? null;
-    return { ...t, students, programs, due_date: evalInfo?.due_date, is_blind: !!evalInfo?.is_blind, my_evaluated: !!hasEval, eval_count: evalCount, latest_concept: latestConcept };
+    const evaluators = db.prepare(
+      `SELECT DISTINCT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM evaluations e
+                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
+              ) THEN 1 ELSE 0 END as has_evaluated,
+              (SELECT e.concept FROM evaluations e
+               WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
+               ORDER BY e.revision_round DESC, e.submitted_at DESC
+               LIMIT 1) as concept
+       FROM users u
+       JOIN thesis_evaluators te ON u.id = te.evaluator_id
+       WHERE te.thesis_id = ?`
+    ).all(t.id).map(ev => ({ ...ev, is_blind: !!ev.is_blind }));
+    return { ...t, students, programs, evaluators, due_date: evalInfo?.due_date, is_blind: !!evalInfo?.is_blind, my_evaluated: !!hasEval };
   });
 
   res.json(enriched);
@@ -3351,13 +3354,12 @@ app.get('/theses', authMiddleware, (req, res) => {
       `SELECT DISTINCT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind,
               CASE WHEN EXISTS (
                 SELECT 1 FROM evaluations e
-                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
-                  AND e.revision_round = (SELECT revision_round FROM theses WHERE id = te.thesis_id)
-                  AND e.submitted_at IS NOT NULL
+                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
               ) THEN 1 ELSE 0 END as has_evaluated,
               (SELECT e.concept FROM evaluations e
                WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
-               ORDER BY e.revision_round DESC, e.submitted_at DESC LIMIT 1) as concept
+               ORDER BY e.revision_round DESC, e.submitted_at DESC
+               LIMIT 1) as concept
        FROM users u
        JOIN thesis_evaluators te ON u.id = te.evaluator_id
        WHERE te.thesis_id = ?`
@@ -3447,16 +3449,10 @@ app.get('/theses', authMiddleware, (req, res) => {
     const isBlindReview = evaluators && evaluators.some(e => e.is_blind);
     const hideBlindInList = isBlindReview && isStudentRole && !isDirectorOfT;
     // after loading individual evaluations we can add detailed submission events
-    // only show evaluations from the current round in the timeline
-    const currentRoundEvals = evaluations.filter(ev => (ev.revision_round ?? 0) === (t.revision_round ?? 0));
     if (evaluations && Array.isArray(evaluations)) {
-      // build stable evaluator number map based on assigned evaluators order
-      const evaluatorNumberMap = new Map();
-      evaluators.forEach((ev, i) => evaluatorNumberMap.set(ev.id, i + 1));
-      const evalEvents = evaluations.map((ev) => {
+      const evalEvents = evaluations.map((ev, index) => {
         const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
-        const evalNum = evaluatorNumberMap.get(ev.evaluator_id) || 1;
-        const displayName = hideBlindInList ? `Evaluador ${evalNum}` : (ev.evaluator_name || 'Evaluador');
+        const displayName = hideBlindInList ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
         const actorName = hideBlindInList ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
         const event = {
           id: uuidv4(),
@@ -3492,6 +3488,7 @@ app.get('/theses', authMiddleware, (req, res) => {
       });
     }
     // if every assigned evaluator has provided an evaluation (current round), add a timeline summary event
+    const currentRoundEvals = evaluations.filter(ev => (ev.revision_round ?? 0) === (t.revision_round ?? 0));
     if (currentRoundEvals && currentRoundEvals.length && evaluators && currentRoundEvals.length === evaluators.length) {
       const recs = currentRoundEvals.map((ev, index) => {
         let text = hideBlindInList ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
@@ -3585,16 +3582,7 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
      WHERE ts.thesis_id = ?`
   ).all(id);
   const evaluators = db.prepare(
-    `SELECT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind, te.id as te_id,
-            CASE WHEN EXISTS (
-              SELECT 1 FROM evaluations e
-              WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document'
-                AND e.revision_round = (SELECT revision_round FROM theses WHERE id = te.thesis_id)
-                AND e.submitted_at IS NOT NULL
-            ) THEN 1 ELSE 0 END as has_evaluated,
-            (SELECT e.concept FROM evaluations e
-             WHERE e.thesis_evaluator_id = te.id AND e.evaluation_type = 'document' AND e.submitted_at IS NOT NULL
-             ORDER BY e.revision_round DESC, e.submitted_at DESC LIMIT 1) as concept
+    `SELECT u.id, u.full_name as name, u.institutional_email, te.due_date, te.is_blind
      FROM users u
      JOIN thesis_evaluators te ON u.id = te.evaluator_id
      WHERE te.thesis_id = ?`
@@ -3681,16 +3669,12 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   if (shouldHideBlind && isBlindReview) {
     evaluators.forEach(ev => { ev.name = null; ev.institutional_email = null; });
   }
-  // add detailed evaluation_submitted events — only current round
-  const currentRoundEvals2 = evaluations.filter(ev => (ev.revision_round ?? 0) === (thesis.revision_round ?? 0));
+  // add detailed evaluation_submitted events using actual evaluations
   if (evaluations && Array.isArray(evaluations)) {
-    const evaluatorNumberMap2 = new Map();
-    evaluators.forEach((ev, i) => evaluatorNumberMap2.set(ev.id, i + 1));
-    const evalEvents = evaluations.map((ev) => {
+    const evalEvents = evaluations.map((ev, index) => {
       const typeWord = ev.evaluation_type === 'presentation' ? 'sustentación' : 'documento';
       const hideNames = shouldHideBlind && isBlindReview;
-      const evalNum2 = evaluatorNumberMap2.get(ev.evaluator_id) || 1;
-      const displayName = hideNames ? `Evaluador ${evalNum2}` : (ev.evaluator_name || 'Evaluador');
+      const displayName = hideNames ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
       const actorName = hideNames ? 'Evaluador (Par ciego)' : (ev.evaluator_name || 'Evaluador');
       const event = {
         id: uuidv4(),
@@ -3739,29 +3723,30 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
     ...f,
     file_url: `/uploads/${path.basename(f.file_url)}`,
   }));
-  // if every assigned evaluator has submitted an evaluation in current round, append a summary event
-  if (currentRoundEvals2 && currentRoundEvals2.length && evaluators && evaluators.length) {
-    const uniqueEvals = new Set(currentRoundEvals2.map(ev => ev.evaluator_id));
+  // if every assigned evaluator has submitted at least one evaluation (current round), append a summary event
+  if (evaluations && evaluations.length && evaluators && evaluators.length) {
+    const currentRoundEvalsDetail = evaluations.filter(ev => (ev.revision_round ?? 0) === (thesis.revision_round ?? 0));
+    const uniqueEvals = new Set(currentRoundEvalsDetail.map(ev => ev.evaluator_id));
     if (uniqueEvals.size === evaluators.length) {
-      const recs = currentRoundEvals2.map((ev, index) => {
+      const recs = currentRoundEvalsDetail.map((ev, index) => {
         let text = (shouldHideBlind && isBlindReview) ? `Evaluador ${index + 1}` : (ev.evaluator_name || 'Evaluador');
         if (ev.general_observations) text += `: ${ev.general_observations}`;
         if (ev.concept) text += ` (concepto: ${ev.concept})`;
         return text;
       }).join("\n\n");
       const filesList = [];
-      for (const ev of currentRoundEvals2) {
+      for (const ev of currentRoundEvalsDetail) {
         if (ev.files && ev.files.length) {
           ev.files.forEach((f) => filesList.push({ name: f.file_name, url: f.file_url }));
         }
       }
-      const allAccepted2 = currentRoundEvals2.every(ev => ev.concept === 'accepted');
+      const allAccepted2 = currentRoundEvalsDetail.every(ev => ev.concept === 'accepted');
       timeline.push({
         id: uuidv4(),
         status: (allAccepted2 && !thesis.defense_date) ? 'awaiting_defense' : 'evaluations_summary',
         label: (allAccepted2 && !thesis.defense_date) ? 'Tesis aprobada — esperando programación de sustentación' : 'Evaluaciones recibidas',
         completed: 1,
-        date: Math.max(...currentRoundEvals2.map((e) => e.submitted_at || 0)),
+        date: Math.max(...evaluations.map((e) => e.submitted_at || 0)),
         evaluatorRecommendations: recs,
         evaluatorFiles: filesList,
       });
@@ -3769,22 +3754,7 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   }
   // sort after possibly inserting summary so defense_scheduled (with higher timestamp) comes last
   const normTs2 = (v) => (v && v > 1e12) ? Math.floor(v / 1000) : (v || 0);
-  const eventPriority2 = (status) => {
-    if (status === 'status_changed') return 0;
-    if (status === 'concept_issued') return 1;
-    if (status === 'evaluation_submitted') return 2;
-    if (status === 'evaluations_summary') return 3;
-    if (status === 'awaiting_defense') return 4;
-    return 1;
-  };
-  timeline.sort((a, b) => {
-    const da = normTs2(a.date), db_ = normTs2(b.date);
-    if (Math.abs(da - db_) < 5) {
-      const pa = eventPriority2(a.status), pb = eventPriority2(b.status);
-      if (pa !== pb) return pa - pb;
-    }
-    return da - db_;
-  });
+  timeline.sort((a,b) => normTs2(a.date) - normTs2(b.date));
 
   // Compute weighted scores for the student view
   const weighted = computeFinalWeightedForThesis(id);

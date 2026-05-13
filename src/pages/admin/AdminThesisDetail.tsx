@@ -904,7 +904,7 @@ export default function AdminThesisDetail() {
                   {student.institutional_email && (
                     <p><strong>Correo institucional:</strong> {student.institutional_email}</p>
                   )}
-                  {student.email && student.email !== student.institutional_email && (
+                  {student.email && student.email !== student.institutional_email && !student.email.endsWith('@estudiante.local') && (
                     <p><strong>Correo personal:</strong> {student.email}</p>
                   )}
                   {student.cvlac && (
@@ -1025,12 +1025,15 @@ export default function AdminThesisDetail() {
                   .sort((a:any,b:any) => (b.revision_round??0)-(a.revision_round??0))[0];
                 const presEval = thesis.evaluations?.find((x:any) => x.evaluator_id===ev.id && x.evaluation_type==='presentation');
                 // check if evaluator had a previous round evaluation but not current
-                const hasPrevEval = (thesis.revision_round ?? 0) > 0 && !docEval && thesis.evaluations?.some(
+                const prevEvalAccepted = thesis.evaluations?.some(
+                  (x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation' && x.concept==='accepted'
+                );
+                const hasPrevEval = (thesis.revision_round ?? 0) > 0 && !docEval && !prevEvalAccepted && thesis.evaluations?.some(
                   (x:any) => x.evaluator_id===ev.id && x.evaluation_type!=='presentation'
                 );
                 // compute due-date status badge when evaluation still pending
                 let dueStatus: JSX.Element | null = null;
-                const evalPending = !(docSent && (thesis.defense_date ? docSent && presSent : docSent));
+                const evalPending = !prevEvalAccepted && !(docSent && (thesis.defense_date ? docSent && presSent : docSent));
                 if (hasPrevEval) {
                   dueStatus = (
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-blue-100 text-blue-700 border border-blue-200">
@@ -1070,7 +1073,7 @@ export default function AdminThesisDetail() {
                     );
                   }
                 }
-                const canChangeEvaluator = !docSent && !hasPrevEval;
+                const canChangeEvaluator = !docSent && !hasPrevEval && !prevEvalAccepted;
                 return (
                   <AccordionItem
                     key={
@@ -1086,7 +1089,7 @@ export default function AdminThesisDetail() {
                     <AccordionTrigger className="hover:no-underline py-4 flex justify-between items-center">
                       <span className="flex items-center gap-2 flex-wrap">
                         <span>{ev.name}{ev.is_blind ? ' (par ciego)' : ''}{ev.institutional_email ? ` — ${ev.institutional_email}` : ''}</span>
-                        {docEval?.concept === 'accepted' && (
+                        {(docEval?.concept === 'accepted' || (!docEval && prevEvalAccepted)) && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase bg-success/10 text-success border border-success/20">Aceptado para Sustentación</span>
                         )}
                         {docEval?.concept === 'minor_changes' && (
@@ -1530,8 +1533,15 @@ export default function AdminThesisDetail() {
 
           </>
         )}
-        {/* schedule defense when status indicates sustentación */}
-        {thesis.status === 'sustentacion' && (
+        {/* schedule defense when status indicates sustentación OR all evaluators approved (awaiting_defense) OR evaluacion_terminada with all accepted */}
+        {(thesis.status === 'sustentacion' || thesis.timeline?.some((e: any) => e.status === 'awaiting_defense') ||
+          (thesis.status === 'evaluacion_terminada' && thesis.evaluators?.length > 0 &&
+            thesis.evaluators.every((ev: any) => {
+              const evalAccepted = thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.concept === 'accepted');
+              const currentRoundEval = thesis.evaluations?.find((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.revision_round === (thesis.revision_round ?? 0));
+              return evalAccepted || currentRoundEval?.concept === 'accepted';
+            })
+          )) && (
           <div className="mb-6 border p-4 rounded bg-info/10">
             <h3 className="font-semibold mb-2">Programar Sustentación</h3>
             {thesis.defense_date ? (

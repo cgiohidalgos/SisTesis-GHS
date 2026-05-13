@@ -6,11 +6,11 @@ interface StatusBadgeProps {
 }
 
 const colorClasses: Record<string, string> = {
-  info: "bg-info/15 text-info",
-  warning: "bg-warning/15 text-warning",
-  accent: "bg-accent/15 text-accent-foreground",
-  destructive: "bg-destructive/15 text-destructive",
-  success: "bg-success/15 text-success",
+  info: "bg-info/20 text-info border border-info/50",
+  warning: "bg-warning/20 text-warning border border-warning/50",
+  accent: "bg-accent/20 text-accent-foreground border border-accent/50",
+  destructive: "bg-destructive/20 text-destructive border border-destructive/50",
+  success: "bg-success/20 text-success border border-success/50",
 };
 
 export default function StatusBadge({ status }: StatusBadgeProps) {

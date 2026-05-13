@@ -17,6 +17,7 @@ const EVENT_LABELS = {
   defense_scheduled:    'Sustentación programada',
   act_signature:        'Firma de acta registrada',
   status_changed:       'Estado de la tesis actualizado',
+  second_evaluation_reminder: 'Recordatorio de segunda evaluación',
 };
 
 function createTransport(config) {
@@ -496,6 +497,84 @@ function startReminderCron(db) {
         console.log(`[cron] Recordatorio enviado a ${row.institutional_email} (tesis: ${row.title})`);
       }
     }
+
+    // Recordatorio de segunda evaluación:
+    // Si un evaluador pidió cambios en la ronda anterior y el estudiante ya envió revisión,
+    // enviar recordatorio a partir del día 2 y luego diario hasta que ese evaluador evalúe la ronda actual.
+    const secondEvalCandidates = db.prepare(`
+      SELECT te.id as thesis_evaluator_id,
+             te.evaluator_id,
+             te.thesis_id,
+             t.title,
+             t.revision_round,
+             u.institutional_email,
+             u.full_name,
+             (
+               SELECT MAX(tt.created_at)
+               FROM thesis_timeline tt
+               WHERE tt.thesis_id = t.id AND tt.event_type = 'revision_submitted'
+             ) as last_revision_submitted_at
+      FROM thesis_evaluators te
+      JOIN theses t ON t.id = te.thesis_id
+      JOIN users u ON u.id = te.evaluator_id
+      JOIN evaluations prev ON prev.thesis_evaluator_id = te.id
+      WHERE t.status NOT IN ('finalized', 'deleted')
+        AND t.revision_round > 0
+        AND prev.evaluation_type = 'document'
+        AND prev.revision_round = t.revision_round - 1
+        AND prev.submitted_at IS NOT NULL
+        AND prev.concept IN ('minor_changes', 'major_changes')
+        AND NOT EXISTS (
+          SELECT 1 FROM evaluations curr
+          WHERE curr.thesis_evaluator_id = te.id
+            AND curr.evaluation_type = 'document'
+            AND curr.revision_round = t.revision_round
+            AND curr.submitted_at IS NOT NULL
+        )
+    `).all();
+
+    for (const row of secondEvalCandidates) {
+      if (!row.institutional_email || !row.last_revision_submitted_at) continue;
+
+      const daysWaiting = Math.floor((nowSec - row.last_revision_submitted_at) / daySec);
+      if (daysWaiting < 2) continue;
+
+      // Evitar enviar recordatorio duplicado el mismo día
+      const alreadySent = db.prepare(`
+        SELECT id FROM notifications
+        WHERE user_id = ? AND event_type = 'second_evaluation_reminder'
+          AND related_thesis_id = ? AND created_at > ?
+      `).get(row.evaluator_id, row.thesis_id, nowSec - daySec);
+      if (alreadySent) continue;
+
+      const accessBlock = buildEvaluatorAccessBlock(db, row.evaluator_id, row.institutional_email);
+      const subject = 'Recordatorio: tienes pendiente la segunda evaluación de una tesis';
+      const body = `
+        <div style="font-family:sans-serif;max-width:600px">
+          <h2 style="color:#1a1a2e">Recordatorio de segunda evaluación pendiente</h2>
+          <p>Hola <strong>${row.full_name || 'Evaluador'}</strong>,</p>
+          <p>
+            El estudiante ya envió la versión corregida de la tesis y está pendiente tu
+            <strong>segunda evaluación</strong>.
+          </p>
+          <div style="background:#f8f9fa;border-left:4px solid #1a1a2e;padding:12px 16px;margin:16px 0;border-radius:4px">
+            <p style="margin:4px 0;font-size:16px;font-weight:bold">${row.title}</p>
+            <p style="margin:4px 0">Han pasado <strong>${daysWaiting}</strong> día(s) desde que el estudiante envió la revisión.</p>
+            <p style="margin:4px 0">Ronda actual de revisión: <strong>${row.revision_round}</strong></p>
+          </div>
+          <p>Por favor ingresa al sistema y registra tu evaluación de esta nueva versión.</p>
+          <p><a href="https://sistesis.site/" style="color:#1a1a2e">Ingresar a SisTesis</a></p>
+          ${accessBlock}
+          <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+          <p style="color:#888;font-size:12px">Sistema SisTesis — Facultad de Ingeniería USB Cali</p>
+        </div>
+      `;
+
+      const success = await sendEmail(db, row.institutional_email, subject, body, null);
+      logNotification(db, row.evaluator_id, 'second_evaluation_reminder', subject, body, row.thesis_id, success ? null : 'failed');
+      console.log(`[cron] Recordatorio de segunda evaluación enviado a ${row.institutional_email} (tesis: ${row.title})`);
+    }
+
     console.log('[cron] Recordatorios completados.');
   }, { timezone: 'America/Bogota' });
 

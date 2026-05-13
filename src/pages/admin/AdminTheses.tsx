@@ -6,7 +6,7 @@ import { Download, Search, X, AlertTriangle, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/utils";
-import { statusLabels } from "@/lib/mock-data";
+import { statusLabels, filterableStatuses } from "@/lib/mock-data";
 import {
   Pagination,
   PaginationContent,
@@ -136,7 +136,7 @@ export default function AdminTheses() {
     const q = search.toLowerCase().trim();
     return theses
       .filter(t => !q || t.title.toLowerCase().includes(q) || (t.students || []).some((s: any) => s.name?.toLowerCase().includes(q)))
-      .filter(t => !statusFilter || t.status === statusFilter)
+      .filter(t => !statusFilter || (statusFilter === 'defense_scheduled' ? !!(t as any).defense_date : t.status === statusFilter))
       .filter(t => !programFilter || (t.programs || []).some((p: any) => p.name === programFilter));
   }, [theses, search, statusFilter, programFilter]);
 
@@ -212,8 +212,8 @@ export default function AdminTheses() {
             className="w-full sm:w-auto px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
             <option value="">Todos los estados</option>
-            {Object.entries(statusLabels).map(([key, label]) => (
-              <option key={key} value={key}>{label}</option>
+            {filterableStatuses.map((key) => (
+              <option key={key} value={key}>{statusLabels[key]}</option>
             ))}
           </select>
           {allPrograms.length > 0 && (

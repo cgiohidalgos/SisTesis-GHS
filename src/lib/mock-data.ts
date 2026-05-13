@@ -123,6 +123,16 @@ export const statusLabels: Record<ThesisStatus, string> = {
   evaluator_thanks: "Evaluación completada",
 };
 
+// Only real thesis statuses that appear in the DB (excludes timeline-only / internal events)
+export const filterableStatuses: ThesisStatus[] = [
+  "submitted",
+  "evaluators_assigned",
+  "en_evaluacion",
+  "evaluacion_terminada",
+  "defense_scheduled",
+  "finalized",
+];
+
 export const statusColors: Record<ThesisStatus, string> = {
   submitted: "info",
   admin_review: "warning",
@@ -140,7 +150,7 @@ export const statusColors: Record<ThesisStatus, string> = {
   revision_minima: "warning",
   revision_cuidados: "destructive",
   revision_submitted: "info",
-  second_evaluation: "warning",
+  second_evaluation: "info",
   sustentacion: "info",
   evaluator_thanks: "success",
 };

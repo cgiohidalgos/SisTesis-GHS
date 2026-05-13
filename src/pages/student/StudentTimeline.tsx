@@ -194,7 +194,7 @@ export default function StudentTimeline() {
                       {student.institutional_email && (
                         <p><strong>Correo institucional:</strong> {student.institutional_email}</p>
                       )}
-                      {student.email && student.email !== student.institutional_email && (
+                      {student.email && student.email !== student.institutional_email && !student.email.endsWith('@estudiante.local') && (
                         <p><strong>Correo personal:</strong> {student.email}</p>
                       )}
                       {student.cvlac && (

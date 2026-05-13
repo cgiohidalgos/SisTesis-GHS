@@ -140,7 +140,7 @@ export default function DirectorThesisDetail() {
                   {student.student_code && <p><strong>Código:</strong> {student.student_code}</p>}
                   {student.cedula && <p><strong>Cédula:</strong> {student.cedula}</p>}
                   {student.institutional_email && <p><strong>Correo institucional:</strong> {student.institutional_email}</p>}
-                  {student.email && student.email !== student.institutional_email && <p><strong>Correo personal:</strong> {student.email}</p>}
+                  {student.email && student.email !== student.institutional_email && !student.email.endsWith('@estudiante.local') && <p><strong>Correo personal:</strong> {student.email}</p>}
                   {student.cvlac && <p><strong>CVLAC:</strong> {student.cvlac}</p>}
                 </div>
               ))}
@@ -399,16 +399,23 @@ export default function DirectorThesisDetail() {
         )}
 
 
-        {id && user && thesis?.defense_date && (
-          <DigitalSignSection
-            thesisId={id}
-            userName={user.full_name || ""}
-            myRole="director"
-            myUserId={user.id}
-            showAllPending={true}
-            canDelete={true}
-          />
-        )}
+        {id && user && thesis?.defense_date && (() => {
+          const assignedIds: string[] = (thesis.evaluators || []).map((e: any) => e.id).filter(Boolean);
+          const allEvals: any[] = thesis.evaluations || [];
+          const presEvalIds = new Set(allEvals.filter((e: any) => e.evaluation_type === 'presentation').map((e: any) => e.evaluator_id));
+          const allPresDone = assignedIds.length > 0 && assignedIds.every((eid: string) => presEvalIds.has(eid));
+          if (!allPresDone) return null;
+          return (
+            <DigitalSignSection
+              thesisId={id}
+              userName={user.full_name || ""}
+              myRole="director"
+              myUserId={user.id}
+              showAllPending={true}
+              canDelete={true}
+            />
+          );
+        })()}
       </div>
     </AppLayout>
   );
