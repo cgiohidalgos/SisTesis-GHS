@@ -312,17 +312,26 @@ function computeFinalWeightedForThesis(thesisId) {
   const presWeight = Number((db.prepare('SELECT value FROM settings WHERE key = ?').get('presentation_weight') || {}).value || 30);
   const thesis = db.prepare('SELECT defense_date, final_weighted_override, status FROM theses WHERE id = ?').get(thesisId);
   const evaluations = db.prepare(
-    `SELECT e.final_score, e.evaluation_type
+    `SELECT te.evaluator_id, e.final_score, e.evaluation_type, e.revision_round
      FROM evaluations e
      JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
-     WHERE te.thesis_id = ?`
+     WHERE te.thesis_id = ? AND e.final_score IS NOT NULL`
   ).all(thesisId);
-  const docScores = evaluations.filter(e => e.evaluation_type !== 'presentation' && e.final_score != null).map(e => Number(e.final_score));
-  const presScores = evaluations.filter(e => e.evaluation_type === 'presentation' && e.final_score != null).map(e => Number(e.final_score));
-  const docAvg = docScores.length ? (docScores.reduce((a,b)=>a+b,0) / docScores.length) : 0;
-  const presAvg = presScores.length ? (presScores.reduce((a,b)=>a+b,0) / presScores.length) : 0;
+  // For each evaluator+type, keep only the highest revision_round
+  const latestByEvaluatorType = {};
+  for (const e of evaluations) {
+    const key = e.evaluator_id + '|' + e.evaluation_type;
+    if (!latestByEvaluatorType[key] || e.revision_round > latestByEvaluatorType[key].revision_round) {
+      latestByEvaluatorType[key] = e;
+    }
+  }
+  const latest = Object.values(latestByEvaluatorType);
+  const docScores = latest.filter(e => e.evaluation_type !== 'presentation').map(e => Number(e.final_score));
+  const presScores = latest.filter(e => e.evaluation_type === 'presentation').map(e => Number(e.final_score));
+  const docAvg = docScores.length ? Math.round(docScores.reduce((a,b)=>a+b,0) / docScores.length * 10) / 10 : 0;
+  const presAvg = presScores.length ? Math.round(presScores.reduce((a,b)=>a+b,0) / presScores.length * 10) / 10 : 0;
   const computed = thesis && thesis.defense_date
-    ? (docAvg * (docWeight / 100)) + (presAvg * (presWeight / 100))
+    ? Math.round(((docAvg * (docWeight / 100)) + (presAvg * (presWeight / 100))) * 10) / 10
     : docAvg;
   // if override exists and thesis is finalized, use it
   const finalScore = (thesis && thesis.status === 'finalized' && thesis.final_weighted_override != null)
@@ -3600,13 +3609,20 @@ app.get('/theses/:id', authMiddleware, (req, res) => {
   ).all(id);
 
   // also load any evaluations and attach scores/files (needed for evaluators)
+  // Only keep the latest revision_round per evaluator+type to avoid double-counting in grade
   const evaluations = db.prepare(
     `SELECT e.*, te.evaluator_id, te.id as thesis_evaluator_id, u.full_name as evaluator_name
      FROM evaluations e
      JOIN thesis_evaluators te ON te.id = e.thesis_evaluator_id
      LEFT JOIN users u ON u.id = te.evaluator_id
-     WHERE te.thesis_id = ?`
-  ).all(id);
+     WHERE te.thesis_id = ?
+     AND e.id IN (
+       SELECT e2.id FROM evaluations e2
+       JOIN thesis_evaluators te2 ON te2.id = e2.thesis_evaluator_id
+       WHERE te2.thesis_id = ? AND te2.evaluator_id = te.evaluator_id AND e2.evaluation_type = e.evaluation_type
+       ORDER BY e2.revision_round DESC, e2.submitted_at DESC LIMIT 1
+     )`
+  ).all(id, id);
   for (const ev of evaluations) {
     const evfiles = db.prepare(
       `SELECT id, file_name, file_url FROM evaluation_files WHERE evaluation_id = ?`
@@ -3866,9 +3882,14 @@ function recalcThesisStatus(thesis_id) {
   // All submitted and all accepted → evaluation complete
   if (evals.every(c => c === 'accepted')) {
     newStatus = 'evaluacion_terminada';
+  } else if (evals.some(c => c === 'major_changes')) {
+    newStatus = 'revision_cuidados';
+  } else if (evals.some(c => c === 'minor_changes')) {
+    newStatus = 'revision_minima';
+  } else {
+    // Mixed results with no changes requested (e.g. some accepted, some null) → en_evaluacion
+    newStatus = 'en_evaluacion';
   }
-  // If any evaluator requested changes, stay in en_evaluacion so student can correct and resubmit
-  // (newStatus remains null → no status change)
   
   if (newStatus && th.status !== newStatus) {
     db.prepare('UPDATE theses SET status = ? WHERE id = ?').run(newStatus, thesis_id);
@@ -3951,8 +3972,11 @@ app.post('/evaluations', authMiddleware, requireRole('evaluator'), (req, res) =>
   // fetch evaluator full name (stored on req.user by auth middleware)
   const evaluatorRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
   const evaluatorName = (evaluatorRow && evaluatorRow.full_name) ? evaluatorRow.full_name : 'Evaluador';
+  const isBlindEvaluator = db.prepare('SELECT is_blind FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesis_id, req.user.id);
   const descType = type === 'presentation' ? 'sustentación' : 'documento';
-  const evalDesc = `Evaluación de ${descType} enviada por ${evaluatorName}`;
+  const evalDesc = (isBlindEvaluator && isBlindEvaluator.is_blind)
+    ? `Evaluación de ${descType} enviada por un evaluador`
+    : `Evaluación de ${descType} enviada por ${evaluatorName}`;
   db.prepare('INSERT INTO thesis_timeline (id, thesis_id, event_type, description, completed, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(uuidv4(), thesis_id, 'evaluation_submitted', evalDesc, 1, now);
   notifyTimeline(db, thesis_id, 'evaluation_submitted', evalDesc, req.user.id).catch(console.error);
@@ -4573,6 +4597,20 @@ app.get('/theses/:id/acta/download-final-signed', authMiddleware, async (req, re
 
   if (!isAdmin && !isEvaluator && !isDirector) {
     return res.status(403).json({ error: 'No tiene permisos para descargar' });
+  }
+
+  // Si hay PDFs firmados subidos por evaluadores/directores, devolver el más reciente directamente
+  const latestUploadedSig = db.prepare(
+    'SELECT * FROM digital_signatures WHERE thesis_id = ? AND pdf_url IS NOT NULL ORDER BY signed_at DESC LIMIT 1'
+  ).get(thesisId);
+  if (latestUploadedSig && latestUploadedSig.pdf_url) {
+    const pdfPath = path.join(uploadDir, path.basename(latestUploadedSig.pdf_url));
+    if (fs.existsSync(pdfPath)) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="acta-final-firmada-${thesisId}.pdf"`);
+      return res.sendFile(pdfPath);
+    }
   }
 
   // Only serve stored PDF if it was a manual upload (not a drawn/digital signature flow)
@@ -5589,13 +5627,13 @@ function generateActaDocxLegacy({
       (s.signer_name && (_strip(s.signer_name) === _strip(ev.name) || s.signer_name.toLowerCase() === ev.name.toLowerCase()))
     ));
     // Use name with title from signature if available
-    allSigners.push({ name: sig ? sig.signer_name : ev.name, role: 'Jurado Evaluador', sig });
+    allSigners.push({ name: (sig ? sig.signer_name : ev.name).toUpperCase(), role: 'Jurado Evaluador', sig });
   });
 
   // 2. Directores de proyecto
   directors.forEach((d, i) => {
     const sig = signatures.find(s => s.signer_role === 'director' && (_strip(s.signer_name) === _strip(d) || s.signer_name.toLowerCase() === d.toLowerCase()));
-    allSigners.push({ name: sig ? sig.signer_name : d, role: 'Director de Proyecto de Grado', sig });
+    allSigners.push({ name: (sig ? sig.signer_name : d).toUpperCase(), role: 'Director de Proyecto de Grado', sig });
   });
 
   // 3. Directores de programa
@@ -5603,7 +5641,7 @@ function generateActaDocxLegacy({
   const progDirSigs = signatures.filter(s => s.signer_role === 'program_director');
   programDirectors.forEach((pd, i) => {
     const sig = progDirSigs[i] || progDirSigs[0] || null;
-    allSigners.push({ name: sig ? sig.signer_name : pd.name, role: `Director del Programa de ${pd.program || programName || 'Programa Académico'}`, sig });
+    allSigners.push({ name: (sig ? sig.signer_name : pd.name).toUpperCase(), role: `Director del Programa de ${pd.program || programName || 'Programa Académico'}`, sig });
   });
 
   // Dividir signers en filas de máximo 2 columnas
@@ -5619,9 +5657,11 @@ function generateActaDocxLegacy({
   const sigImgData = []; // { signer, relId, buffer, ext }
   let imgRelIdCounter = 100;
   allSigners.forEach((signer) => {
-    const sigFileUrl = signer.sig && (signer.sig.pdf_url || signer.sig.file_url);
-    if (sigFileUrl) {
-      const imgPath = path.join(uploadDir, path.basename(sigFileUrl));
+    // Solo usar signature_image_url (imagen PNG/JPG dibujada), nunca pdf_url (es el acta completa)
+    const sigImgUrl = signer.sig && (signer.sig.signature_image_url || signer.sig.file_url);
+    const isSigImage = sigImgUrl && !sigImgUrl.toLowerCase().endsWith('.pdf');
+    if (isSigImage) {
+      const imgPath = path.join(uploadDir, path.basename(sigImgUrl));
       if (fs.existsSync(imgPath)) {
         try {
           const buffer = fs.readFileSync(imgPath);
@@ -5652,8 +5692,7 @@ function generateActaDocxLegacy({
       const drawingXml = makeImgDrawing(signer._imgRelId, wEmu, hEmu, imgDrawingCounter++);
       sigContent = `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr><w:r>${drawingXml}</w:r></w:p>`;
     } else {
-      const sigLine = signer.sig ? e(`[Firma digital: ${signer.sig.signer_name}]`) : '________________';
-      sigContent = `${emptyLine.repeat(4)}<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run(sigLine)}</w:p>`;
+      sigContent = `${emptyLine.repeat(4)}<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run('________________')}</w:p>`;
     }
     return `<w:tc>
 <w:tcPr><w:tcW w:type="dxa" w:w="${colW}"/>
@@ -5662,6 +5701,7 @@ function generateActaDocxLegacy({
 ${sigContent}
 <w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${bold(signer.name)}</w:p>
 <w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run(signer.role)}</w:p>
+${signer.sig && !signer._imgRelId ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="40"/></w:pPr>${run('(Firma digital registrada)')}</w:p>` : ''}
 </w:tc>`;
   }
 
@@ -5711,7 +5751,7 @@ ${sigTableRows}
     para(bold('OBSERVACIONES: ') + run('Posterior a la revisión del documento y a la sustentación del proyecto, se realizan las siguientes observaciones, por parte del jurado evaluador:')),
     para(run(e(observaciones || 'Sin observaciones registradas.'))),
     emptyPara(),
-    centerPara(bold('CALIFICACIÓN DE PROYECTO DE GRADO')),
+    `<w:p><w:pPr><w:pageBreakBefore/><w:jc w:val="center"/><w:spacing w:line="276" w:lineRule="auto" w:before="0" w:after="160"/></w:pPr>${bold('CALIFICACIÓN DE PROYECTO DE GRADO')}</w:p>`,
     para(run('Marque con una "X" el ítem correspondiente a la calificación asignada.'), 'left'),
     emptyPara(),
     para(run(`APROBADA LAUREADA ( ${marca('APROBADA LAUREADA')} )`), 'left'),
@@ -5970,7 +6010,7 @@ function generateMeritoriaDocx({ title, students, directors, date, signatures })
   </w:tblBorders>
   <w:tblCellSpacing w:w="360" w:type="dxa"/>
 </w:tblPr>
-<w:tr>${sigCell(sigLine1, dir1, 'Director de Proyecto de Grado')}${dir2 ? sigCell(sigLine2, dir2, 'Director de Proyecto de Grado') : ''}</w:tr>
+<w:tr>${sigCell(sigLine1, dir1, 'Evaluador')}${dir2 ? sigCell(sigLine2, dir2, 'Evaluador') : ''}</w:tr>
 </w:tbl>`;
 
   const body = [
@@ -5990,8 +6030,12 @@ function generateMeritoriaDocx({ title, students, directors, date, signatures })
     justPara(run('Durante el desarrollo del proyecto, los estudiantes demostraron una alta capacidad de análisis, diseño e implementación de soluciones tecnológicas avanzadas, evidenciando un nivel de madurez académica y profesional acorde con el ejercicio de la ingeniería de software.')),
     justPara(run('Adicionalmente, tras la revisión del documento y del proceso de desarrollo del trabajo, no se evidencian indicios de uso inadecuado de herramientas de inteligencia artificial en la elaboración del mismo.')),
     justPara(run('Por lo anterior, considero que este trabajo reúne los méritos suficientes para ser postulado como Trabajo de Grado Meritorio, tanto por la calidad académica de su desarrollo como por el potencial de aplicabilidad de sus resultados en contextos reales.')),
+    `<w:p><w:pPr><w:pageBreakBefore/><w:spacing w:line="276" w:lineRule="auto" w:before="0" w:after="0"/></w:pPr></w:p>`,
+    emptyPara(),
     emptyPara(),
     justPara(run('Cordialmente,')),
+    emptyPara(),
+    emptyPara(),
     emptyPara(),
     emptyPara(),
     sigTable,
@@ -6104,7 +6148,12 @@ app.get('/theses/:id/meritoria/status', authMiddleware, (req, res) => {
   const thesisId = req.params.id;
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
   const isAdmin = roles.includes('admin') || roles.includes('superadmin');
-  if (!isAdmin) return res.status(403).json({ error: 'forbidden' });
+  const isEvaluator = roles.includes('evaluator') || roles.includes('director');
+  if (!isAdmin && !isEvaluator) return res.status(403).json({ error: 'forbidden' });
+  if (!isAdmin && isEvaluator) {
+    const assigned = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesisId, req.user.id);
+    if (!assigned) return res.status(403).json({ error: 'forbidden' });
+  }
 
   const ctx = getActaContext(thesisId);
   if (!ctx) return res.status(404).json({ error: 'not found' });
@@ -6570,10 +6619,21 @@ app.post('/theses/:id/meritoria/generate-signing-token', authMiddleware, (req, r
   
   const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
   const isAdmin = roles.includes('admin') || roles.includes('superadmin');
-  if (!isAdmin) return res.status(403).json({ error: 'forbidden' });
+  const isEvaluator = roles.includes('evaluator') || roles.includes('director');
+
+  if (!isAdmin && !isEvaluator) return res.status(403).json({ error: 'forbidden' });
 
   const ctx = getActaContext(thesisId);
   if (!ctx) return res.status(404).json({ error: 'not found' });
+
+  // Evaluadores solo pueden generar token para su propio nombre
+  if (!isAdmin && isEvaluator) {
+    const assigned = db.prepare('SELECT id FROM thesis_evaluators WHERE thesis_id = ? AND evaluator_id = ?').get(thesisId, req.user.id);
+    if (!assigned) return res.status(403).json({ error: 'forbidden' });
+    const userRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.user.id);
+    const myName = (userRow?.full_name || '').toLowerCase();
+    if (myName !== (signerName || '').toLowerCase()) return res.status(403).json({ error: 'Solo puede firmar con su propio nombre' });
+  }
 
   // Generar token único
   const token = crypto.randomBytes(24).toString('hex');
@@ -6611,7 +6671,7 @@ app.get('/sign/meritoria/token/:token', (req, res) => {
     signerRole: actualRole,
     thesis: { title: ctx.thesis.title },
     students: ctx.students,
-    directors: ctx.directors,
+    directors: ctx.evaluators.map(e => e.name),
   });
 });
 
@@ -6634,7 +6694,7 @@ app.get('/sign/meritoria/token/:token/download-pdf', async (req, res) => {
   const buf = generateMeritoriaDocx({
     title: ctx.thesis.title || '',
     students: ctx.students,
-    directors: ctx.directors,
+    directors: ctx.evaluators.map(e => e.name),
     date,
     signatures: merSigs,
   });

@@ -38,6 +38,7 @@ export default function EvaluatorRubric() {
   const [thesis, setThesis] = useState<any>(null);
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
   const [actaStatus, setActaStatus] = useState<any>(null);
+  const [meritoriaStatus, setMeritoriaStatus] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
   const [downloadingRubric, setDownloadingRubric] = useState<string>("");
   const [programDocRubric, setProgramDocRubric] = useState<any[] | null>(null);
@@ -60,6 +61,13 @@ export default function EvaluatorRubric() {
         });
         if (actaResp.ok) {
           setActaStatus(await actaResp.json());
+        }
+
+        const merResp = await fetch(`${API_BASE}/theses/${id}/meritoria/status`, {
+          headers: { Authorization: token ? "Bearer " + token : "" },
+        });
+        if (merResp.ok) {
+          setMeritoriaStatus(await merResp.json());
         }
 
         const programId = data?.programs?.[0]?.id;
@@ -691,6 +699,61 @@ export default function EvaluatorRubric() {
               }
               return <ThesisTimeline events={events} isBlindReview={thesis.evaluators?.some((e: any) => e.is_blind)} isAdmin={false} programDocRubric={programDocRubric ?? undefined} programPresRubric={programPresRubric ?? undefined} />;
             })()}
+          </div>
+        )}
+
+        {/* Carta de Recomendación Meritoria */}
+        {meritoriaStatus?.qualifies && (thesis?.status === 'sustentacion' || thesis?.status === 'finalized') && (
+          <div className="border rounded-xl overflow-hidden bg-white dark:bg-slate-950">
+            <div className="bg-amber-50 dark:bg-amber-900/20 px-6 py-4 border-b border-border">
+              <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300 uppercase tracking-widest">🏅 Carta de Recomendación Meritoria</h3>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-muted-foreground mb-4">
+                La tesis obtuvo una nota de <strong>{Number(meritoriaStatus.score).toFixed(1)}</strong>, por lo que requiere carta de recomendación meritoria firmada por los evaluadores.
+              </p>
+              <div className="space-y-2 mb-4">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Firmas de evaluadores:</p>
+                {meritoriaStatus.directors.map((name: string, idx: number) => {
+                  const signed = meritoriaStatus.signatures.some((s: any) => s.signer_name.toLowerCase() === name.toLowerCase());
+                  const isMe = user?.full_name?.toLowerCase() === name.toLowerCase();
+                  return (
+                    <div key={idx} className="flex items-center gap-3 text-sm">
+                      <span className={signed ? 'text-green-600' : 'text-muted-foreground'}>{signed ? '✓' : '○'}</span>
+                      <span className={signed ? 'text-green-700 dark:text-green-400 font-medium' : ''}>{name}</span>
+                      {signed
+                        ? <span className="text-xs text-muted-foreground">(firmado)</span>
+                        : isMe && (
+                          <button
+                            className="ml-2 px-3 py-1 text-xs rounded bg-amber-500 hover:bg-amber-600 text-white font-medium transition-colors"
+                            onClick={async () => {
+                              try {
+                                const token = localStorage.getItem('token');
+                                const resp = await fetch(`${API_BASE}/theses/${thesis.id}/meritoria/generate-signing-token`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+                                  body: JSON.stringify({ signerName: name, signerRole: 'evaluator' }),
+                                });
+                                if (!resp.ok) throw new Error((await resp.json()).error || 'Error');
+                                const { signUrl } = await resp.json();
+                                window.open(signUrl, '_blank');
+                              } catch (e: any) {
+                                toast.error(e.message || 'No se pudo generar el enlace de firma');
+                              }
+                            }}
+                          >
+                            ✍️ Firmar
+                          </button>
+                        )
+                      }
+                    </div>
+                  );
+                })}
+              </div>
+              {meritoriaStatus.allSigned && (
+                <p className="text-sm text-green-600 font-semibold">✓ Todos los evaluadores han firmado la carta meritoria.</p>
+              )}
+            </div>
           </div>
         )}
 

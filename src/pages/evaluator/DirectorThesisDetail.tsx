@@ -57,6 +57,7 @@ export default function DirectorThesisDetail() {
   const [thesis, setThesis] = useState<any>(null);
   const [weights, setWeights] = useState<{ doc: number; presentation: number }>({ doc: 70, presentation: 30 });
   const [actaStatus, setActaStatus] = useState<any>(null);
+  const [meritoriaStatus, setMeritoriaStatus] = useState<any>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -75,16 +76,23 @@ export default function DirectorThesisDetail() {
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setActaStatus(data); })
       .catch(() => {});
+
+    fetch(`${API_BASE}/theses/${id}/meritoria/status`, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setMeritoriaStatus(data); })
+      .catch(() => {});
   }, [id]);
 
   const consolidated = (() => {
     if (!thesis?.evaluations?.length) return null;
     const docScores = thesis.evaluations.filter((e: any) => e.evaluation_type !== 'presentation').map((e: any) => e.final_score).filter((n: any) => n != null);
     const presScores = thesis.evaluations.filter((e: any) => e.evaluation_type === 'presentation').map((e: any) => e.final_score).filter((n: any) => n != null);
-    const docAvg = docScores.length ? docScores.reduce((a: number, b: number) => a + b, 0) / docScores.length : 0;
-    const presAvg = presScores.length ? presScores.reduce((a: number, b: number) => a + b, 0) / presScores.length : 0;
+    const docAvgRaw = docScores.length ? docScores.reduce((a: number, b: number) => a + b, 0) / docScores.length : 0;
+    const presAvgRaw = presScores.length ? presScores.reduce((a: number, b: number) => a + b, 0) / presScores.length : 0;
+    const docAvg = Math.round(docAvgRaw * 10) / 10;
+    const presAvg = Math.round(presAvgRaw * 10) / 10;
     let finalWeighted = thesis.defense_date
-      ? (docAvg * (weights.doc / 100)) + (presAvg * (weights.presentation / 100))
+      ? Math.round(((docAvg * (weights.doc / 100)) + (presAvg * (weights.presentation / 100))) * 10) / 10
       : docAvg;
     if (thesis.status === 'finalized' && thesis.final_weighted_override != null) {
       finalWeighted = thesis.final_weighted_override;
@@ -98,7 +106,7 @@ export default function DirectorThesisDetail() {
       else byEvaluator[key].doc = ev.final_score;
       if (!byEvaluator[key].name) byEvaluator[key].name = name;
     });
-    return { docAvg, presAvg, finalWeighted, byEvaluator };
+    return { docAvg, presAvg, docAvgRaw, presAvgRaw, finalWeighted, byEvaluator };
   })();
 
   if (!thesis) {
@@ -362,25 +370,25 @@ export default function DirectorThesisDetail() {
                   <p className="text-sm font-medium text-success mt-1">Nota Final Ponderada</p>
                 </div>
                 <div className="text-xs text-muted-foreground bg-slate-100 dark:bg-slate-800 p-3 rounded-lg font-mono">
-                  Cálculo: ({consolidated.docAvg.toFixed(1)} x {weights.doc}%)
-                  {thesis.defense_date ? ` + (${consolidated.presAvg.toFixed(1)} x ${weights.presentation}%)` : ''}
+                  Cálculo: ({consolidated.docAvgRaw.toFixed(4)} x {weights.doc}%)
+                  {thesis.defense_date ? ` + (${consolidated.presAvgRaw.toFixed(4)} x ${weights.presentation}%)` : ''}
                   {' '}= {consolidated.finalWeighted.toFixed(1)}
                 </div>
               </div>
               <div className="text-sm">
                 {Object.entries(consolidated.byEvaluator).map(([key, scores], idx) => {
-                  const docScore = scores.doc;
-                  const presScore = scores.pres;
+                  const docRaw = scores.doc != null ? scores.doc : null;
+                  const presRaw = scores.pres != null ? scores.pres : null;
                   const displayName = scores.name || key;
-                  const totalScore = thesis.defense_date
-                    ? ((docScore || 0) * (weights.doc / 100) + (presScore || 0) * (weights.presentation / 100))
-                    : docScore;
+                  const totalScore = thesis.defense_date && docRaw != null && presRaw != null
+                    ? docRaw * (weights.doc / 100) + presRaw * (weights.presentation / 100)
+                    : docRaw;
                   return (
                     <div key={`${key}-${idx}`} className="mb-2">
-                      <strong>{displayName}</strong>: documento {docScore != null ? docScore.toFixed(1) : '-'}, sustentación {presScore != null ? presScore.toFixed(1) : '-'}, total {totalScore != null ? (totalScore as number).toFixed(1) : '-'}
+                      <strong>{displayName}</strong>: documento {docRaw != null ? docRaw.toFixed(4) : '-'}, sustentación {presRaw != null ? presRaw.toFixed(4) : '-'}, total {totalScore != null ? (totalScore as number).toFixed(4) : '-'}
                       <div className="text-xs text-muted-foreground">
-                        ({docScore != null ? `${docScore.toFixed(1)} x ${weights.doc}%` : '0'}
-                        {thesis.defense_date ? ` + ${presScore != null ? `${presScore.toFixed(1)} x ${weights.presentation}%` : '0'}` : ''})
+                        ({docRaw != null ? `${docRaw.toFixed(4)} x ${weights.doc}%` : '0'}
+                        {thesis.defense_date ? ` + ${presRaw != null ? `${presRaw.toFixed(4)} x ${weights.presentation}%` : '0'}` : ''})
                       </div>
                     </div>
                   );
@@ -394,10 +402,57 @@ export default function DirectorThesisDetail() {
         {thesis.timeline?.length > 0 && (
           <div className="mb-6">
             <h3 className="font-semibold mb-2">Historial</h3>
-            <ThesisTimeline events={thesis.timeline} isAdmin={true} />
+            {(() => {
+              let events = thesis.timeline || [];
+              const hasDefenseEvent = events.some((e: any) => e.status === 'awaiting_defense' || e.status === 'defense_scheduled');
+              if (!hasDefenseEvent && !thesis.defense_date && thesis.status === 'evaluacion_terminada') {
+                const allAccepted = (thesis.evaluators || []).length > 0 && (thesis.evaluators || []).every((ev: any) => {
+                  return thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.concept === 'accepted');
+                });
+                if (allAccepted) {
+                  events = [...events, { status: 'awaiting_defense', label: 'Esperando programación de sustentación', date: Date.now() / 1000, completed: false }];
+                }
+              }
+              return <ThesisTimeline events={events} isAdmin={true} />;
+            })()}
           </div>
         )}
 
+
+        {/* Carta de Recomendación Meritoria */}
+        {meritoriaStatus?.qualifies && (thesis?.status === 'sustentacion' || thesis?.status === 'finalized') && (
+          <div className="mb-6 bg-white dark:bg-slate-950 rounded-2xl border border-border shadow-sm overflow-hidden">
+            <div className="bg-amber-50 dark:bg-amber-900/20 px-6 py-4 border-b border-border">
+              <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300 uppercase tracking-widest">🏅 Carta de Recomendación Meritoria</h3>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-muted-foreground mb-4">
+                La tesis obtuvo una nota de <strong>{Number(meritoriaStatus.score).toFixed(1)}</strong>, por lo que requiere carta de recomendación meritoria firmada por los evaluadores.
+              </p>
+              <div className="space-y-2 mb-4">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Estado de firmas:</p>
+                {meritoriaStatus.directors.map((name: string, idx: number) => {
+                  const signed = meritoriaStatus.signatures.some((s: any) => s.signer_name.toLowerCase() === name.toLowerCase());
+                  return (
+                    <div key={idx} className="flex items-center gap-2 text-sm">
+                      <span className={signed ? 'text-green-600' : 'text-muted-foreground'}>
+                        {signed ? '✓' : '○'}
+                      </span>
+                      <span className={signed ? 'text-green-700 dark:text-green-400 font-medium' : ''}>{name}</span>
+                      {signed && <span className="text-xs text-muted-foreground">(firmado)</span>}
+                    </div>
+                  );
+                })}
+              </div>
+              {meritoriaStatus.allSigned && (
+                <p className="text-sm text-green-600 font-semibold">✓ Todos los evaluadores han firmado la carta meritoria.</p>
+              )}
+              {!meritoriaStatus.allSigned && (
+                <p className="text-sm text-amber-600 dark:text-amber-400">Pendiente: el administrador debe generar y compartir el enlace de firma.</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {id && user && thesis?.defense_date && (() => {
           const assignedIds: string[] = (thesis.evaluators || []).map((e: any) => e.id).filter(Boolean);

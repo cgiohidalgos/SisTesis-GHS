@@ -107,10 +107,12 @@ export default function AdminThesisDetail() {
       .filter((e:any) => e.evaluation_type === 'presentation')
       .map((e:any) => e.final_score)
       .filter((n:any) => n != null);
-    const docAvg = docScores.length ? docScores.reduce((a:number,b:number)=>a+b,0)/docScores.length : 0;
-    const presAvg = presScores.length ? presScores.reduce((a:number,b:number)=>a+b,0)/presScores.length : 0;
+    const docAvgRaw = docScores.length ? docScores.reduce((a:number,b:number)=>a+b,0)/docScores.length : 0;
+    const presAvgRaw = presScores.length ? presScores.reduce((a:number,b:number)=>a+b,0)/presScores.length : 0;
+    const docAvg = Math.round(docAvgRaw * 10) / 10;
+    const presAvg = Math.round(presAvgRaw * 10) / 10;
     let finalWeighted = thesis.defense_date
-      ? ((docAvg * (weights.doc/100)) + (presAvg * (weights.presentation/100)))
+      ? Math.round(((docAvg * (weights.doc/100)) + (presAvg * (weights.presentation/100))) * 10) / 10
       : docAvg;
     // apply override if present and thesis finalized
     if (thesis.status === 'finalized' && thesis.final_weighted_override != null) {
@@ -132,7 +134,7 @@ export default function AdminThesisDetail() {
         (byEvaluator as any)[key].name = name;
       }
     });
-    return {docAvg,presAvg,finalWeighted,byEvaluator};
+    return {docAvg,presAvg,docAvgRaw,presAvgRaw,finalWeighted,byEvaluator};
   })();
 
   const { isSuper } = useAuth();
@@ -1542,7 +1544,7 @@ export default function AdminThesisDetail() {
                 {thesis.evaluations.filter((e: any) => e.evaluation_type !== 'presentation').map((ev: any, idx: number) => (
                   <div key={idx} className="bg-slate-50 dark:bg-slate-900 rounded-xl p-4 border border-border">
                     <p className="text-sm text-muted-foreground font-medium mb-1">{ev.evaluator_name || `Evaluador ${idx + 1}`}</p>
-                    <p className="text-3xl font-black text-primary">{ev.final_score != null ? ev.final_score.toFixed(1) : '-'}<span className="text-sm text-muted-foreground font-normal ml-1">/ 5.00</span></p>
+                    <p className="text-3xl font-black text-primary">{ev.final_score != null ? ev.final_score.toFixed(2) : '-'}<span className="text-sm text-muted-foreground font-normal ml-1">/ 5.00</span></p>
                     {ev.concept && <p className="text-xs mt-1 capitalize text-muted-foreground">{ev.concept.replace(/_/g, ' ')}</p>}
                   </div>
                 ))}
@@ -1562,7 +1564,7 @@ export default function AdminThesisDetail() {
                 {thesis.evaluations.filter((e: any) => e.evaluation_type === 'presentation').map((ev: any, idx: number) => (
                   <div key={idx} className="bg-slate-50 dark:bg-slate-900 rounded-xl p-4 border border-border">
                     <p className="text-sm text-muted-foreground font-medium mb-1">{ev.evaluator_name || `Evaluador ${idx + 1}`}</p>
-                    <p className="text-3xl font-black text-primary">{ev.final_score != null ? ev.final_score.toFixed(1) : '-'}<span className="text-sm text-muted-foreground font-normal ml-1">/ 5.00</span></p>
+                    <p className="text-3xl font-black text-primary">{ev.final_score != null ? ev.final_score.toFixed(2) : '-'}<span className="text-sm text-muted-foreground font-normal ml-1">/ 5.00</span></p>
                     {ev.concept && <p className="text-xs mt-1 capitalize text-muted-foreground">{ev.concept.replace(/_/g, ' ')}</p>}
                   </div>
                 ))}
@@ -1591,23 +1593,23 @@ export default function AdminThesisDetail() {
                     {overrideScore != null ? (
                       <>Nota fijada manualmente: {overrideScore.toFixed(1)}</>
                     ) : (
-                      <>Cálculo: ({consolidated.docAvg.toFixed(1)} x {weights.doc}%) {thesis.defense_date ? `+ (${consolidated.presAvg.toFixed(1)} x ${weights.presentation}%)` : ''} = {consolidated.finalWeighted.toFixed(1)}</>
+                      <>Cálculo: ({consolidated.docAvgRaw.toFixed(4)} x {weights.doc}%) {thesis.defense_date ? `+ (${consolidated.presAvgRaw.toFixed(4)} x ${weights.presentation}%)` : ''} = {consolidated.finalWeighted.toFixed(1)}</>
                     )}
                   </div>
                 </div>
                 <div className="text-sm">
                   {Object.entries(consolidated.byEvaluator).map(([key, scores], idx) => {
-                    const docScore = scores.doc != null ? scores.doc : null;
-                    const presScore = scores.pres != null ? scores.pres : null;
+                    const docRaw = scores.doc != null ? scores.doc : null;
+                    const presRaw = scores.pres != null ? scores.pres : null;
                     const displayName = (scores as any).name || normalizePersonName(key);
-                    const totalScore = thesis.defense_date
-                      ? ((docScore||0)*(weights.doc/100) + (presScore||0)*(weights.presentation/100))
-                      : docScore;
+                    const totalScore = thesis.defense_date && docRaw != null && presRaw != null
+                      ? docRaw * (weights.doc/100) + presRaw * (weights.presentation/100)
+                      : docRaw;
                     return (
                       <div key={`${key}-${idx}`} className="mb-2">
-                        <strong>{displayName}</strong>: documento {docScore!==null?docScore.toFixed(1):'-'}, sustentación {presScore!==null?presScore.toFixed(1):'-'}, total {totalScore!==null?totalScore.toFixed(1):'-'}
+                        <strong>{displayName}</strong>: documento {docRaw!==null?docRaw.toFixed(4):'-'}, sustentación {presRaw!==null?presRaw.toFixed(4):'-'}, total {totalScore!==null?totalScore.toFixed(4):'-'}
                         <div className="text-xs text-muted-foreground">
-                          ({docScore!==null?`${docScore.toFixed(1)} x ${weights.doc}%`:'0'}{thesis.defense_date?` + ${presScore!==null?`${presScore.toFixed(1)} x ${weights.presentation}%`:'0'}`:''})
+                          ({docRaw!==null?`${docRaw.toFixed(4)} x ${weights.doc}%`:'0'}{thesis.defense_date?` + ${presRaw!==null?`${presRaw.toFixed(4)} x ${weights.presentation}%`:'0'}`:''})
                         </div>
                       </div>
                     );
@@ -1639,7 +1641,19 @@ export default function AdminThesisDetail() {
         {thesis.timeline && thesis.timeline.length > 0 && (
           <div className="mb-6">
             <h3 className="font-semibold mb-2">Historial</h3>
-            <ThesisTimeline events={thesis.timeline} isAdmin={true} programDocRubric={programDocRubric ?? undefined} programPresRubric={programPresRubric ?? undefined} />
+            {(() => {
+              let events = thesis.timeline || [];
+              const hasDefenseEvent = events.some((e: any) => e.status === 'awaiting_defense' || e.status === 'defense_scheduled');
+              if (!hasDefenseEvent && !thesis.defense_date && thesis.status === 'evaluacion_terminada') {
+                const allAccepted = (thesis.evaluators || []).length > 0 && (thesis.evaluators || []).every((ev: any) => {
+                  return thesis.evaluations?.some((x: any) => x.evaluator_id === ev.id && x.evaluation_type !== 'presentation' && x.concept === 'accepted');
+                });
+                if (allAccepted) {
+                  events = [...events, { status: 'awaiting_defense', label: 'Esperando programación de sustentación', date: Date.now() / 1000, completed: false }];
+                }
+              }
+              return <ThesisTimeline events={events} isAdmin={true} programDocRubric={programDocRubric ?? undefined} programPresRubric={programPresRubric ?? undefined} />;
+            })()}
           </div>
         )}
         {thesis.status === 'submitted' && (
@@ -1881,6 +1895,26 @@ export default function AdminThesisDetail() {
                     }
                   }}>
                     📥 Descargar PDF para firmar
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token');
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/download-final-signed`, {
+                        headers: { Authorization: token ? `Bearer ${token}` : '' },
+                      });
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `acta-con-firmas-${thesis.id}.pdf`;
+                      a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch (e: any) {
+                      toast.error(e.message || 'Error al descargar');
+                    }
+                  }}>
+                    📄 Descargar PDF con firmas actuales
                   </Button>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
